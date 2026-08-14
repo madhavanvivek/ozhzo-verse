@@ -1,0 +1,25 @@
+{
+  "name": "ozhzo-verse-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Ozhzo Verse — The Digital Operating System for Homes",
+  "workspaces": [
+    "apps/*",
+    "services/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,css}\"",
+    "clean": "bash scripts/clean.sh"
+  },
+  "devDependencies": {
+    "prettier": "^3.3.3",
+    "turbo": "^2.0.12",
+    "typescript": "^5.5.4"
+  },
+  "packageManager": "npm@10.8.2"
+}

@@ -1,0 +1,18 @@
+{
+  "name": "@ozhzo/shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared constants, validation, and utilities for Ozhzo Verse",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc --build",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ozhzo/types": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4"
+  }
+}

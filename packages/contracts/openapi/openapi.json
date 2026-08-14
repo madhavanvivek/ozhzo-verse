@@ -1,0 +1,572 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Ozhzo Verse API",
+    "description": "The Digital Operating System for Homes — Core Backend Service",
+    "version": "0.1.0"
+  },
+  "servers": [
+    {
+      "url": "/api/v1",
+      "description": "API v1 Base Endpoint"
+    }
+  ],
+  "paths": {
+    "/auth/register": {
+      "post": {
+        "tags": ["Authentication"],
+        "summary": "Register a new user account",
+        "operationId": "register_user",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "User successfully registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccessResponse_TokenResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": ["Authentication"],
+        "summary": "Authenticate user credentials",
+        "operationId": "login_user",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccessResponse_TokenResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/refresh": {
+      "post": {
+        "tags": ["Authentication"],
+        "summary": "Refresh access and refresh token pair",
+        "operationId": "refresh_tokens",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshTokenRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Rotated token pair",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccessResponse_TokenResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "tags": ["Authentication"],
+        "summary": "Revoke active user session",
+        "operationId": "logout_user",
+        "security": [{ "OAuth2PasswordBearer": [] }],
+        "responses": {
+          "200": {
+            "description": "Session revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccessResponse_MessageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/me": {
+      "get": {
+        "tags": ["Users"],
+        "summary": "Get authenticated user profile and memberships",
+        "operationId": "get_my_profile",
+        "security": [{ "OAuth2PasswordBearer": [] }],
+        "responses": {
+          "200": {
+            "description": "Current user profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccessResponse_UserProfileDTO"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": ["Users"],
+        "summary": "Update user profile",
+        "operationId": "update_my_profile",
+        "security": [{ "OAuth2PasswordBearer": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProfileRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccessResponse_UserProfileDTO"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/homes": {
+      "get": {
+        "tags": ["Homes"],
+        "summary": "List active home memberships for current user",
+        "operationId": "list_my_homes",
+        "security": [{ "OAuth2PasswordBearer": [] }],
+        "responses": {
+          "200": {
+            "description": "List of active homes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccessResponse_List_HomeSummaryDTO"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Homes"],
+        "summary": "Create a new home workspace",
+        "operationId": "create_home",
+        "security": [{ "OAuth2PasswordBearer": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateHomeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created home workspace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccessResponse_HomeDetailDTO"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/homes/{home_id}": {
+      "get": {
+        "tags": ["Homes"],
+        "summary": "Get home details and settings",
+        "operationId": "get_home_details",
+        "security": [{ "OAuth2PasswordBearer": [] }],
+        "parameters": [
+          {
+            "name": "home_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Home detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccessResponse_HomeDetailDTO"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": ["Homes"],
+        "summary": "Update home workspace settings",
+        "operationId": "update_home",
+        "security": [{ "OAuth2PasswordBearer": [] }],
+        "parameters": [
+          {
+            "name": "home_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateHomeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated home detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccessResponse_HomeDetailDTO"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Homes"],
+        "summary": "Soft-delete home workspace (Owner only)",
+        "operationId": "delete_home",
+        "security": [{ "OAuth2PasswordBearer": [] }],
+        "parameters": [
+          {
+            "name": "home_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Home deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccessResponse_MessageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/homes/{home_id}/dashboard": {
+      "get": {
+        "tags": ["Dashboard"],
+        "summary": "Get home overview and daily dashboard",
+        "operationId": "get_home_dashboard",
+        "security": [{ "OAuth2PasswordBearer": [] }],
+        "parameters": [
+          {
+            "name": "home_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Daily home dashboard",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiSuccessResponse_DashboardResponseDTO"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "RegisterRequest": {
+        "type": "object",
+        "required": ["email", "full_name", "password"],
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "full_name": { "type": "string", "minLength": 2, "maxLength": 100 },
+          "password": { "type": "string", "minLength": 8, "maxLength": 128 }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": ["email", "password"],
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "password": { "type": "string" }
+        }
+      },
+      "RefreshTokenRequest": {
+        "type": "object",
+        "required": ["refresh_token"],
+        "properties": {
+          "refresh_token": { "type": "string" }
+        }
+      },
+      "TokenResponse": {
+        "type": "object",
+        "required": ["access_token", "refresh_token", "expires_in", "user_id", "email"],
+        "properties": {
+          "access_token": { "type": "string" },
+          "refresh_token": { "type": "string" },
+          "token_type": { "type": "string", "default": "bearer" },
+          "expires_in": { "type": "integer" },
+          "user_id": { "type": "string", "format": "uuid" },
+          "email": { "type": "string" }
+        }
+      },
+      "MessageResponse": {
+        "type": "object",
+        "required": ["message"],
+        "properties": {
+          "message": { "type": "string" }
+        }
+      },
+      "UpdateProfileRequest": {
+        "type": "object",
+        "properties": {
+          "display_name": { "type": "string", "nullable": true },
+          "phone_number": { "type": "string", "nullable": true },
+          "avatar_url": { "type": "string", "nullable": true },
+          "timezone": { "type": "string", "nullable": true },
+          "preferred_language": { "type": "string", "nullable": true }
+        }
+      },
+      "HomeMembershipSummary": {
+        "type": "object",
+        "required": ["home_id", "name", "role"],
+        "properties": {
+          "home_id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "role": { "type": "string" },
+          "avatar_url": { "type": "string", "nullable": true }
+        }
+      },
+      "UserProfileDTO": {
+        "type": "object",
+        "required": ["id", "email", "display_name", "timezone", "preferred_language", "is_active", "is_verified", "homes"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "email": { "type": "string" },
+          "display_name": { "type": "string" },
+          "phone_number": { "type": "string", "nullable": true },
+          "avatar_url": { "type": "string", "nullable": true },
+          "timezone": { "type": "string" },
+          "preferred_language": { "type": "string" },
+          "is_active": { "type": "boolean" },
+          "is_verified": { "type": "boolean" },
+          "homes": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/HomeMembershipSummary" }
+          }
+        }
+      },
+      "CreateHomeRequest": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "minLength": 2, "maxLength": 120 },
+          "currency": { "type": "string", "default": "USD" },
+          "timezone": { "type": "string", "default": "UTC" },
+          "address": { "type": "string", "nullable": true }
+        }
+      },
+      "UpdateHomeRequest": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "nullable": true },
+          "currency": { "type": "string", "nullable": true },
+          "timezone": { "type": "string", "nullable": true },
+          "address": { "type": "string", "nullable": true },
+          "avatar_url": { "type": "string", "nullable": true }
+        }
+      },
+      "HomeSummaryDTO": {
+        "type": "object",
+        "required": ["id", "name", "currency", "timezone", "role", "members_count", "created_at"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "currency": { "type": "string" },
+          "timezone": { "type": "string" },
+          "role": { "type": "string" },
+          "members_count": { "type": "integer" },
+          "avatar_url": { "type": "string", "nullable": true },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "HomeDetailDTO": {
+        "type": "object",
+        "required": ["id", "name", "currency", "timezone", "role", "members_count", "created_at"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "currency": { "type": "string" },
+          "timezone": { "type": "string" },
+          "address": { "type": "string", "nullable": true },
+          "avatar_url": { "type": "string", "nullable": true },
+          "role": { "type": "string" },
+          "members_count": { "type": "integer" },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "DashboardGreetingDTO": {
+        "type": "object",
+        "required": ["greeting", "user_display_name", "date_formatted", "time_period"],
+        "properties": {
+          "greeting": { "type": "string" },
+          "user_display_name": { "type": "string" },
+          "date_formatted": { "type": "string" },
+          "time_period": { "type": "string" }
+        }
+      },
+      "DashboardSummaryDTO": {
+        "type": "object",
+        "required": ["home_id", "home_name", "currency", "timezone", "members_count", "active_tasks_count", "low_stock_count", "unpaid_bills_count", "unpaid_bills_sum", "upcoming_events_count", "unread_notifications_count"],
+        "properties": {
+          "home_id": { "type": "string", "format": "uuid" },
+          "home_name": { "type": "string" },
+          "currency": { "type": "string" },
+          "timezone": { "type": "string" },
+          "members_count": { "type": "integer" },
+          "active_tasks_count": { "type": "integer" },
+          "low_stock_count": { "type": "integer" },
+          "unpaid_bills_count": { "type": "integer" },
+          "unpaid_bills_sum": { "type": "string" },
+          "upcoming_events_count": { "type": "integer" },
+          "unread_notifications_count": { "type": "integer" }
+        }
+      },
+      "DashboardResponseDTO": {
+        "type": "object",
+        "required": ["greeting", "summary", "pending_tasks", "upcoming_bills", "upcoming_events", "low_stock_inventory", "shopping_items", "notifications", "role"],
+        "properties": {
+          "greeting": { "$ref": "#/components/schemas/DashboardGreetingDTO" },
+          "summary": { "$ref": "#/components/schemas/DashboardSummaryDTO" },
+          "pending_tasks": { "type": "array", "items": { "type": "object" } },
+          "upcoming_bills": { "type": "array", "items": { "type": "object" } },
+          "upcoming_events": { "type": "array", "items": { "type": "object" } },
+          "low_stock_inventory": { "type": "array", "items": { "type": "object" } },
+          "shopping_items": { "type": "array", "items": { "type": "object" } },
+          "notifications": { "type": "array", "items": { "type": "object" } },
+          "role": { "type": "string" }
+        }
+      },
+      "ApiSuccessResponse_TokenResponse": {
+        "type": "object",
+        "required": ["success", "data"],
+        "properties": {
+          "success": { "type": "boolean", "default": true },
+          "data": { "$ref": "#/components/schemas/TokenResponse" }
+        }
+      },
+      "ApiSuccessResponse_MessageResponse": {
+        "type": "object",
+        "required": ["success", "data"],
+        "properties": {
+          "success": { "type": "boolean", "default": true },
+          "data": { "$ref": "#/components/schemas/MessageResponse" }
+        }
+      },
+      "ApiSuccessResponse_UserProfileDTO": {
+        "type": "object",
+        "required": ["success", "data"],
+        "properties": {
+          "success": { "type": "boolean", "default": true },
+          "data": { "$ref": "#/components/schemas/UserProfileDTO" }
+        }
+      },
+      "ApiSuccessResponse_HomeDetailDTO": {
+        "type": "object",
+        "required": ["success", "data"],
+        "properties": {
+          "success": { "type": "boolean", "default": true },
+          "data": { "$ref": "#/components/schemas/HomeDetailDTO" }
+        }
+      },
+      "ApiSuccessResponse_List_HomeSummaryDTO": {
+        "type": "object",
+        "required": ["success", "data"],
+        "properties": {
+          "success": { "type": "boolean", "default": true },
+          "data": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/HomeSummaryDTO" }
+          }
+        }
+      },
+      "ApiSuccessResponse_DashboardResponseDTO": {
+        "type": "object",
+        "required": ["success", "data"],
+        "properties": {
+          "success": { "type": "boolean", "default": true },
+          "data": { "$ref": "#/components/schemas/DashboardResponseDTO" }
+        }
+      }
+    },
+    "securitySchemes": {
+      "OAuth2PasswordBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    }
+  }
+}

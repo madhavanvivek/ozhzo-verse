@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 100" width="140" height="100" fill="none">
+  <!-- Ozhzo Verse Mobile Dark Emblem Mark -->
+  <defs>
+    <linearGradient id="mobMarkBlueDark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8" />
+      <stop offset="100%" stop-color="#2563EB" />
+    </linearGradient>
+    <linearGradient id="mobMarkGreenDark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34D399" />
+      <stop offset="100%" stop-color="#10B981" />
+    </linearGradient>
+  </defs>
+
+  <g>
+    <path d="M48 16 L18 46 C10 54 10 68 18 76 C26 84 40 84 48 76 L78 46 C86 38 100 38 108 46 L118 56 C124 62 124 72 118 78 C112 84 102 84 96 78 L86 68" 
+          stroke="url(#mobMarkBlueDark)" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" />
+    <path d="M88 16 L118 46 C126 54 126 68 118 76 C110 84 96 84 88 76 L58 46 C50 38 36 38 28 46 L18 56 C12 62 12 72 18 78 C24 84 34 84 40 78 L50 68" 
+          stroke="url(#mobMarkGreenDark)" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" />
+  </g>
+</svg>

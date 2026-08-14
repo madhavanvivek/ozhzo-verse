@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 420" width="600" height="420" fill="none">
+  <!-- Ozhzo Verse Master Full Logo (Approved Brand Identity) -->
+  <defs>
+    <linearGradient id="fullBlueLoop" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0061FF" />
+      <stop offset="100%" stop-color="#0047C4" />
+    </linearGradient>
+    <linearGradient id="fullGreenLoop" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00C853" />
+      <stop offset="100%" stop-color="#00B050" />
+    </linearGradient>
+    <linearGradient id="blueFoldShadow" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#002D80" />
+      <stop offset="100%" stop-color="#0061FF" />
+    </linearGradient>
+    <linearGradient id="greenFoldShadow" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#007033" />
+      <stop offset="100%" stop-color="#00B050" />
+    </linearGradient>
+  </defs>
+
+  <!-- Upper Emblem: Infinity Ribbon + Center House & Z -->
+  <g transform="translate(40, 20)">
+    <!-- Left Blue Infinity Loop -->
+    <path d="M190 120 C190 60 135 15 75 15 C20 15 -10 65 -10 120 C-10 175 25 225 85 225 C140 225 190 180 220 145 L200 130 C175 160 130 200 85 200 C40 200 15 160 15 120 C15 75 40 40 75 40 C120 40 165 75 165 120 Z" fill="url(#fullBlueLoop)" />
+    <!-- Blue 3D Fold -->
+    <path d="M165 120 L210 200 C210 200 230 180 230 140 L165 120 Z" fill="url(#blueFoldShadow)" opacity="0.8" />
+
+    <!-- Right Green Infinity Loop -->
+    <path d="M330 120 C330 60 385 15 445 15 C500 15 530 65 530 120 C530 175 495 225 435 225 C380 225 330 180 300 145 L320 130 C345 160 390 200 435 200 C480 200 505 160 505 120 C505 75 480 40 445 40 C400 40 355 75 355 120 Z" fill="url(#fullGreenLoop)" />
+    <!-- Green 3D Fold -->
+    <path d="M355 120 L310 200 C310 200 290 180 290 140 L355 120 Z" fill="url(#greenFoldShadow)" opacity="0.8" />
+
+    <!-- Center Green House Roof -->
+    <path d="M260 40 L360 135 L334 135 L260 62 L186 135 L160 135 Z" fill="#00B050" />
+
+    <!-- Center Blue Pillars -->
+    <path d="M196 130 L226 130 L226 235 C226 250 212 260 200 250 C196 245 196 238 196 230 Z" fill="#0061FF" />
+    <path d="M294 130 L324 130 L324 230 C324 238 324 245 320 250 C308 260 294 250 294 235 Z" fill="#0061FF" />
+
+    <!-- Stylized Central Z -->
+    <path d="M232 145 L288 145 L272 165 L232 165 Z" fill="#0061FF" />
+    <path d="M288 145 L288 160 L248 215 L232 215 L272 160 L272 145 Z" fill="#0061FF" />
+    <path d="M248 195 L288 195 L288 215 L232 215 Z" fill="#0061FF" />
+  </g>
+
+  <!-- Wordmark Section -->
+  <!-- ozhzo in Blue -->
+  <text x="300" y="325" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Plus Jakarta Sans', 'Segoe UI', Roboto, sans-serif" font-size="76" font-weight="800" fill="#0061FF" letter-spacing="-0.02em">ozhzo</text>
+
+  <!-- verse in Green -->
+  <text x="300" y="375" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Plus Jakarta Sans', 'Segoe UI', Roboto, sans-serif" font-size="52" font-weight="600" fill="#00B050" letter-spacing="-0.01em">verse</text>
+
+  <!-- Official Tagline -->
+  <text x="300" y="408" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Plus Jakarta Sans', 'Segoe UI', Roboto, sans-serif" font-size="16" font-weight="700" fill="#0A2E7A" letter-spacing="0.01em">Where Home Comes Together.</text>
+</svg>

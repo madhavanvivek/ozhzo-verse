@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" fill="none">
+  <!-- Ozhzo Verse Central House + Z Emblem (Transparent Master) -->
+  <defs>
+    <linearGradient id="ozhzoBluePillar" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0061FF" />
+      <stop offset="100%" stop-color="#0A2E7A" />
+    </linearGradient>
+  </defs>
+
+  <g transform="translate(0, 20)">
+    <!-- Green Gable Roof -->
+    <path d="M256 70 L410 205 L375 205 L256 100 L137 205 L102 205 Z" fill="#00B050" />
+    
+    <!-- Left Blue Pillar -->
+    <path d="M152 200 L195 200 L195 385 C195 400 178 410 162 398 C155 392 152 380 152 368 Z" fill="#0061FF" />
+    <path d="M152 360 C152 385 168 405 188 405 L195 405 L195 360 Z" fill="#0A2E7A" opacity="0.6" />
+
+    <!-- Right Blue Pillar -->
+    <path d="M317 200 L360 200 L360 368 C360 380 357 392 350 398 C334 410 317 400 317 385 Z" fill="#0061FF" />
+    <path d="M317 360 L324 405 C344 405 360 385 360 360 Z" fill="#0A2E7A" opacity="0.6" />
+
+    <!-- Stylized Central Z Mark -->
+    <!-- Top Bar of Z -->
+    <path d="M210 220 L302 220 L302 252 L248 252 L295 220 L210 220 Z" fill="#0061FF" />
+    <!-- Diagonal & Body of Z -->
+    <path d="M298 220 L302 238 L232 332 L210 332 L210 315 L276 220 Z" fill="#0061FF" />
+    <!-- Bottom Bar of Z -->
+    <path d="M210 300 L256 332 L210 332 Z" fill="#0061FF" />
+    <path d="M210 332 L302 332 L272 364 L210 364 Z" fill="#0061FF" />
+  </g>
+</svg>

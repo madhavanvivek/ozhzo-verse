@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" fill="none">
+  <!-- Ozhzo Verse Simplified Z Mark (Light Squircle) -->
+  <defs>
+    <filter id="zShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="8" stdDeviation="16" flood-color="#0F172A" flood-opacity="0.08" />
+    </filter>
+  </defs>
+
+  <rect x="24" y="24" width="464" height="464" rx="105" fill="#FFFFFF" filter="url(#zShadow)" />
+  <rect x="24" y="24" width="464" height="464" rx="105" stroke="#E2E8F0" stroke-width="2" />
+
+  <!-- Enlarged Centered Z Mark -->
+  <g transform="translate(48, 56) scale(1.6)">
+    <path d="M100 80 L220 80 L188 120 L100 120 Z" fill="#0061FF" />
+    <path d="M220 80 L220 110 L132 230 L100 230 L188 110 L188 80 Z" fill="#0061FF" />
+    <path d="M132 190 L220 190 L220 230 L100 230 Z" fill="#0061FF" />
+  </g>
+</svg>

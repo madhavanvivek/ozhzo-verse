@@ -1,0 +1,127 @@
+'use client';
+
+import React, { useState } from 'react';
+import { ChevronDown, Home as HomeIcon, Plus } from 'lucide-react';
+
+interface HomeOption {
+  home_id: string;
+  name: string;
+  role: string;
+}
+
+interface HomeSwitcherProps {
+  currentHome?: HomeOption;
+  homes: HomeOption[];
+  onSelectHome: (homeId: string) => void;
+  onCreateNewHome?: () => void;
+}
+
+export const HomeSwitcher: React.FC<HomeSwitcherProps> = ({
+  currentHome,
+  homes,
+  onSelectHome,
+  onCreateNewHome
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <div style={{ position: 'relative', display: 'inline-block' }}>
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          padding: '6px 12px',
+          backgroundColor: 'var(--color-surface-subtle)',
+          border: '1px solid var(--color-border-subtle)',
+          borderRadius: 'var(--radius-md)',
+          cursor: 'pointer',
+          fontWeight: 600,
+          fontSize: '14px',
+          color: 'var(--color-text-primary)'
+        }}
+      >
+        <HomeIcon size={16} color="var(--color-primary-900)" />
+        <span>{currentHome?.name || 'Select Home'}</span>
+        <ChevronDown size={14} color="var(--color-text-secondary)" />
+      </button>
+
+      {isOpen && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '100%',
+            left: 0,
+            marginTop: '6px',
+            width: '240px',
+            backgroundColor: 'var(--color-surface-overlay)',
+            border: '1px solid var(--color-border-subtle)',
+            borderRadius: 'var(--radius-lg)',
+            boxShadow: 'var(--shadow-floating)',
+            padding: '6px',
+            zIndex: 100
+          }}
+        >
+          <div style={{ padding: '6px 8px', fontSize: '11px', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase' }}>
+            Your Households
+          </div>
+          {homes.map((h) => (
+            <button
+              key={h.home_id}
+              onClick={() => {
+                onSelectHome(h.home_id);
+                setIsOpen(false);
+              }}
+              style={{
+                width: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '8px 10px',
+                border: 'none',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: currentHome?.home_id === h.home_id ? 'var(--color-surface-subtle)' : 'transparent',
+                cursor: 'pointer',
+                textAlign: 'left',
+                fontSize: '13px',
+                color: 'var(--color-text-primary)'
+              }}
+            >
+              <span style={{ fontWeight: currentHome?.home_id === h.home_id ? 600 : 400 }}>{h.name}</span>
+              <span style={{ fontSize: '11px', color: 'var(--color-text-secondary)', textTransform: 'uppercase' }}>{h.role}</span>
+            </button>
+          ))}
+          {onCreateNewHome && (
+            <button
+              onClick={() => {
+                onCreateNewHome();
+                setIsOpen(false);
+              }}
+              style={{
+                width: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '8px 10px',
+                marginTop: '4px',
+                borderTop: '1px solid var(--color-border-subtle)',
+                borderLeft: 'none',
+                borderRight: 'none',
+                borderBottom: 'none',
+                backgroundColor: 'transparent',
+                cursor: 'pointer',
+                fontSize: '13px',
+                fontWeight: 600,
+                color: 'var(--color-accent-warm)'
+              }}
+            >
+              <Plus size={14} />
+              <span>Create New Home</span>
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};

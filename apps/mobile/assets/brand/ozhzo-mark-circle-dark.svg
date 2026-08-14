@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" fill="none">
+  <!-- Ozhzo Verse Circle Favicon (Dark) -->
+  <defs>
+    <linearGradient id="darkCircleBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0E368C" />
+      <stop offset="100%" stop-color="#071E54" />
+    </linearGradient>
+  </defs>
+
+  <!-- Circular Base -->
+  <circle cx="256" cy="256" r="232" fill="url(#darkCircleBg)" />
+
+  <!-- Central House + Z Emblem -->
+  <g transform="translate(0, 10)">
+    <path d="M256 90 L400 215 L362 215 L256 122 L150 215 L112 215 Z" fill="#00B050" />
+
+    <!-- Left Blue Pillar -->
+    <path d="M165 208 L206 208 L206 372 C206 392 186 404 172 390 C166 384 165 374 165 362 Z" fill="#0061FF" />
+    <path d="M165 352 C165 378 180 398 200 398 L206 398 L206 352 Z" fill="#051B47" opacity="0.6" />
+
+    <!-- Right Blue Pillar -->
+    <path d="M306 208 L347 208 L347 362 C347 374 346 384 340 390 C326 404 306 392 306 372 Z" fill="#0061FF" />
+    <path d="M306 352 L312 398 C332 398 347 378 347 352 Z" fill="#051B47" opacity="0.6" />
+
+    <!-- Stylized Central Z Mark (White) -->
+    <path d="M216 230 L296 230 L274 258 L216 258 Z" fill="#FFFFFF" />
+    <path d="M296 230 L296 250 L238 330 L216 330 L274 250 L274 230 Z" fill="#FFFFFF" />
+    <path d="M238 302 L296 302 L296 330 L216 330 Z" fill="#FFFFFF" />
+  </g>
+</svg>

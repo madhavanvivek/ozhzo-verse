@@ -28,3 +28,6 @@ class ApiErrorDetail(BaseModel):
 class ApiErrorResponse(BaseModel):
     success: bool = False
     error: ApiErrorDetail
+
+class MessageResponse(BaseModel):
+    message: str

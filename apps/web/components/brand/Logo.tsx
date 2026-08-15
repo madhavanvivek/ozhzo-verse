@@ -20,31 +20,29 @@ export const Logo: React.FC<LogoProps> = ({
   href = '/',
   alt = 'Ozhzo Verse — Where Home Comes Together.'
 }) => {
-  let src = '/brand/logo/ozhzo-verse-logo-primary.svg';
-  let defaultWidth = 180;
-  let defaultHeight = 45;
+  const isFull = variant === 'full';
 
-  if (variant === 'full') {
-    src = theme === 'dark' 
-      ? '/brand/logo/ozhzo-verse-logo-primary-dark.svg' 
-      : '/brand/logo/ozhzo-verse-logo-primary.svg';
-    defaultWidth = 180;
-    defaultHeight = 45;
-  } else if (variant === 'mark' || variant === 'compact') {
-    src = theme === 'dark' 
-      ? '/brand/icons/ozhzo-mark-dark.svg' 
+  const src = isFull
+    ? '/images/ozhzo-logo.png'
+    : theme === 'dark'
+      ? '/brand/icons/ozhzo-mark-dark.svg'
       : '/brand/icons/ozhzo-mark-primary.svg';
-    defaultWidth = 36;
-    defaultHeight = 36;
-  }
 
-  const finalWidth = width || defaultWidth;
-  const finalHeight = height || defaultHeight;
+  const defaultWidth = isFull ? 180 : 36;
+  const defaultHeight = isFull ? 120 : 36;
+
+  const finalWidth = width ?? defaultWidth;
+  const finalHeight = height ?? defaultHeight;
 
   const content = (
-    <div 
+    <div
       className={`ozhzo-brand-logo ${className}`}
-      style={{ display: 'inline-flex', alignItems: 'center', lineHeight: 0 }}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        lineHeight: 0
+      }}
     >
       <img
         src={src}
@@ -53,21 +51,27 @@ export const Logo: React.FC<LogoProps> = ({
         height={finalHeight}
         style={{
           display: 'block',
+          width: `${finalWidth}px`,
           height: `${finalHeight}px`,
-          width: finalWidth ? `${finalWidth}px` : 'auto',
           objectFit: 'contain'
         }}
       />
     </div>
   );
 
-  if (href) {
-    return (
-      <Link href={href} style={{ textDecoration: 'none', display: 'inline-flex' }}>
-        {content}
-      </Link>
-    );
+  if (!href) {
+    return content;
   }
 
-  return content;
+  return (
+    <Link
+      href={href}
+      style={{
+        display: 'inline-flex',
+        textDecoration: 'none'
+      }}
+    >
+      {content}
+    </Link>
+  );
 };

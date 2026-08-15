@@ -6,16 +6,11 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Input } from '@/components/ui/Input';
 import {
-  ShoppingCart,
   Plus,
   CheckCircle2,
-  Circle,
   Trash2,
-  User,
   Sparkles,
-  ArrowRight,
-  RefreshCw,
-  Clock
+
 } from 'lucide-react';
 
 interface ShoppingItem {

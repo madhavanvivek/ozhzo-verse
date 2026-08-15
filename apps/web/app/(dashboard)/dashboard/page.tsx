@@ -8,12 +8,10 @@ import {
   CheckCircle2,
   AlertTriangle,
   Receipt,
-  Calendar as CalendarIcon,
   ShoppingCart,
   Bell,
-  Plus,
   RefreshCw,
-  Clock,
+
   Sparkles,
   Users,
   Check

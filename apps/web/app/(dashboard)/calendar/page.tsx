@@ -3,24 +3,14 @@
 import React, { useState } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { Input } from '@/components/ui/Input';
 import {
-  Calendar as CalendarIcon,
   Plus,
   Clock,
   MapPin,
   Users,
-  Bell,
   Trash2,
-  ChevronLeft,
-  ChevronRight,
   Sparkles,
-  CheckCircle2,
-  Receipt,
-  CheckSquare,
-  Repeat,
-  Tag,
-  ExternalLink
+
 } from 'lucide-react';
 
 interface ProjectedItem {
@@ -361,7 +351,6 @@ export default function CalendarPage() {
           filteredItems.map(item => {
             const isEvent = item.source_type === 'EVENT';
             const isTask = item.source_type === 'TASK';
-            const isBill = item.source_type === 'BILL';
 
             const borderColor = isEvent ? '#4f46e5' : isTask ? '#10b981' : '#f59e0b';
             const badgeBg = isEvent ? '#e0e7ff' : isTask ? '#d1fae5' : '#fef3c7';

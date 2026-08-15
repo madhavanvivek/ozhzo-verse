@@ -3,18 +3,9 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
-import { Button } from '@/components/ui/Button';
 import {
-  CalendarCheck,
-  Clock,
   MapPin,
-  Users,
-  CheckCircle2,
-  Receipt,
-  ShoppingCart,
-  AlertTriangle,
-  Package,
-  Plus
+
 } from 'lucide-react';
 
 export default function TodayPage() {
@@ -119,7 +110,6 @@ export default function TodayPage() {
         {items.map(item => {
           const isEvent = item.source_type === 'EVENT';
           const isTask = item.source_type === 'TASK';
-          const isBill = item.source_type === 'BILL';
 
           const borderColor = isEvent ? '#4f46e5' : isTask ? '#10b981' : '#f59e0b';
           const badgeBg = isEvent ? '#e0e7ff' : isTask ? '#d1fae5' : '#fef3c7';

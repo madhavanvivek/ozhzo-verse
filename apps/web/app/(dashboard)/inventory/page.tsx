@@ -6,27 +6,15 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Input } from '@/components/ui/Input';
 import {
-  Package,
-  Search,
   Plus,
-  Filter,
-  AlertTriangle,
   MapPin,
-  Calendar,
   Trash2,
-  Edit2,
-  ChevronDown,
-  ChevronRight,
-  Folder,
   FolderOpen,
   Box,
-  Wrench,
   UserCheck,
   RotateCcw,
   ArrowRight,
-  History,
-  ShieldCheck,
-  CheckCircle2
+
 } from 'lucide-react';
 
 interface Item {
@@ -183,10 +171,10 @@ export default function InventoryPage() {
   // Modals form state
   const [newItemName, setNewItemName] = useState('');
   const [newItemType, setNewItemType] = useState<'CONSUMABLE' | 'ASSET'>('CONSUMABLE');
-  const [newItemCategory, setNewItemCategory] = useState('Pantry');
-  const [newItemQty, setNewItemQty] = useState('1');
-  const [newItemUnit, setNewItemUnit] = useState('pcs');
-  const [newItemThreshold, setNewItemThreshold] = useState('1');
+  const [newItemCategory] = useState('Pantry');
+  const [newItemQty] = useState('1');
+  const [newItemUnit] = useState('pcs');
+  const [newItemThreshold] = useState('1');
   const [newItemLocationPath, setNewItemLocationPath] = useState('Store Room > 3rd Cupboard > Blue Box');
 
   // Relocation state

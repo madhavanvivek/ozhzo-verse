@@ -1,1 +1,0 @@
-{"root":["./src/api.ts","./src/bill.ts","./src/calendar.ts","./src/home.ts","./src/index.ts","./src/inventory.ts","./src/notification.ts","./src/shopping.ts","./src/subscription.ts","./src/task.ts","./src/user.ts","./src/generated/api_models.ts"],"version":"5.9.3"}

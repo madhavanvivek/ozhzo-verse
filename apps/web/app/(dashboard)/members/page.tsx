@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Input } from '@/components/ui/Input';
-import { Users, UserPlus, Shield, Copy, Check, Trash2, Mail } from 'lucide-react';
+import { Users, UserPlus, Copy, Check, Trash2, Mail } from 'lucide-react';
 
 export default function MembersPage() {
   const [members] = useState([

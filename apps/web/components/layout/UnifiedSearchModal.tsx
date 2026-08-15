@@ -11,7 +11,7 @@ import {
   Calendar,
   X,
   ArrowRight,
-  Sparkles
+
 } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 
@@ -33,7 +33,7 @@ export function UnifiedSearchModal({ isOpen, onClose }: UnifiedSearchModalProps)
   const [query, setQuery] = useState('');
   const router = useRouter();
 
-  const [results, setResults] = useState<SearchResult[]>([
+  const [results] = useState<SearchResult[]>([
     { id: '1', domain: 'INVENTORY', title: 'Extra Virgin Olive Oil', subtitle: '0 bottles • Pantry Shelf 2', status: 'OUT_OF_STOCK', url: '/inventory' },
     { id: '2', domain: 'SHOPPING', title: 'Extra Virgin Olive Oil', subtitle: '1 bottles • Priority: HIGH', status: 'To Buy', url: '/shopping' },
     { id: '3', domain: 'TASK', title: 'Mop kitchen floor', subtitle: 'Priority: HIGH • Due Today', status: 'TODO', url: '/tasks' },

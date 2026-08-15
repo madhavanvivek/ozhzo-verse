@@ -5,15 +5,10 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import {
-  CreditCard,
-  CheckCircle2,
-  AlertCircle,
-  Clock,
   Users,
   ShieldCheck,
   Sparkles,
-  ArrowRight,
-  Info,
+
   Tag
 } from 'lucide-react';
 

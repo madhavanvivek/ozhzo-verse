@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
-import { Home, Shield, Trash2, Check, AlertCircle } from 'lucide-react';
+import { Home, Trash2, Check, AlertCircle } from 'lucide-react';
 
 export default function HomeSettingsPage() {
   const [homeName, setHomeName] = useState('Rivera Family Home');

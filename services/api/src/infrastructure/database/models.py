@@ -232,7 +232,11 @@ class LocationModel(Base):
 
     home = relationship("HomeModel", back_populates="locations")
     parent = relationship("LocationModel", remote_side=[id], backref="children")
-    items = relationship("InventoryItemModel", back_populates="location")
+    items = relationship(
+        "InventoryItemModel",
+        back_populates="location",
+        foreign_keys="InventoryItemModel.location_id",
+    )
 
 
 class InventoryItemModel(Base):
@@ -276,7 +280,11 @@ class InventoryItemModel(Base):
 
     home = relationship("HomeModel", back_populates="inventory_items")
     category = relationship("InventoryCategoryModel", back_populates="items")
-    location = relationship("LocationModel", back_populates="items")
+    location = relationship(
+        "LocationModel",
+        back_populates="items",
+        foreign_keys=[location_id],
+    )
     stock_movements = relationship("StockMovementModel", back_populates="item", cascade="all, delete-orphan")
     location_movements = relationship("LocationMovementModel", back_populates="item", cascade="all, delete-orphan")
     loans = relationship("AssetLoanModel", back_populates="item", cascade="all, delete-orphan")

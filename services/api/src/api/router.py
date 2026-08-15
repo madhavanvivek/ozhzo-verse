@@ -16,7 +16,7 @@ from src.api.v1.bills import router as bills_router
 from src.api.v1.bill_templates import router as bill_templates_router
 from src.api.v1.calendar import router as calendar_router
 from src.api.v1.notifications import router as notifications_router
-from src.api.v1.subscriptions import router as subscriptions_router, homes_sub_router
+from src.api.v1.subscriptions import router as subscriptions_router
 from src.api.v1.admin_subscriptions import router as admin_subscriptions_router
 from src.api.v1.admin_coupons import router as admin_coupons_router
 from src.api.v1.admin_users import router as admin_users_router
@@ -49,7 +49,6 @@ api_v1_router.include_router(bill_templates_router)
 api_v1_router.include_router(calendar_router)
 api_v1_router.include_router(notifications_router)
 api_v1_router.include_router(subscriptions_router)
-api_v1_router.include_router(homes_sub_router)
 api_v1_router.include_router(admin_subscriptions_router)
 api_v1_router.include_router(admin_coupons_router)
 api_v1_router.include_router(admin_users_router)
@@ -61,5 +60,3 @@ api_v1_router.include_router(today_router)
 api_v1_router.include_router(attention_router)
 api_v1_router.include_router(activity_router)
 api_v1_router.include_router(feedback_router)
-
-

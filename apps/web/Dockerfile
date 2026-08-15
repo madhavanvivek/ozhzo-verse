@@ -25,6 +25,6 @@ COPY --from=builder --chown=nextjs:nodejs /app/apps/web/public ./apps/web/public
 
 USER nextjs
 
-EXPOSE 3000
+EXPOSE 10000
 
-CMD ["sh", "-c", "PORT=${PORT:-3000} node apps/web/server.js"]
+CMD ["sh", "-c", "HOSTNAME=0.0.0.0 PORT=${PORT:-10000} node apps/web/server.js"]

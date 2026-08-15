@@ -1,4 +1,4 @@
-import { ApiResponse, AuthTokens } from '@ozhzo/types';
+import type { ApiResponse, AuthTokens } from '@ozhzo/types';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || '/api/v1';
 
@@ -18,6 +18,7 @@ class ApiClient {
   setTokens(tokens: AuthTokens) {
     this.accessToken = tokens.access_token;
     this.refreshToken = tokens.refresh_token;
+
     if (typeof window !== 'undefined') {
       localStorage.setItem('access_token', tokens.access_token);
       localStorage.setItem('refresh_token', tokens.refresh_token);
@@ -27,6 +28,7 @@ class ApiClient {
   clearTokens() {
     this.accessToken = null;
     this.refreshToken = null;
+
     if (typeof window !== 'undefined') {
       localStorage.removeItem('access_token');
       localStorage.removeItem('refresh_token');
@@ -35,6 +37,7 @@ class ApiClient {
 
   setActiveHomeId(homeId: string | null) {
     this.activeHomeId = homeId;
+
     if (typeof window !== 'undefined') {
       if (homeId) {
         localStorage.setItem('active_home_id', homeId);
@@ -44,18 +47,23 @@ class ApiClient {
     }
   }
 
-  async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    const headers: HeadersInit = {
-      'Content-Type': 'application/json',
-      ...(options.headers || {})
-    };
+  async request<T>(
+    endpoint: string,
+    options: RequestInit = {}
+  ): Promise<T> {
+    const headers = new Headers(options.headers);
+
+    headers.set('Content-Type', 'application/json');
 
     if (this.accessToken) {
-      headers['Authorization'] = `Bearer ${this.accessToken}`;
+      headers.set(
+        'Authorization',
+        `Bearer ${this.accessToken}`
+      );
     }
 
     if (this.activeHomeId) {
-      headers['X-Home-ID'] = this.activeHomeId;
+      headers.set('X-Home-ID', this.activeHomeId);
     }
 
     let response = await fetch(`${API_BASE_URL}${endpoint}`, {
@@ -64,21 +72,43 @@ class ApiClient {
     });
 
     // Handle 401 token refresh retry
-    if (response.status === 401 && this.refreshToken && !endpoint.includes('/auth/')) {
+    if (
+      response.status === 401 &&
+      this.refreshToken &&
+      !endpoint.includes('/auth/')
+    ) {
       try {
-        const refreshRes = await fetch(`${API_BASE_URL}/auth/refresh`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refresh_token: this.refreshToken })
-        });
-        const refreshData: ApiResponse<AuthTokens> = await refreshRes.json();
+        const refreshRes = await fetch(
+          `${API_BASE_URL}/auth/refresh`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              refresh_token: this.refreshToken
+            })
+          }
+        );
+
+        const refreshData: ApiResponse<AuthTokens> =
+          await refreshRes.json();
+
         if (refreshData.success) {
           this.setTokens(refreshData.data);
-          headers['Authorization'] = `Bearer ${refreshData.data.access_token}`;
-          response = await fetch(`${API_BASE_URL}${endpoint}`, {
-            ...options,
-            headers
-          });
+
+          headers.set(
+            'Authorization',
+            `Bearer ${refreshData.data.access_token}`
+          );
+
+          response = await fetch(
+            `${API_BASE_URL}${endpoint}`,
+            {
+              ...options,
+              headers
+            }
+          );
         } else {
           this.clearTokens();
         }
@@ -89,15 +119,19 @@ class ApiClient {
 
     const data: ApiResponse<T> = await response.json();
 
-    if (!data.success) {
-      throw new Error(data.error.message || 'API request failed');
+    if (!data.success && 'error' in data) {
+      throw new Error(
+        data.error.message || 'API request failed'
+      );
     }
 
     return data.data;
   }
 
   get<T>(endpoint: string) {
-    return this.request<T>(endpoint, { method: 'GET' });
+    return this.request<T>(endpoint, {
+      method: 'GET'
+    });
   }
 
   post<T>(endpoint: string, body: unknown) {
@@ -115,7 +149,9 @@ class ApiClient {
   }
 
   delete<T>(endpoint: string) {
-    return this.request<T>(endpoint, { method: 'DELETE' });
+    return this.request<T>(endpoint, {
+      method: 'DELETE'
+    });
   }
 }
 

@@ -3,15 +3,8 @@
 import React, { useState } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { Badge } from '@/components/ui/Badge';
-import { Input } from '@/components/ui/Input';
 import {
-  Receipt,
   Plus,
-  Calendar,
-  DollarSign,
-  CheckCircle2,
-  AlertCircle,
   Repeat,
   Trash2,
   Clock,
@@ -19,12 +12,6 @@ import {
   Sparkles,
   CreditCard,
   User,
-  Zap,
-  Droplets,
-  Wifi,
-  Home,
-  Shield,
-  FileText
 } from 'lucide-react';
 
 interface PaymentRecord {

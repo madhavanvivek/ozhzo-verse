@@ -32,14 +32,14 @@ export interface HomeSubscriptionOverview {
 
   introductory_period_starts_at: string;
   introductory_period_ends_at: string;
-  is_in_introductory_trial: bool;
+  is_in_introductory_trial: boolean;
   days_remaining_in_introductory_period: number;
 
   total_active_members: number;
   free_entitled_seats: number;
   required_paid_seats: number;
   active_paid_seats: number;
-  is_fully_covered: bool;
+  is_fully_covered: boolean;
 
   annual_total_price: number;
   members_entitlements: MemberEntitlement[];

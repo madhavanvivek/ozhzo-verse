@@ -3,14 +3,16 @@ const nextConfig = {
   reactStrictMode: true,
   output: "standalone",
   transpilePackages: ["@ozhzo/types", "@ozhzo/shared"],
+
   async rewrites() {
     return [
       {
         source: "/api/v1/:path*",
-        destination: `${process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api/v1"}/:path*`
-      }
+        destination:
+          "https://ozhzo-api.onrender.com/api/v1/:path*",
+      },
     ];
-  }
+  },
 };
 
 module.exports = nextConfig;

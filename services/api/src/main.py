@@ -31,13 +31,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS Middleware (Strict Origin Validation)
+# CORS Middleware (Strict Origin Validation with Development Flexibility)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "Accept"],
+    allow_headers=["*"],
+    max_age=600,
 )
 
 

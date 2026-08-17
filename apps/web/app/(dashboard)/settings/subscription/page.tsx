@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -8,9 +8,9 @@ import {
   Users,
   ShieldCheck,
   Sparkles,
-
   Tag
 } from 'lucide-react';
+import { apiClient } from '@/lib/apiClient';
 
 interface MemberEntitlement {
   user_id: string;
@@ -20,82 +20,95 @@ interface MemberEntitlement {
   is_seat_covered: boolean;
 }
 
-interface SubscriptionOverviewState {
+interface MemberDTO {
+  id: string;
+  user_id: string;
+  display_name: string;
+  phone_number?: string | null;
+  email?: string | null;
+  role: string;
   status: string;
-  plan_name: string;
-  currency: string;
-  billing_period: string;
-  list_price: number;
-  additional_member_list_price: number;
-  discount_type: string;
-  discount_value: number;
-  discount_amount: number;
-  effective_price: number;
-  promotion_code: string;
-  days_remaining: number;
-  is_in_introductory_trial: boolean;
-  total_active_members: number;
-  free_entitled_seats: number;
-  required_paid_seats: number;
-  active_paid_seats: number;
-  is_fully_covered: boolean;
-  annual_total_price: number;
-  members: MemberEntitlement[];
 }
 
 export default function SubscriptionPage() {
-  const [overview, setOverview] = useState<SubscriptionOverviewState>({
-    status: 'TRIALING',
-    plan_name: 'Ozhzo Home Standard',
-    currency: 'USD',
-    billing_period: 'ANNUAL',
-    list_price: 0,
-    additional_member_list_price: 20.00,
-    discount_type: 'PERCENTAGE',
-    discount_value: 50.00,
-    discount_amount: 10.00,
-    effective_price: 10.00,
-    promotion_code: 'LAUNCH50',
-    days_remaining: 365,
-    is_in_introductory_trial: true,
-    total_active_members: 3,
-    free_entitled_seats: 1,
-    required_paid_seats: 2,
-    active_paid_seats: 2,
-    is_fully_covered: true,
-    annual_total_price: 20.00,
-    members: [
-      { user_id: '1', display_name: 'Home Owner', role: 'OWNER', is_free_entitled: true, is_seat_covered: true },
-      { user_id: '2', display_name: 'Family Member 1', role: 'MEMBER', is_free_entitled: false, is_seat_covered: true },
-      { user_id: '3', display_name: 'Family Member 2', role: 'CHILD', is_free_entitled: false, is_seat_covered: true },
-    ]
-  });
+  const [members, setMembers] = useState<MemberDTO[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const [seats, setSeats] = useState(2);
+  const [seats, setSeats] = useState(0);
 
-  // Dynamic currency symbol formatter
-  const formatCurrency = (amount: number, currency: string) => {
+  const planName = 'Ozhzo Home Standard';
+  const currency = 'USD';
+  const additionalMemberListPrice = 20.00;
+  const discountPercent = 50.00;
+  const discountAmount = 10.00;
+  const effectivePrice = 10.00;
+  const promotionCode = 'LAUNCH50';
+
+  useEffect(() => {
+    const loadSubscriptionAndMembers = async () => {
+      setIsLoading(true);
+      try {
+        const savedHomeId = localStorage.getItem('active_home_id');
+        let homeId = savedHomeId;
+
+        if (!homeId) {
+          const homes = await apiClient.get<Array<{ id: string }>>('/homes');
+          if (homes && homes.length > 0) {
+            homeId = homes[0].id;
+            localStorage.setItem('active_home_id', homeId);
+          }
+        }
+
+        if (homeId) {
+          const membersData = await apiClient.get<MemberDTO[]>(`/homes/${homeId}/members`);
+          setMembers(membersData || []);
+          const requiredPaid = Math.max(0, (membersData?.length || 1) - 1);
+          setSeats(requiredPaid);
+        }
+      } catch (err) {
+        console.error('Failed to load subscription members:', err);
+        setMembers([]);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadSubscriptionAndMembers();
+  }, []);
+
+  const formatCurrency = (amount: number, curr: string) => {
     try {
       return new Intl.NumberFormat('en-US', {
         style: 'currency',
-        currency: currency || 'USD',
+        currency: curr || 'USD',
       }).format(amount);
     } catch {
-      return `${currency} ${amount.toFixed(2)}`;
+      return `${curr} ${amount.toFixed(2)}`;
     }
   };
 
   const handleUpdateSeats = (newSeats: number) => {
     if (newSeats < 0) return;
     setSeats(newSeats);
-    const newTotal = newSeats * overview.effective_price;
-    setOverview(prev => ({
-      ...prev,
-      active_paid_seats: newSeats,
-      annual_total_price: newTotal,
-      is_fully_covered: newSeats >= prev.required_paid_seats
-    }));
   };
+
+  const totalMembers = members.length || 1;
+  const freeEntitledSeats = 1;
+  const requiredPaidSeats = Math.max(0, totalMembers - freeEntitledSeats);
+  const isFullyCovered = seats >= requiredPaidSeats;
+  const annualTotalPrice = seats * effectivePrice;
+
+  const memberEntitlements: MemberEntitlement[] = members.map((m, index) => {
+    const isFree = index === 0;
+    const isCovered = isFree || (index <= seats);
+    return {
+      user_id: m.user_id,
+      display_name: m.display_name,
+      role: m.role,
+      is_free_entitled: isFree,
+      is_seat_covered: isCovered
+    };
+  });
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)', maxWidth: '900px' }}>
@@ -119,63 +132,58 @@ export default function SubscriptionPage() {
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <h2 style={{ fontSize: '17px', fontWeight: 700, color: 'var(--color-primary-900)' }}>
-                  {overview.plan_name}
+                  {planName}
                 </h2>
-                <Badge variant="in-stock">
-                  {overview.is_in_introductory_trial ? 'Introductory Period Active' : overview.status}
+                <Badge variant={isFullyCovered ? 'in-stock' : 'overdue'}>
+                  {isFullyCovered ? 'Seats Covered' : 'Additional Seats Needed'}
                 </Badge>
-                {overview.promotion_code && (
-                  <Badge variant="neutral">Promo: {overview.promotion_code}</Badge>
-                )}
+                <Badge variant="neutral">Promo: {promotionCode}</Badge>
               </div>
               <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
-                {overview.days_remaining} days remaining in current billing cycle ({overview.billing_period.toLowerCase()}).
+                Annual household custody plan with multi-seat member synchronization.
               </p>
             </div>
           </div>
 
           <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: '24px', fontWeight: 800, color: 'var(--color-primary-900)' }}>
-              {formatCurrency(overview.annual_total_price, overview.currency)}{' '}
-              <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--color-text-secondary)' }}>
-                / {overview.billing_period.toLowerCase()}
-              </span>
+            <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--color-primary-900)' }}>
+              {formatCurrency(annualTotalPrice, currency)} / year
             </div>
-            <span style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>
-              {overview.active_paid_seats} additional member seat(s)
-            </span>
+            <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+              365 Days Remaining
+            </div>
           </div>
         </div>
       </Card>
 
-      {/* Dynamic Pricing Model Breakdown */}
+      {/* Pricing Breakdown Grid */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 'var(--space-4)' }}>
         <Card variant="subtle">
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-            <ShieldCheck size={18} color="var(--status-in-stock)" />
-            <h3 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-primary-900)' }}>Home Admin / Custodian</h3>
+            <ShieldCheck size={18} color="var(--color-primary-900)" />
+            <h3 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-primary-900)' }}>Standard List Price</h3>
           </div>
           <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--color-primary-900)' }}>
-            {overview.is_in_introductory_trial ? 'Free for 1st Year' : formatCurrency(overview.list_price, overview.currency)}
+            {formatCurrency(additionalMemberListPrice, currency)}{' '}
+            <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--color-text-secondary)' }}>
+              / additional member / yr
+            </span>
           </div>
           <p style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
-            Configurable introductory offer includes primary home creator and custodian.
+            Includes 1 free Home Admin account plus shared memory storage.
           </p>
         </Card>
 
         <Card variant="subtle">
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-            <Tag size={18} color="var(--color-primary-900)" />
-            <h3 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-primary-900)' }}>Standard List Price</h3>
+            <Tag size={18} color="var(--status-low-stock)" />
+            <h3 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-primary-900)' }}>Launch Promotion Discount</h3>
           </div>
-          <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--color-text-secondary)', textDecoration: 'line-through' }}>
-            {formatCurrency(overview.additional_member_list_price, overview.currency)}{' '}
-            <span style={{ fontSize: '13px', fontWeight: 500 }}>
-              / user / {overview.billing_period.toLowerCase()}
-            </span>
+          <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--status-in-stock)' }}>
+            -{discountPercent}% OFF
           </div>
           <p style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
-            Standard published seat list price before promotional discounts.
+            Standard promotional deduction: -{formatCurrency(discountAmount, currency)}/seat.
           </p>
         </Card>
 
@@ -185,13 +193,13 @@ export default function SubscriptionPage() {
             <h3 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-primary-900)' }}>Effective Customer Price</h3>
           </div>
           <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--color-primary-900)' }}>
-            {formatCurrency(overview.effective_price, overview.currency)}{' '}
+            {formatCurrency(effectivePrice, currency)}{' '}
             <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--status-in-stock)' }}>
-              ({overview.discount_value}% OFF)
+              ({discountPercent}% OFF)
             </span>
           </div>
           <p style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
-            Active promotion: <strong>{overview.promotion_code}</strong> ({formatCurrency(overview.discount_amount, overview.currency)} discount/seat).
+            Active promotion: <strong>{promotionCode}</strong> ({formatCurrency(discountAmount, currency)} discount/seat).
           </p>
         </Card>
       </div>
@@ -204,7 +212,7 @@ export default function SubscriptionPage() {
               Member Entitlements & Seat Allocation
             </h3>
             <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)' }}>
-              Breakdown of free introductory entitlement vs. dynamically allocated paid seats.
+              Breakdown of free introductory entitlement vs. dynamically allocated paid seats for current Home members ({totalMembers} active).
             </p>
           </div>
 
@@ -221,40 +229,48 @@ export default function SubscriptionPage() {
           </div>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-          {overview.members.map((m) => (
-            <div
-              key={m.user_id}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '12px 16px',
-                borderRadius: 'var(--radius-md)',
-                backgroundColor: 'var(--color-surface-subtle)'
-              }}
-            >
-              <div>
-                <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
-                  {m.display_name}
+        {isLoading ? (
+          <div style={{ height: '80px', backgroundColor: 'var(--color-surface-subtle)', borderRadius: 'var(--radius-md)', animation: 'pulse 1.5s infinite' }} />
+        ) : memberEntitlements.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: 'var(--space-6)', color: 'var(--color-text-secondary)', fontSize: '14px' }}>
+            No household members found for active Home workspace.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+            {memberEntitlements.map((m) => (
+              <div
+                key={m.user_id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '12px 16px',
+                  borderRadius: 'var(--radius-md)',
+                  backgroundColor: 'var(--color-surface-subtle)'
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
+                    {m.display_name}
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                    Role: {m.role}
+                  </div>
                 </div>
-                <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
-                  Role: {m.role}
-                </div>
-              </div>
 
-              <div>
-                {m.is_free_entitled ? (
-                  <Badge variant="in-stock">Free Admin Entitlement</Badge>
-                ) : m.is_seat_covered ? (
-                  <Badge variant="neutral">Paid Member Seat</Badge>
-                ) : (
-                  <Badge variant="overdue">Uncovered Seat</Badge>
-                )}
+                <div>
+                  {m.is_free_entitled ? (
+                    <Badge variant="in-stock">Free Admin Entitlement</Badge>
+                  ) : m.is_seat_covered ? (
+                    <Badge variant="neutral">Paid Member Seat</Badge>
+                  ) : (
+                    <Badge variant="overdue">Uncovered Seat</Badge>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </Card>
     </div>
   );

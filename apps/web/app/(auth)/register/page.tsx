@@ -7,6 +7,7 @@ import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Logo } from '@/components/brand/Logo';
+import { apiClient } from '@/lib/apiClient';
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -66,7 +67,11 @@ export default function RegisterPage() {
         throw new Error('Registration succeeded but no access token was returned.');
       }
 
-      localStorage.setItem('access_token', data.data.access_token);
+      apiClient.setTokens({
+        access_token: data.data.access_token,
+        refresh_token: data.data.refresh_token
+      });
+
       router.push('/dashboard');
     } catch (err: any) {
       setError(err.message || 'Failed to register');
@@ -98,7 +103,7 @@ export default function RegisterPage() {
             id="fullName"
             type="text"
             label="Full Name"
-            placeholder="Alex Rivera"
+            placeholder="Enter your full name"
             value={fullName}
             onChange={(e) => setFullName(e.target.value)}
             required

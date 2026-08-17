@@ -7,6 +7,7 @@ import { Card } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Logo } from '@/components/brand/Logo';
+import { apiClient } from '@/lib/apiClient';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -63,7 +64,11 @@ export default function LoginPage() {
         throw new Error('Login succeeded but no access token was returned.');
       }
 
-      localStorage.setItem('access_token', data.data.access_token);
+      apiClient.setTokens({
+        access_token: data.data.access_token,
+        refresh_token: data.data.refresh_token
+      });
+
       router.push('/dashboard');
     } catch (err: any) {
       setError(err.message || 'Failed to sign in');

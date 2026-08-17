@@ -16,6 +16,7 @@ import {
   Users,
   Check
 } from 'lucide-react';
+import { apiClient } from '@/lib/apiClient';
 
 interface DashboardData {
   greeting: {
@@ -93,31 +94,26 @@ export default function DashboardPage() {
     setIsLoading(true);
     setError(null);
     try {
-      // In production/dev this fetches GET /api/v1/homes/{home_id}/dashboard
-      // For initial load, we query the live backend API
-      const token = localStorage.getItem('access_token');
-      const homeId = localStorage.getItem('active_home_id');
-
-	if (!homeId) {
-	  setData(null);
-	  setIsLoading(false);
-	  return;
-	}      
-      const res = await fetch(`/api/v1/homes/${homeId}/dashboard`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
-      });
-
-      if (res.ok) {
-        const json = await res.json();
-        if (json.success) {
-          setData(json.data);
-          return;
+      let homeId = apiClient.getActiveHomeId();
+      if (!homeId) {
+        const homes = await apiClient.get<Array<{ id: string }>>('/homes');
+        if (homes && homes.length > 0) {
+          homeId = homes[0].id;
+          apiClient.setActiveHomeId(homeId);
         }
       }
 
-      setData(null);
+      if (!homeId) {
+        setData(null);
+        setIsLoading(false);
+        return;
+      }
+
+      const res = await apiClient.get<DashboardData>(`/homes/${homeId}/dashboard`);
+      setData(res || null);
     } catch (err: any) {
-      setError('Unable to load dashboard data. Please verify your connection.');
+      setError(err?.message || 'Unable to load dashboard data. Please verify your connection.');
+      setData(null);
     } finally {
       setIsLoading(false);
     }

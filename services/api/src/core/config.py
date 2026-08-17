@@ -18,7 +18,18 @@ class Settings(BaseSettings):
     # API
     API_PORT: int = 8000
     API_HOST: str = "0.0.0.0"
-    ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:8000"
+    ALLOWED_ORIGINS: str = (
+        "http://localhost:3000,"
+        "http://127.0.0.1:3000,"
+        "http://localhost:3001,"
+        "http://127.0.0.1:3001,"
+        "http://localhost:8000,"
+        "http://127.0.0.1:8000,"
+        "https://ozhzo.com,"
+        "https://www.ozhzo.com,"
+        "https://ozhzo-web.onrender.com,"
+        "https://ozhzo-verse.onrender.com"
+    )
 
     # Security
     JWT_SECRET_KEY: str = "default_development_secret_key_change_in_prod_32char"
@@ -48,7 +59,19 @@ class Settings(BaseSettings):
     @computed_field
     @property
     def cors_origins(self) -> List[str]:
-        return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",") if origin.strip()]
+        origins = [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",") if origin.strip()]
+        dev_origins = [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://localhost:3001",
+            "http://127.0.0.1:3001",
+            "http://localhost:8000",
+            "http://127.0.0.1:8000",
+        ]
+        for dev in dev_origins:
+            if dev not in origins:
+                origins.append(dev)
+        return origins
 
 
 settings = Settings()

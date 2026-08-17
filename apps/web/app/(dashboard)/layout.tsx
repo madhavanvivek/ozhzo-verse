@@ -14,7 +14,6 @@ import {
   CheckSquare,
   Receipt,
   Calendar,
-  Users,
   Settings,
   Bell,
   Search,
@@ -34,49 +33,77 @@ export default function DashboardLayout({
    { home_id: string; name: string; role: string }[]
   >([]);
   const [activeHomeId, setActiveHomeId] = useState<string | null>(null);
+  const [userProfile, setUserProfile] = useState<{
+    display_name: string;
+    email?: string | null;
+    phone_number?: string | null;
+  } | null>(null);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
+
   useEffect(() => {
-    const loadHomes = async () => {
+    const loadUserDataAndHomes = async () => {
       try {
-        const data = await apiClient.get<
-          Array<{
-            id: string;
-            name: string;
-            role: string;
-          }>
-        >('/homes');
+        const [userRes, homesRes] = await Promise.allSettled([
+          apiClient.get<{
+            display_name: string;
+            email?: string | null;
+            phone_number?: string | null;
+          }>('/users/me'),
+          apiClient.get<
+            Array<{
+              id: string;
+              name: string;
+              role: string;
+            }>
+          >('/homes')
+        ]);
 
-        const mappedHomes = data.map((home) => ({
-          home_id: home.id,
-          name: home.name,
-          role: home.role
-        }));
+        if (userRes.status === 'fulfilled' && userRes.value) {
+          setUserProfile(userRes.value);
+        }
 
-        setHomes(mappedHomes);
+        if (homesRes.status === 'fulfilled' && homesRes.value) {
+          const mappedHomes = homesRes.value.map((home) => ({
+            home_id: home.id,
+            name: home.name,
+            role: home.role
+          }));
 
-        const savedHomeId = localStorage.getItem('active_home_id');
+          setHomes(mappedHomes);
 
-        if (savedHomeId && mappedHomes.some(h => h.home_id === savedHomeId)) {
-          setActiveHomeId(savedHomeId);
-        } else if (mappedHomes.length > 0) {
-          setActiveHomeId(mappedHomes[0].home_id);
-          localStorage.setItem('active_home_id', mappedHomes[0].home_id);
-        } else {
-          setActiveHomeId(null);
-          localStorage.removeItem('active_home_id');
+          const savedHomeId = localStorage.getItem('active_home_id');
+
+          if (savedHomeId && mappedHomes.some((h) => h.home_id === savedHomeId)) {
+            setActiveHomeId(savedHomeId);
+          } else if (mappedHomes.length > 0) {
+            setActiveHomeId(mappedHomes[0].home_id);
+            localStorage.setItem('active_home_id', mappedHomes[0].home_id);
+          } else {
+            setActiveHomeId(null);
+            localStorage.removeItem('active_home_id');
+          }
         }
       } catch (error) {
-        console.error('Failed to load homes:', error);
+        console.error('Failed to load user and homes:', error);
         setHomes([]);
         setActiveHomeId(null);
         localStorage.removeItem('active_home_id');
       }
     };
 
-    loadHomes();
+    loadUserDataAndHomes();
   }, []);
+
+  const getInitials = (name?: string | null): string => {
+    if (!name || !name.trim()) return 'U';
+    const parts = name.trim().split(/\s+/);
+    if (parts.length === 1) {
+      return parts[0].substring(0, 2).toUpperCase();
+    }
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  };
   const activeHome = homes.find(h => h.home_id === activeHomeId);
 
   const navItems = [
@@ -87,7 +114,6 @@ export default function DashboardLayout({
     { label: 'Tasks & Chores', href: '/tasks', icon: CheckSquare },
     { label: 'Bills & Reminders', href: '/bills', icon: Receipt },
     { label: 'Calendar', href: '/calendar', icon: Calendar },
-    { label: 'Family Members', href: '/members', icon: Users },
     { label: 'Home Settings', href: '/settings', icon: Settings },
   ];
 
@@ -188,13 +214,55 @@ export default function DashboardLayout({
               <span>Add</span>
             </Button>
 
-            <button style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', position: 'relative' }}>
+            <Link
+              href="/notifications"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                textDecoration: 'none',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                padding: '6px',
+                position: 'relative'
+              }}
+              aria-label="Notifications"
+            >
               <Bell size={20} color="var(--color-text-secondary)" />
-              <span style={{ position: 'absolute', top: '4px', right: '4px', width: '8px', height: '8px', backgroundColor: 'var(--status-low-stock)', borderRadius: '50%' }} />
-            </button>
-            <div style={{ width: '32px', height: '32px', borderRadius: '50%', backgroundColor: 'var(--color-primary-900)', color: 'var(--color-text-inverse)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: 600 }}>
-              VM
-            </div>
+              <span
+                style={{
+                  position: 'absolute',
+                  top: '4px',
+                  right: '4px',
+                  width: '8px',
+                  height: '8px',
+                  backgroundColor: 'var(--status-low-stock)',
+                  borderRadius: '50%'
+                }}
+              />
+            </Link>
+
+            <Link
+              href="/profile"
+              style={{
+                width: '32px',
+                height: '32px',
+                borderRadius: '50%',
+                backgroundColor: 'var(--color-primary-900)',
+                color: 'var(--color-text-inverse)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '13px',
+                fontWeight: 600,
+                textDecoration: 'none',
+                cursor: 'pointer'
+              }}
+              aria-label="User Profile"
+            >
+              {getInitials(userProfile?.display_name)}
+            </Link>
           </div>
         </header>
 

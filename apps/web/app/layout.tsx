@@ -7,24 +7,15 @@ export const metadata: Metadata = {
   icons: {
     icon: [
       {
-        url: '/brand/favicon/favicon.ico'
-      },
-      {
-        url: '/brand/favicon/ozhzo-favicon-32.png',
-        sizes: '32x32',
-        type: 'image/png'
-      },
-      {
-        url: '/brand/favicon/ozhzo-verse-favicon.svg',
+        url: '/brand/favicon/ozhzo-primary-favicon.svg',
         type: 'image/svg+xml'
       }
     ],
-    shortcut: '/brand/favicon/favicon.ico',
+    shortcut: '/brand/favicon/ozhzo-primary-favicon.svg',
     apple: [
       {
-        url: '/brand/icons/apple-touch-icon.png',
-        sizes: '180x180',
-        type: 'image/png'
+        url: '/brand/favicon/ozhzo-primary-favicon.svg',
+        type: 'image/svg+xml'
       }
     ]
   },

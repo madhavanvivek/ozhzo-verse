@@ -1,4 +1,23 @@
-import type { ApiResponse, AuthTokens } from '@ozhzo/types';
+export interface AuthTokens {
+  access_token: string;
+  refresh_token?: string | null;
+  token_type?: string;
+  expires_in?: number;
+  user_id?: string;
+  phone_number?: string | null;
+  email?: string | null;
+}
+
+export interface ApiResponse<T = any> {
+  success: boolean;
+  data: T;
+  error?: {
+    code?: string;
+    message?: string;
+    details?: any;
+  };
+  detail?: string;
+}
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || '/api/v1';
 
@@ -6,6 +25,7 @@ class ApiClient {
   private accessToken: string | null = null;
   private refreshToken: string | null = null;
   private activeHomeId: string | null = null;
+  private refreshPromise: Promise<string | null> | null = null;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -15,13 +35,38 @@ class ApiClient {
     }
   }
 
-  setTokens(tokens: AuthTokens) {
+  getAccessToken(): string | null {
+    if (!this.accessToken && typeof window !== 'undefined') {
+      this.accessToken = localStorage.getItem('access_token');
+    }
+    return this.accessToken;
+  }
+
+  getRefreshToken(): string | null {
+    if (!this.refreshToken && typeof window !== 'undefined') {
+      this.refreshToken = localStorage.getItem('refresh_token');
+    }
+    return this.refreshToken;
+  }
+
+  getActiveHomeId(): string | null {
+    if (!this.activeHomeId && typeof window !== 'undefined') {
+      this.activeHomeId = localStorage.getItem('active_home_id');
+    }
+    return this.activeHomeId;
+  }
+
+  setTokens(tokens: { access_token: string; refresh_token?: string | null }) {
     this.accessToken = tokens.access_token;
-    this.refreshToken = tokens.refresh_token;
+    if (tokens.refresh_token !== undefined && tokens.refresh_token !== null) {
+      this.refreshToken = tokens.refresh_token;
+    }
 
     if (typeof window !== 'undefined') {
       localStorage.setItem('access_token', tokens.access_token);
-      localStorage.setItem('refresh_token', tokens.refresh_token);
+      if (tokens.refresh_token) {
+        localStorage.setItem('refresh_token', tokens.refresh_token);
+      }
     }
   }
 
@@ -47,23 +92,72 @@ class ApiClient {
     }
   }
 
+  private handleUnauthorizedRedirect() {
+    if (typeof window !== 'undefined') {
+      const pathname = window.location.pathname;
+      if (!pathname.startsWith('/login') && !pathname.startsWith('/register')) {
+        window.location.href = '/login';
+      }
+    }
+  }
+
+  private async performTokenRefresh(): Promise<string | null> {
+    const currentRefreshToken = this.getRefreshToken();
+    if (!currentRefreshToken) {
+      this.clearTokens();
+      this.handleUnauthorizedRedirect();
+      return null;
+    }
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          refresh_token: currentRefreshToken
+        })
+      });
+
+      if (!res.ok) {
+        this.clearTokens();
+        this.handleUnauthorizedRedirect();
+        return null;
+      }
+
+      const json: ApiResponse<AuthTokens> = await res.json();
+      if (json.success && json.data?.access_token) {
+        this.setTokens({
+          access_token: json.data.access_token,
+          refresh_token: json.data.refresh_token || currentRefreshToken
+        });
+        return json.data.access_token;
+      } else {
+        this.clearTokens();
+        this.handleUnauthorizedRedirect();
+        return null;
+      }
+    } catch {
+      this.clearTokens();
+      this.handleUnauthorizedRedirect();
+      return null;
+    }
+  }
+
   async request<T>(
     endpoint: string,
     options: RequestInit = {}
   ): Promise<T> {
     const headers = new Headers(options.headers);
 
-    headers.set('Content-Type', 'application/json');
-
-    if (this.accessToken) {
-      headers.set(
-        'Authorization',
-        `Bearer ${this.accessToken}`
-      );
+    if (!headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json');
     }
 
-    if (this.activeHomeId) {
-      headers.set('X-Home-ID', this.activeHomeId);
+    const token = this.getAccessToken();
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`);
     }
 
     let response = await fetch(`${API_BASE_URL}${endpoint}`, {
@@ -71,49 +165,27 @@ class ApiClient {
       headers
     });
 
-    // Handle 401 token refresh retry
-    if (
-      response.status === 401 &&
-      this.refreshToken &&
-      !endpoint.includes('/auth/')
-    ) {
-      try {
-        const refreshRes = await fetch(
-          `${API_BASE_URL}/auth/refresh`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              refresh_token: this.refreshToken
-            })
-          }
-        );
+    // Handle 401 token refresh retry (avoid loop on auth endpoints)
+    if (response.status === 401 && !endpoint.includes('/auth/')) {
+      if (!this.refreshPromise) {
+        this.refreshPromise = this.performTokenRefresh().finally(() => {
+          this.refreshPromise = null;
+        });
+      }
 
-        const refreshData: ApiResponse<AuthTokens> =
-          await refreshRes.json();
+      const newAccessToken = await this.refreshPromise;
 
-        if (refreshData.success) {
-          this.setTokens(refreshData.data);
+      if (newAccessToken) {
+        const retryHeaders = new Headers(options.headers);
+        retryHeaders.set('Content-Type', 'application/json');
+        retryHeaders.set('Authorization', `Bearer ${newAccessToken}`);
 
-          headers.set(
-            'Authorization',
-            `Bearer ${refreshData.data.access_token}`
-          );
-
-          response = await fetch(
-            `${API_BASE_URL}${endpoint}`,
-            {
-              ...options,
-              headers
-            }
-          );
-        } else {
-          this.clearTokens();
-        }
-      } catch {
-        this.clearTokens();
+        response = await fetch(`${API_BASE_URL}${endpoint}`, {
+          ...options,
+          headers: retryHeaders
+        });
+      } else {
+        throw new Error('Invalid or expired session. Please sign in again.');
       }
     }
 
@@ -135,7 +207,7 @@ class ApiClient {
       }
     }
 
-    if (!response.ok || (data && !data.success)) {
+    if (!response.ok || (data && data.success === false)) {
       const errorMsg =
         data?.error?.message ||
         data?.detail ||
@@ -152,17 +224,17 @@ class ApiClient {
     });
   }
 
-  post<T>(endpoint: string, body: unknown) {
+  post<T>(endpoint: string, body?: unknown) {
     return this.request<T>(endpoint, {
       method: 'POST',
-      body: JSON.stringify(body)
+      body: body !== undefined ? JSON.stringify(body) : undefined
     });
   }
 
-  patch<T>(endpoint: string, body: unknown) {
+  patch<T>(endpoint: string, body?: unknown) {
     return this.request<T>(endpoint, {
       method: 'PATCH',
-      body: JSON.stringify(body)
+      body: body !== undefined ? JSON.stringify(body) : undefined
     });
   }
 

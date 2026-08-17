@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import {
@@ -14,63 +14,67 @@ import {
   Sparkles,
   Check
 } from 'lucide-react';
+import { apiClient } from '@/lib/apiClient';
 
 interface NotificationItem {
   id: string;
   title: string;
   body: string;
-  type: 'TASK_ASSIGNED' | 'BILL_REMINDER' | 'LOW_STOCK' | 'EVENT_REMINDER' | 'HOME_INVITATION' | 'SYSTEM';
+  type: string;
   is_read: boolean;
   created_at: string;
+}
+
+interface PaginatedNotifications {
+  items: NotificationItem[];
+  unread_count: number;
+  total: number;
 }
 
 export default function NotificationsPage() {
   const [filter, setFilter] = useState<'ALL' | 'UNREAD'>('ALL');
   const [showSettings, setShowSettings] = useState(false);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const [notifications, setNotifications] = useState<NotificationItem[]>([
-    {
-      id: '1',
-      title: 'Low Stock Alert: Extra Virgin Olive Oil',
-      body: 'Olive Oil reached 0.0 bottles (min: 1.0 bottles). Added to shopping suggestion.',
-      type: 'LOW_STOCK',
-      is_read: false,
-      created_at: '2026-08-13T10:30:00Z'
-    },
-    {
-      id: '2',
-      title: 'Chore Assigned: Take out recycling & trash',
-      body: 'Alex assigned you the task "Take out recycling & trash" (Due: Today, 6:00 PM).',
-      type: 'TASK_ASSIGNED',
-      is_read: false,
-      created_at: '2026-08-13T09:15:00Z'
-    },
-    {
-      id: '3',
-      title: 'Bill Due Reminder: Fiber Internet',
-      body: 'Upcoming bill "Fiber Internet" for USD 79.99 is due in 3 days.',
-      type: 'BILL_REMINDER',
-      is_read: true,
-      created_at: '2026-08-12T14:00:00Z'
-    },
-    {
-      id: '4',
-      title: 'Calendar Invitation: Family Dinner & Game Night',
-      body: 'Alex invited you to Family Dinner & Game Night on Fri, Aug 14 at 7:00 PM.',
-      type: 'EVENT_REMINDER',
-      is_read: true,
-      created_at: '2026-08-11T16:20:00Z'
+  const fetchNotifications = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const data = await apiClient.get<PaginatedNotifications>('/notifications');
+      setNotifications(data?.items || []);
+    } catch (err: any) {
+      console.error('Failed to fetch notifications:', err);
+      setError(err?.message || 'Unable to load notifications.');
+      setNotifications([]);
+    } finally {
+      setIsLoading(false);
     }
-  ]);
+  };
+
+  useEffect(() => {
+    fetchNotifications();
+  }, []);
 
   const unreadCount = notifications.filter(n => !n.is_read).length;
 
-  const handleMarkRead = (id: string) => {
-    setNotifications(notifications.map(n => n.id === id ? { ...n, is_read: true } : n));
+  const handleMarkRead = async (id: string) => {
+    try {
+      await apiClient.patch(`/notifications/${id}/read`, {});
+      setNotifications(notifications.map(n => n.id === id ? { ...n, is_read: true } : n));
+    } catch (err) {
+      console.error('Failed to mark notification read:', err);
+    }
   };
 
-  const handleMarkAllRead = () => {
-    setNotifications(notifications.map(n => ({ ...n, is_read: true })));
+  const handleMarkAllRead = async () => {
+    try {
+      await apiClient.post('/notifications/mark-all-read', {});
+      setNotifications(notifications.map(n => ({ ...n, is_read: true })));
+    } catch (err) {
+      console.error('Failed to mark all notifications read:', err);
+    }
   };
 
   const filtered = notifications.filter(n => {
@@ -180,9 +184,32 @@ export default function NotificationsPage() {
         </button>
       </div>
 
+      {error && (
+        <div style={{ padding: '10px 14px', backgroundColor: 'var(--status-overdue-bg)', color: 'var(--status-overdue)', borderRadius: 'var(--radius-md)', fontSize: '13px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span>{error}</span>
+          <Button size="sm" variant="ghost" onClick={fetchNotifications}>
+            Retry
+          </Button>
+        </div>
+      )}
+
       {/* Notifications List */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-        {filtered.length === 0 ? (
+        {isLoading ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+            {[1, 2, 3].map((i) => (
+              <div
+                key={i}
+                style={{
+                  height: '72px',
+                  backgroundColor: 'var(--color-surface-subtle)',
+                  borderRadius: 'var(--radius-md)',
+                  animation: 'pulse 1.5s infinite'
+                }}
+              />
+            ))}
+          </div>
+        ) : filtered.length === 0 ? (
           <Card style={{ padding: 'var(--space-12) var(--space-4)', textAlign: 'center' }}>
             <Sparkles size={36} color="var(--status-in-stock)" style={{ margin: '0 auto 10px' }} />
             <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--color-primary-900)' }}>

@@ -15,7 +15,6 @@ export interface LogoProps {
 
 export const Logo: React.FC<LogoProps> = ({
   variant = 'full',
-  theme = 'light',
   height,
   width,
   className = '',
@@ -25,10 +24,8 @@ export const Logo: React.FC<LogoProps> = ({
   const isFull = variant === 'full';
 
   const src = isFull
-    ? '/brand/logo/ozhzo-verse-logo-primary-dark.svg'
-    : theme === 'dark'
-      ? '/brand/icons/ozhzo-verse-mark-dark.svg'
-      : '/brand/icons/ozhzo-verse-mark.svg';
+    ? '/images/ozhzo-logo.png'
+    : '/brand/favicon/ozhzo-primary-favicon.svg';
 
   const defaultWidth = isFull ? 180 : 36;
   const defaultHeight = isFull ? 48 : 36;

@@ -96,6 +96,22 @@ export default function DashboardLayout({
     loadUserDataAndHomes();
   }, []);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setIsSearchOpen((prev) => !prev);
+      }
+      if (e.key === 'Escape') {
+        setIsSearchOpen(false);
+        setIsQuickAddOpen(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   const getInitials = (name?: string | null): string => {
     if (!name || !name.trim()) return 'U';
     const parts = name.trim().split(/\s+/);

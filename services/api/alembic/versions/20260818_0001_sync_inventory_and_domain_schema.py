@@ -233,7 +233,124 @@ def upgrade() -> None:
         )
         existing_tables.add("shopping_list_items")
 
-    # 10. stock_movements
+    # 10. purchase_items
+    if "purchase_items" not in existing_tables:
+        op.create_table(
+            "purchase_items",
+            sa.Column("id", UUID(as_uuid=True), primary_key=True),
+            sa.Column("home_id", UUID(as_uuid=True), sa.ForeignKey("homes.id", ondelete="CASCADE"), nullable=False),
+            sa.Column("inventory_item_id", UUID(as_uuid=True), sa.ForeignKey("inventory_items.id", ondelete="SET NULL"), nullable=True),
+            sa.Column("name", sa.String(150), nullable=False),
+            sa.Column("quantity", sa.Numeric(10, 3), server_default="1.000", nullable=False),
+            sa.Column("unit", sa.String(32), server_default="pcs", nullable=False),
+            sa.Column("notes", sa.Text(), nullable=True),
+            sa.Column("status", sa.String(32), server_default="PENDING", nullable=False),
+            sa.Column("added_by", UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
+            sa.Column("purchased_by", UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
+            sa.Column("purchased_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("restocked_to_inventory", sa.Boolean(), server_default="false", nullable=False),
+            sa.Column("version", sa.Integer(), server_default="1", nullable=False),
+            sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+            sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+            sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+        )
+        op.create_index("idx_purchase_items_home_status", "purchase_items", ["home_id", "status"])
+        existing_tables.add("purchase_items")
+
+    # 11. purchase_history
+    if "purchase_history" not in existing_tables:
+        op.create_table(
+            "purchase_history",
+            sa.Column("id", UUID(as_uuid=True), primary_key=True),
+            sa.Column("home_id", UUID(as_uuid=True), sa.ForeignKey("homes.id", ondelete="CASCADE"), nullable=False),
+            sa.Column("purchase_item_id", UUID(as_uuid=True), sa.ForeignKey("purchase_items.id", ondelete="SET NULL"), nullable=True),
+            sa.Column("inventory_item_id", UUID(as_uuid=True), sa.ForeignKey("inventory_items.id", ondelete="SET NULL"), nullable=True),
+            sa.Column("stock_movement_id", UUID(as_uuid=True), nullable=True),
+            sa.Column("name", sa.String(150), nullable=False),
+            sa.Column("quantity", sa.Numeric(10, 3), nullable=False),
+            sa.Column("unit", sa.String(32), server_default="pcs", nullable=False),
+            sa.Column("purchased_by", UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
+            sa.Column("purchased_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+            sa.Column("restocked_to_inventory", sa.Boolean(), server_default="false", nullable=False),
+            sa.Column("notes", sa.Text(), nullable=True),
+            sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        )
+        existing_tables.add("purchase_history")
+
+    # 12. asset_loans
+    if "asset_loans" not in existing_tables:
+        op.create_table(
+            "asset_loans",
+            sa.Column("id", UUID(as_uuid=True), primary_key=True),
+            sa.Column("home_id", UUID(as_uuid=True), sa.ForeignKey("homes.id", ondelete="CASCADE"), nullable=False),
+            sa.Column("item_id", UUID(as_uuid=True), sa.ForeignKey("inventory_items.id", ondelete="CASCADE"), nullable=False),
+            sa.Column("borrower_type", sa.String(32), server_default="MEMBER", nullable=False),
+            sa.Column("borrower_user_id", UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
+            sa.Column("borrower_name", sa.String(120), nullable=False),
+            sa.Column("borrower_contact", sa.String(100), nullable=True),
+            sa.Column("loan_status", sa.String(32), server_default="ACTIVE", nullable=False),
+            sa.Column("borrowed_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+            sa.Column("expected_return_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("returned_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("return_location_id", UUID(as_uuid=True), sa.ForeignKey("locations.id", ondelete="SET NULL"), nullable=True),
+            sa.Column("return_location_path", sa.Text(), nullable=True),
+            sa.Column("issued_by", UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
+            sa.Column("received_by", UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
+            sa.Column("notes", sa.Text(), nullable=True),
+            sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+            sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        )
+        op.create_index("idx_asset_loans_home_status", "asset_loans", ["home_id", "loan_status"])
+        existing_tables.add("asset_loans")
+
+    # 13. location_movements
+    if "location_movements" not in existing_tables:
+        op.create_table(
+            "location_movements",
+            sa.Column("id", UUID(as_uuid=True), primary_key=True),
+            sa.Column("home_id", UUID(as_uuid=True), sa.ForeignKey("homes.id", ondelete="CASCADE"), nullable=False),
+            sa.Column("item_id", UUID(as_uuid=True), sa.ForeignKey("inventory_items.id", ondelete="CASCADE"), nullable=False),
+            sa.Column("from_location_id", UUID(as_uuid=True), sa.ForeignKey("locations.id", ondelete="SET NULL"), nullable=True),
+            sa.Column("to_location_id", UUID(as_uuid=True), sa.ForeignKey("locations.id", ondelete="RESTRICT"), nullable=False),
+            sa.Column("from_location_path", sa.Text(), nullable=True),
+            sa.Column("to_location_path", sa.Text(), nullable=False),
+            sa.Column("reason", sa.Text(), nullable=True),
+            sa.Column("moved_by", UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
+            sa.Column("moved_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        )
+        existing_tables.add("location_movements")
+
+    # 14. bill_reminders
+    if "bill_reminders" not in existing_tables:
+        op.create_table(
+            "bill_reminders",
+            sa.Column("id", UUID(as_uuid=True), primary_key=True),
+            sa.Column("bill_id", UUID(as_uuid=True), sa.ForeignKey("bills.id", ondelete="CASCADE"), nullable=False),
+            sa.Column("reminder_date", sa.Date(), nullable=False),
+            sa.Column("is_sent", sa.Boolean(), server_default="false", nullable=False),
+            sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        )
+        existing_tables.add("bill_reminders")
+
+    # 15. bill_payments
+    if "bill_payments" not in existing_tables:
+        op.create_table(
+            "bill_payments",
+            sa.Column("id", UUID(as_uuid=True), primary_key=True),
+            sa.Column("home_id", UUID(as_uuid=True), sa.ForeignKey("homes.id", ondelete="CASCADE"), nullable=False),
+            sa.Column("bill_id", UUID(as_uuid=True), sa.ForeignKey("bills.id", ondelete="CASCADE"), nullable=False),
+            sa.Column("amount_paid", sa.Numeric(12, 2), nullable=False),
+            sa.Column("currency", sa.String(3), server_default="USD", nullable=False),
+            sa.Column("paid_date", sa.Date(), nullable=False),
+            sa.Column("paid_by", UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
+            sa.Column("payment_method", sa.String(32), server_default="ONLINE", nullable=False),
+            sa.Column("receipt_url", sa.String(512), nullable=True),
+            sa.Column("notes", sa.Text(), nullable=True),
+            sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        )
+        existing_tables.add("bill_payments")
+
+    # 16. stock_movements
     if "stock_movements" not in existing_tables:
         op.create_table(
             "stock_movements",

@@ -136,13 +136,15 @@ async def get_home_dashboard(
 
     purchase_items_count = (await db.execute(
         select(func.count()).select_from(PurchaseItemModel).where(
-            PurchaseItemModel.home_id == home_id, PurchaseItemModel.is_checked == False
+            PurchaseItemModel.home_id == home_id,
+            PurchaseItemModel.status == "PENDING",
+            PurchaseItemModel.deleted_at.is_(None)
         )
     )).scalar_one() or 0
 
     borrowed_assets_count = (await db.execute(
         select(func.count()).select_from(AssetLoanModel).where(
-            AssetLoanModel.home_id == home_id, AssetLoanModel.status == "ACTIVE"
+            AssetLoanModel.home_id == home_id, AssetLoanModel.loan_status == "ACTIVE"
         )
     )).scalar_one() or 0
 
@@ -309,22 +311,21 @@ async def get_home_dashboard(
     # 6. Recent Activity (Last 5)
     recent_activity: List[HomeActivityItemDTO] = []
     stock_moves = (await db.execute(
-        select(StockMovementModel).options(selectinload(StockMovementModel.item), selectinload(StockMovementModel.user))
+        select(StockMovementModel).options(selectinload(StockMovementModel.item))
         .where(StockMovementModel.home_id == home_id)
         .order_by(StockMovementModel.created_at.desc()).limit(3)
     )).scalars().all()
     for s in stock_moves:
         item_name = s.item.name if s.item else "Supplies"
-        actor_name = s.user.profile.display_name if (s.user and s.user.profile) else "Member"
         action_verb = "added" if s.movement_type == "RESTOCK" else "consumed"
         recent_activity.append(
             HomeActivityItemDTO(
                 id=s.id,
                 activity_type="STOCK_MOVE",
                 title=f"{item_name} Updated",
-                description=f"{actor_name} {action_verb} {abs(s.quantity)} {s.item.unit if s.item else ''}",
-                actor_id=s.user_id,
-                actor_name=actor_name,
+                description=f"Supplies {action_verb} {abs(s.quantity_delta)} {s.item.unit if s.item else ''}",
+                actor_id=s.performed_by,
+                actor_name="Member",
                 timestamp=s.created_at,
                 time_ago=format_time_ago(s.created_at),
                 navigation_target=f"/inventory/{s.item_id}"

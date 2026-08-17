@@ -63,14 +63,14 @@ class HomeDTO(BaseModel):
     state_province: Optional[str] = None
     district_city: Optional[str] = None
     postal_code: Optional[str] = None
-    currency: str
-    timezone: str
+    currency: Optional[str] = "USD"
+    timezone: Optional[str] = "UTC"
     address: Optional[str] = None
     avatar_url: Optional[str] = None
-    created_by: UUID
+    created_by: Optional[UUID] = None
     role: Optional[str] = None
-    created_at: datetime
-    updated_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 class HomeDetailDTO(HomeDTO):

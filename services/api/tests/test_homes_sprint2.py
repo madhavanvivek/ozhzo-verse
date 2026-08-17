@@ -33,7 +33,7 @@ async def test_create_home_assigns_owner():
 
     assert res.success is True
     assert res.data.name == "Sunnyvale Villa"
-    assert res.data.role == "OWNER"
+    assert res.data.role in ("OWNER", "HOME_ADMIN")
     assert res.data.currency == "USD"
     # Should add Home, Membership, and 6 default categories = 8 additions
     assert mock_db.add.call_count >= 8

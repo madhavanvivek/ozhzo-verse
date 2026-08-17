@@ -91,5 +91,27 @@ async def domain_exception_handler(request: Request, exc: BaseDomainException):
     )
 
 
+# Unhandled Global Exception Handler
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    logger.exception(
+        f"Unhandled exception during {request.method} {request.url.path}: {exc}",
+        extra={"correlation_id": request_id}
+    )
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "success": False,
+            "error": {
+                "code": "INTERNAL_SERVER_ERROR",
+                "message": "An internal error occurred. Our engineers have been alerted.",
+                "details": str(exc) if (settings.DEBUG or settings.ENVIRONMENT != "production") else None,
+                "correlation_id": request_id,
+            },
+        },
+    )
+
+
 # Mount API v1
 app.include_router(api_v1_router, prefix="/api/v1")

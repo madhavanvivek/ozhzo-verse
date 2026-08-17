@@ -7,3 +7,8 @@ from src.main import app
 async def async_client():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         yield client
+
+
+@pytest.fixture
+async def client(async_client):
+    yield async_client

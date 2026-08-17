@@ -1,4 +1,5 @@
 import json
+import uuid
 from datetime import datetime, timezone
 from typing import List
 from uuid import UUID
@@ -19,6 +20,7 @@ from src.infrastructure.database.models import (
     UserModel
 )
 from src.infrastructure.cache.redis_client import get_redis_client
+from src.core.exceptions import TierLimitExceededException
 from src.schemas.common import ApiSuccessResponse
 from src.schemas.home import CreateHomeRequest, HomeDTO, HomeDetailDTO, MessageResponse, UpdateHomeRequest
 
@@ -52,8 +54,8 @@ async def list_user_homes(
                 state_province=home.state_province,
                 district_city=home.district_city,
                 postal_code=home.postal_code,
-                currency=home.currency,
-                timezone=home.timezone,
+                currency=home.currency or "USD",
+                timezone=home.timezone or "UTC",
                 address=home.address,
                 avatar_url=home.avatar_url,
                 created_by=home.created_by,
@@ -79,8 +81,20 @@ async def create_home(
             detail="Mobile number verification is required before creating a Home."
         )
 
+    # Check free tier limit (1 active owned home for regular users)
+    if not getattr(current_user, "is_super_admin", False):
+        query = select(HomeModel).where(
+            HomeModel.created_by == current_user.id,
+            HomeModel.deleted_at == None
+        )
+        existing_result = await db.execute(query)
+        existing_homes = existing_result.scalars().all()
+        if len(existing_homes) >= 1:
+            raise TierLimitExceededException(resource="homes", limit=1)
+
     # 1. Create Home record
     new_home = HomeModel(
+        id=uuid.uuid4(),
         name=payload.name,
         country=payload.country,
         state_province=payload.state_province,
@@ -97,6 +111,7 @@ async def create_home(
 
     # 2. Add creator automatically as HOME_ADMIN
     new_membership = HomeMemberModel(
+        id=uuid.uuid4(),
         home_id=new_home.id,
         user_id=current_user.id,
         role="HOME_ADMIN",

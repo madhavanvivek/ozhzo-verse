@@ -19,11 +19,11 @@ class UserProfileDTO(BaseModel):
     email: Optional[str] = None
     display_name: str
     avatar_url: Optional[str] = None
-    timezone: str = "UTC"
-    preferred_language: str = "en"
-    is_active: bool = True
-    is_verified: bool = False
-    mobile_verified: bool = False
+    timezone: Optional[str] = "UTC"
+    preferred_language: Optional[str] = "en"
+    is_active: Optional[bool] = True
+    is_verified: Optional[bool] = False
+    mobile_verified: Optional[bool] = False
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     homes: List[HomeMembershipSummary] = []

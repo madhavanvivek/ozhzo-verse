@@ -94,6 +94,13 @@ export default function DashboardLayout({
     };
 
     loadUserDataAndHomes();
+
+    const handleHomeChanged = () => {
+      loadUserDataAndHomes();
+    };
+
+    window.addEventListener('home-changed', handleHomeChanged);
+    return () => window.removeEventListener('home-changed', handleHomeChanged);
   }, []);
 
   useEffect(() => {

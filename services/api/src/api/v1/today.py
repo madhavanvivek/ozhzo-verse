@@ -30,7 +30,7 @@ router = APIRouter(prefix="/homes/{home_id}/today", tags=["Today View"])
 @router.get("", response_model=ApiSuccessResponse[TodayResponseDTO])
 async def get_unified_today_view(
     timezone_name: Optional[str] = Query(None, description="Client timezone"),
-    home_ctx: HomeContext = Depends(require_home_permission("homes:view")),
+    home_ctx: HomeContext = Depends(require_home_permission("home:view")),
     db: AsyncSession = Depends(get_db),
 ):
     home = await db.get(HomeModel, home_ctx.home_id)

@@ -54,7 +54,7 @@ def format_time_ago(dt: datetime) -> str:
 @router.get("", response_model=ApiSuccessResponse[HomeActivityResponseDTO])
 async def get_home_activity_feed(
     limit: int = Query(20, ge=1, le=50),
-    home_ctx: HomeContext = Depends(require_home_permission("homes:view")),
+    home_ctx: HomeContext = Depends(require_home_permission("home:view")),
     db: AsyncSession = Depends(get_db),
 ):
     activities: List[HomeActivityItemDTO] = []

@@ -76,7 +76,7 @@ def format_time_ago(dt: datetime) -> str:
 
 @router.get("", response_model=ApiSuccessResponse[DashboardResponseDTO])
 async def get_home_dashboard(
-    home_ctx: HomeContext = Depends(require_home_permission("homes:view")),
+    home_ctx: HomeContext = Depends(require_home_permission("dashboard:view")),
     db: AsyncSession = Depends(get_db),
 ):
     home_id = home_ctx.home_id

@@ -1,9 +1,11 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/Input';
 import {
   CheckCircle2,
   AlertTriangle,
@@ -11,10 +13,14 @@ import {
   ShoppingCart,
   Bell,
   RefreshCw,
-
   Sparkles,
   Users,
-  Check
+  Check,
+  Home,
+  Plus,
+  X,
+  Package,
+  ArrowRight
 } from 'lucide-react';
 import { apiClient } from '@/lib/apiClient';
 
@@ -90,6 +96,23 @@ export default function DashboardPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Modal states for State A (Create Home & Join Home)
+  const [isCreateHomeOpen, setIsCreateHomeOpen] = useState(false);
+  const [isJoinHomeOpen, setIsJoinHomeOpen] = useState(false);
+
+  // Create Home Form State
+  const [newHomeName, setNewHomeName] = useState('');
+  const [newHomeCurrency, setNewHomeCurrency] = useState('USD');
+  const [newHomeTimezone, setNewHomeTimezone] = useState('UTC');
+  const [newHomeCountry, setNewHomeCountry] = useState('US');
+  const [isCreatingHome, setIsCreatingHome] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  // Join Home Form State
+  const [invitationToken, setInvitationToken] = useState('');
+  const [isJoiningHome, setIsJoiningHome] = useState(false);
+  const [joinError, setJoinError] = useState<string | null>(null);
+
   const fetchDashboard = async () => {
     setIsLoading(true);
     setError(null);
@@ -100,6 +123,8 @@ export default function DashboardPage() {
         if (homes && homes.length > 0) {
           homeId = homes[0].id;
           apiClient.setActiveHomeId(homeId);
+          localStorage.setItem('active_home_id', homeId);
+          window.dispatchEvent(new Event('home-changed'));
         }
       }
 
@@ -112,6 +137,8 @@ export default function DashboardPage() {
       const res = await apiClient.get<DashboardData>(`/homes/${homeId}/dashboard`);
       setData(res || null);
     } catch (err: any) {
+      console.error('Failed to load dashboard:', err);
+      // If permission or not found, keep data as null so user can create/switch
       setError(err?.message || 'Unable to load dashboard data. Please verify your connection.');
       setData(null);
     } finally {
@@ -121,7 +148,73 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchDashboard();
+
+    const handleHomeChanged = () => {
+      fetchDashboard();
+    };
+
+    window.addEventListener('home-changed', handleHomeChanged);
+    return () => window.removeEventListener('home-changed', handleHomeChanged);
   }, []);
+
+  const handleCreateHome = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newHomeName.trim()) return;
+
+    setIsCreatingHome(true);
+    setCreateError(null);
+
+    try {
+      const res = await apiClient.post<{ id: string; name: string }>('/homes', {
+        name: newHomeName.trim(),
+        currency: newHomeCurrency,
+        timezone: newHomeTimezone,
+        country: newHomeCountry
+      });
+
+      const createdHomeId = res?.id;
+      if (createdHomeId) {
+        apiClient.setActiveHomeId(createdHomeId);
+        localStorage.setItem('active_home_id', createdHomeId);
+        window.dispatchEvent(new Event('home-changed'));
+      }
+
+      setIsCreateHomeOpen(false);
+      setNewHomeName('');
+      await fetchDashboard();
+    } catch (err: any) {
+      console.error('Create home failed:', err);
+      setCreateError(err?.message || 'Failed to create Home workspace.');
+    } finally {
+      setIsCreatingHome(false);
+    }
+  };
+
+  const handleJoinHome = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!invitationToken.trim()) return;
+
+    setIsJoiningHome(true);
+    setJoinError(null);
+
+    try {
+      const res = await apiClient.post<{ home_id?: string }>(`/invitations/${invitationToken.trim()}/accept`);
+      if (res?.home_id) {
+        apiClient.setActiveHomeId(res.home_id);
+        localStorage.setItem('active_home_id', res.home_id);
+        window.dispatchEvent(new Event('home-changed'));
+      }
+
+      setIsJoinHomeOpen(false);
+      setInvitationToken('');
+      await fetchDashboard();
+    } catch (err: any) {
+      console.error('Join home failed:', err);
+      setJoinError(err?.message || 'Invalid or expired invitation token.');
+    } finally {
+      setIsJoiningHome(false);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -136,65 +229,260 @@ export default function DashboardPage() {
     );
   }
 
-  if (error) {
+  // ===========================================================================
+  // STATE A — USER HAS NO HOME (Pre-Dashboard / Empty State)
+  // ===========================================================================
+  if (!data) {
     return (
-      <div style={{ padding: 'var(--space-8)', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--space-4)' }}>
-        <AlertTriangle size={36} color="var(--status-overdue)" />
-        <h2 style={{ fontSize: '18px', fontWeight: 700 }}>Something went wrong</h2>
-        <p style={{ color: 'var(--color-text-secondary)', maxWidth: '400px', fontSize: '14px' }}>{error}</p>
-        <Button onClick={fetchDashboard} variant="secondary">
-          <RefreshCw size={16} />
-          <span>Try Again</span>
-        </Button>
+      <div style={{ maxWidth: '840px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 'var(--space-8)', padding: 'var(--space-6) var(--space-4)' }}>
+        {error && (
+          <div style={{ padding: '10px 14px', backgroundColor: 'var(--status-overdue-bg)', color: 'var(--status-overdue)', borderRadius: 'var(--radius-md)', fontSize: '13px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span>{error}</span>
+            <Button size="sm" variant="secondary" onClick={fetchDashboard}>
+              <RefreshCw size={14} /> <span>Retry</span>
+            </Button>
+          </div>
+        )}
+
+        <Card style={{ padding: 'var(--space-8)', textAlign: 'center', backgroundColor: 'var(--color-surface-card)', border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-card)' }}>
+          <div style={{ width: '56px', height: '56px', borderRadius: '50%', backgroundColor: 'var(--color-primary-100)', color: 'var(--color-primary-900)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto var(--space-4)' }}>
+            <Home size={28} />
+          </div>
+
+          <h1 style={{ fontSize: '24px', fontWeight: 700, color: 'var(--color-primary-900)', marginBottom: 'var(--space-2)', letterSpacing: '-0.02em' }}>
+            Welcome to Ozhzo Verse
+          </h1>
+
+          <p style={{ fontSize: '15px', color: 'var(--color-text-secondary)', maxWidth: '520px', margin: '0 auto var(--space-6)', lineHeight: 1.5 }}>
+            You haven't created or joined a Home yet. Get started by setting up a dedicated workspace for your household or join with an invitation code.
+          </p>
+
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', justifyContent: 'center', alignItems: 'center' }}>
+            <Button
+              variant="primary"
+              size="lg"
+              onClick={() => setIsCreateHomeOpen(true)}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}
+            >
+              <Plus size={18} />
+              <span>Create Your Home</span>
+            </Button>
+
+            <Button
+              variant="secondary"
+              size="lg"
+              onClick={() => setIsJoinHomeOpen(true)}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}
+            >
+              <Users size={18} />
+              <span>Join a Home</span>
+            </Button>
+          </div>
+        </Card>
+
+        {/* Feature Overview Grid */}
+        <div>
+          <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 'var(--space-3)', textAlign: 'center' }}>
+            Everything you can organize in your Home
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 'var(--space-4)' }}>
+            <Card variant="subtle" style={{ padding: 'var(--space-4)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: 'var(--space-2)' }}>
+                <Package size={20} color="var(--color-primary-900)" />
+                <h3 style={{ fontSize: '15px', fontWeight: 600 }}>Home Memory</h3>
+              </div>
+              <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', lineHeight: 1.4 }}>
+                Keep track of physical assets, tools, pantry supply levels, and exact item locations.
+              </p>
+            </Card>
+
+            <Card variant="subtle" style={{ padding: 'var(--space-4)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: 'var(--space-2)' }}>
+                <CheckCircle2 size={20} color="var(--color-accent-warm)" />
+                <h3 style={{ fontSize: '15px', fontWeight: 600 }}>Tasks & Chores</h3>
+              </div>
+              <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', lineHeight: 1.4 }}>
+                Coordinate recurring chore routines, household maintenance schedules, and assignments.
+              </p>
+            </Card>
+
+            <Card variant="subtle" style={{ padding: 'var(--space-4)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: 'var(--space-2)' }}>
+                <ShoppingCart size={20} color="var(--status-in-stock)" />
+                <h3 style={{ fontSize: '15px', fontWeight: 600 }}>Purchase Lists</h3>
+              </div>
+              <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', lineHeight: 1.4 }}>
+                Collaborative grocery and domestic shopping lists updated in real-time by family members.
+              </p>
+            </Card>
+
+            <Card variant="subtle" style={{ padding: 'var(--space-4)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: 'var(--space-2)' }}>
+                <Receipt size={20} color="var(--status-low-stock)" />
+                <h3 style={{ fontSize: '15px', fontWeight: 600 }}>Bills & Reminders</h3>
+              </div>
+              <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', lineHeight: 1.4 }}>
+                Track utility bills, household subscriptions, due dates, and payment history.
+              </p>
+            </Card>
+          </div>
+        </div>
+
+        {/* Modal: Create Your Home */}
+        {isCreateHomeOpen && (
+          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ width: '90%', maxWidth: '480px', backgroundColor: 'var(--color-surface-card)', borderRadius: 'var(--radius-lg)', padding: '24px', boxShadow: 'var(--shadow-modal)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Home size={20} color="var(--color-primary-900)" />
+                  <h3 style={{ fontSize: '18px', fontWeight: 700 }}>Create Your Home</h3>
+                </div>
+                <button onClick={() => setIsCreateHomeOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+                  <X size={18} />
+                </button>
+              </div>
+
+              {createError && (
+                <div style={{ padding: '10px 14px', backgroundColor: 'var(--status-overdue-bg)', color: 'var(--status-overdue)', borderRadius: 'var(--radius-md)', fontSize: '13px', marginBottom: '16px' }}>
+                  {createError}
+                </div>
+              )}
+
+              <form onSubmit={handleCreateHome} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <Input
+                  id="homeName"
+                  label="Household Name"
+                  placeholder="e.g. Sunnyvale Haven"
+                  value={newHomeName}
+                  onChange={(e) => setNewHomeName(e.target.value)}
+                  required
+                  autoFocus
+                />
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <label htmlFor="modalCountry" style={{ fontSize: '13px', fontWeight: 600 }}>Country</label>
+                    <select
+                      id="modalCountry"
+                      value={newHomeCountry}
+                      onChange={(e) => setNewHomeCountry(e.target.value)}
+                      style={{ height: '40px', padding: '0 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border-strong)', fontSize: '13px', backgroundColor: 'var(--color-surface-card)' }}
+                    >
+                      <option value="US">United States (US)</option>
+                      <option value="IN">India (IN)</option>
+                      <option value="GB">United Kingdom (GB)</option>
+                      <option value="CA">Canada (CA)</option>
+                      <option value="AU">Australia (AU)</option>
+                      <option value="DE">Germany (DE)</option>
+                    </select>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <label htmlFor="modalCurrency" style={{ fontSize: '13px', fontWeight: 600 }}>Primary Currency</label>
+                    <select
+                      id="modalCurrency"
+                      value={newHomeCurrency}
+                      onChange={(e) => setNewHomeCurrency(e.target.value)}
+                      style={{ height: '40px', padding: '0 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border-strong)', fontSize: '13px', backgroundColor: 'var(--color-surface-card)' }}
+                    >
+                      <option value="USD">USD ($)</option>
+                      <option value="EUR">EUR (€)</option>
+                      <option value="GBP">GBP (£)</option>
+                      <option value="CAD">CAD ($)</option>
+                      <option value="AUD">AUD ($)</option>
+                      <option value="INR">INR (₹)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label htmlFor="modalTimezone" style={{ fontSize: '13px', fontWeight: 600 }}>Timezone</label>
+                  <select
+                    id="modalTimezone"
+                    value={newHomeTimezone}
+                    onChange={(e) => setNewHomeTimezone(e.target.value)}
+                    style={{ height: '40px', padding: '0 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border-strong)', fontSize: '13px', backgroundColor: 'var(--color-surface-card)' }}
+                  >
+                    <option value="UTC">UTC</option>
+                    <option value="America/New_York">America/New York (EST)</option>
+                    <option value="America/Chicago">America/Chicago (CST)</option>
+                    <option value="America/Los_Angeles">America/Los Angeles (PST)</option>
+                    <option value="Europe/London">Europe/London (GMT)</option>
+                    <option value="Asia/Kolkata">Asia/Kolkata (IST)</option>
+                  </select>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
+                  <Button type="button" variant="secondary" onClick={() => setIsCreateHomeOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" variant="primary" isLoading={isCreatingHome}>
+                    Create Home
+                  </Button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Modal: Join a Home */}
+        {isJoinHomeOpen && (
+          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ width: '90%', maxWidth: '480px', backgroundColor: 'var(--color-surface-card)', borderRadius: 'var(--radius-lg)', padding: '24px', boxShadow: 'var(--shadow-modal)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Users size={20} color="var(--color-primary-900)" />
+                  <h3 style={{ fontSize: '18px', fontWeight: 700 }}>Join a Home</h3>
+                </div>
+                <button onClick={() => setIsJoinHomeOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+                  <X size={18} />
+                </button>
+              </div>
+
+              {joinError && (
+                <div style={{ padding: '10px 14px', backgroundColor: 'var(--status-overdue-bg)', color: 'var(--status-overdue)', borderRadius: 'var(--radius-md)', fontSize: '13px', marginBottom: '16px' }}>
+                  {joinError}
+                </div>
+              )}
+
+              <form onSubmit={handleJoinHome} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <Input
+                  id="invitationToken"
+                  label="Invitation Code / Token"
+                  placeholder="Paste invitation code here"
+                  value={invitationToken}
+                  onChange={(e) => setInvitationToken(e.target.value)}
+                  required
+                  autoFocus
+                />
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
+                  <Button type="button" variant="secondary" onClick={() => setIsJoinHomeOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" variant="primary" isLoading={isJoiningHome}>
+                    Join Home
+                  </Button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
 
-if (!data) {
-  return (
-    <div
-      style={{
-        padding: 'var(--space-8)',
-        textAlign: 'center'
-      }}
-    >
-      <h2
-        style={{
-          fontSize: '22px',
-          fontWeight: 700,
-          marginBottom: 'var(--space-2)'
-        }}
-      >
-        Welcome to Ozhzo Verse
-      </h2>
-
-      <p
-        style={{
-          color: 'var(--color-text-secondary)',
-          marginBottom: 'var(--space-6)'
-        }}
-      >
-        You haven't created or joined a Home yet.
-      </p>
-
-      <Button
-        onClick={() => {
-          window.location.href = '/settings';
-        }}
-        variant="primary"
-      >
-        Create Your Home
-      </Button>
-    </div>
-  );
-}
+  // ===========================================================================
+  // STATE B — FULL APPROVED HOME DASHBOARD
+  // ===========================================================================
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
-      {/* Dynamic Time-Contextual Greeting */}
+      {/* Dynamic Time-Contextual Greeting Header */}
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
         <div>
           <h1 style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--color-primary-900)', letterSpacing: '-0.02em' }}>
-            {data.greeting.greeting}
+            {data.greeting.greeting}, {data.greeting.user_display_name}
           </h1>
           <p style={{ fontSize: '14px', color: 'var(--color-text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
             <span>{data.greeting.date_formatted}</span>
@@ -210,50 +498,80 @@ if (!data) {
         </div>
       </div>
 
-      {/* Summary KPI Cards Grid */}
+      {/* 1. Attention Banner (If Overdue Chores, Low Stock, or Due Bills exist) */}
+      {(data.summary.low_stock_count > 0 || data.summary.unpaid_bills_count > 0) && (
+        <Card style={{ backgroundColor: 'var(--status-low-stock-bg)', borderColor: 'var(--status-low-stock)', padding: '14px 18px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <AlertTriangle size={20} color="var(--status-low-stock)" />
+              <div>
+                <strong style={{ fontSize: '14px', color: 'var(--color-primary-900)' }}>Household Attention Required</strong>
+                <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)' }}>
+                  {data.summary.low_stock_count > 0 && `${data.summary.low_stock_count} item(s) low on stock. `}
+                  {data.summary.unpaid_bills_count > 0 && `${data.summary.unpaid_bills_count} bill(s) pending payment.`}
+                </div>
+              </div>
+            </div>
+            <Link href="/today" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-primary-900)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+              <span>View Action Items</span>
+              <ArrowRight size={14} />
+            </Link>
+          </div>
+        </Card>
+      )}
+
+      {/* 2. Summary KPI Cards Grid (Home Status) */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-3)' }}>
-        <Card variant="subtle" style={{ padding: '14px 16px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase' }}>Chores Due</span>
-            <CheckCircle2 size={18} color="var(--color-accent-warm)" />
-          </div>
-          <div style={{ fontSize: '24px', fontWeight: 700, marginTop: '6px', color: 'var(--color-primary-900)' }}>
-            {data.summary.active_tasks_count}
-          </div>
-        </Card>
+        <Link href="/tasks">
+          <Card variant="subtle" style={{ padding: '14px 16px', cursor: 'pointer' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase' }}>Chores Due</span>
+              <CheckCircle2 size={18} color="var(--color-accent-warm)" />
+            </div>
+            <div style={{ fontSize: '24px', fontWeight: 700, marginTop: '6px', color: 'var(--color-primary-900)' }}>
+              {data.summary.active_tasks_count}
+            </div>
+          </Card>
+        </Link>
 
-        <Card variant="subtle" style={{ padding: '14px 16px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase' }}>Low Stock</span>
-            <AlertTriangle size={18} color="var(--status-low-stock)" />
-          </div>
-          <div style={{ fontSize: '24px', fontWeight: 700, marginTop: '6px', color: 'var(--color-primary-900)' }}>
-            {data.summary.low_stock_count}
-          </div>
-        </Card>
+        <Link href="/inventory">
+          <Card variant="subtle" style={{ padding: '14px 16px', cursor: 'pointer' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase' }}>Low Stock</span>
+              <AlertTriangle size={18} color="var(--status-low-stock)" />
+            </div>
+            <div style={{ fontSize: '24px', fontWeight: 700, marginTop: '6px', color: 'var(--color-primary-900)' }}>
+              {data.summary.low_stock_count}
+            </div>
+          </Card>
+        </Link>
 
-        <Card variant="subtle" style={{ padding: '14px 16px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase' }}>Unpaid Bills</span>
-            <Receipt size={18} color="var(--color-primary-900)" />
-          </div>
-          <div style={{ fontSize: '24px', fontWeight: 700, marginTop: '6px', color: 'var(--color-primary-900)' }}>
-            {data.role !== 'CHILD' && data.role !== 'GUEST' ? `$${Number(data.summary.unpaid_bills_sum).toFixed(2)}` : '—'}
-          </div>
-        </Card>
+        <Link href="/bills">
+          <Card variant="subtle" style={{ padding: '14px 16px', cursor: 'pointer' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase' }}>Unpaid Bills</span>
+              <Receipt size={18} color="var(--color-primary-900)" />
+            </div>
+            <div style={{ fontSize: '24px', fontWeight: 700, marginTop: '6px', color: 'var(--color-primary-900)' }}>
+              {data.role !== 'CHILD' && data.role !== 'GUEST' ? `$${Number(data.summary.unpaid_bills_sum || 0).toFixed(2)}` : '—'}
+            </div>
+          </Card>
+        </Link>
 
-        <Card variant="subtle" style={{ padding: '14px 16px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase' }}>Family</span>
-            <Users size={18} color="var(--color-text-secondary)" />
-          </div>
-          <div style={{ fontSize: '24px', fontWeight: 700, marginTop: '6px', color: 'var(--color-primary-900)' }}>
-            {data.summary.members_count}
-          </div>
-        </Card>
+        <Link href="/settings">
+          <Card variant="subtle" style={{ padding: '14px 16px', cursor: 'pointer' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase' }}>Family</span>
+              <Users size={18} color="var(--color-text-secondary)" />
+            </div>
+            <div style={{ fontSize: '24px', fontWeight: 700, marginTop: '6px', color: 'var(--color-primary-900)' }}>
+              {data.summary.members_count}
+            </div>
+          </Card>
+        </Link>
       </div>
 
-      {/* Main Multi-Column Pulse Grid */}
+      {/* 3. Main Multi-Column Pulse Grid (Tasks, Low Stock, Bills, Shopping, Activity) */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 'var(--space-4)' }}>
         
         {/* Chores & Tasks Module */}
@@ -286,7 +604,7 @@ if (!data) {
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <button style={{ width: '18px', height: '18px', borderRadius: '4px', border: '1px solid var(--color-border-strong)', background: 'none', cursor: 'pointer' }} />
+                    <div style={{ width: '16px', height: '16px', borderRadius: '4px', border: '1.5px solid var(--color-border-strong)', backgroundColor: 'var(--color-surface-card)' }} />
                     <div>
                       <div style={{ fontSize: '13px', fontWeight: 600 }}>{task.title}</div>
                       <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
@@ -340,9 +658,11 @@ if (!data) {
                       Remaining: {item.quantity} {item.unit}
                     </div>
                   </div>
-                  <Button size="sm" variant="secondary">
-                    + Add to List
-                  </Button>
+                  <Link href="/shopping">
+                    <Button size="sm" variant="secondary">
+                      + Add to List
+                    </Button>
+                  </Link>
                 </div>
               ))}
             </div>
@@ -432,20 +752,20 @@ if (!data) {
           )}
         </Card>
 
-        {/* Recent Household Notifications */}
+        {/* Recent Household Notifications / Activity */}
         <Card>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-4)', paddingBottom: 'var(--space-2)', borderBottom: '1px solid var(--color-border-subtle)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Bell size={18} color="var(--color-primary-900)" />
-              <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Recent Alerts</h2>
+              <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Recent Activity</h2>
             </div>
-            <Badge variant="neutral">{data.notifications.length} New</Badge>
+            <Badge variant="neutral">{data.notifications.length} Alerts</Badge>
           </div>
 
           {data.notifications.length === 0 ? (
             <div style={{ padding: 'var(--space-6) var(--space-4)', textAlign: 'center', color: 'var(--color-text-secondary)' }}>
               <Bell size={24} color="var(--color-text-tertiary)" style={{ marginBottom: '6px' }} />
-              <p style={{ fontSize: '13px', fontWeight: 500 }}>No unread household notifications.</p>
+              <p style={{ fontSize: '13px', fontWeight: 500 }}>No recent household activity alerts.</p>
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>

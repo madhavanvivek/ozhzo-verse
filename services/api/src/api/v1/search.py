@@ -29,7 +29,7 @@ async def unified_home_search(
     q: str = Query(..., min_length=1, max_length=100, description="Search query string"),
     domain: Optional[str] = Query(None, description="Optional domain filter (INVENTORY, ASSET, LOCATION, PURCHASE, TASK, BILL, EVENT, MEMBER)"),
     limit_per_domain: int = Query(5, ge=1, le=20),
-    home_ctx: HomeContext = Depends(require_home_permission("homes:view")),
+    home_ctx: HomeContext = Depends(require_home_permission("home:view")),
     db: AsyncSession = Depends(get_db),
 ):
     query_clean = q.strip()

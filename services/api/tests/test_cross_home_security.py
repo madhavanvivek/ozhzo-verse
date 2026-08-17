@@ -63,7 +63,7 @@ async def test_guest_role_escalation_attempt_fails():
         await checker_invite(home_id=home_id, current_user=guest_user, db=mock_db, redis_client=mock_redis)
 
     # Guest tries to delete home
-    checker_delete_home = require_home_permission("homes:delete")
+    checker_delete_home = require_home_permission("home:delete")
     with pytest.raises(PermissionDeniedException):
         await checker_delete_home(home_id=home_id, current_user=guest_user, db=mock_db, redis_client=mock_redis)
 
@@ -71,13 +71,13 @@ async def test_guest_role_escalation_attempt_fails():
 def test_complete_rbac_matrix():
     # Owner can do all actions
     all_actions = [
-        "homes:view", "homes:edit", "homes:delete", "homes:admin",
-        "members:invite", "members:manage", "members:remove",
+        "home:view", "home:edit", "home:delete",
+        "members:invite", "members:edit", "members:remove",
         "inventory:view", "inventory:create", "inventory:edit", "inventory:delete",
         "shopping:view", "shopping:create", "shopping:edit", "shopping:check", "shopping:delete",
         "tasks:view", "tasks:create", "tasks:edit", "tasks:complete", "tasks:delete",
         "bills:view", "bills:create", "bills:edit", "bills:pay", "bills:delete",
-        "events:view", "events:create", "events:edit", "events:delete"
+        "calendar:view", "calendar:create", "calendar:edit", "calendar:delete"
     ]
     for action in all_actions:
         assert has_permission(ROLE_OWNER, action) is True
@@ -85,7 +85,7 @@ def test_complete_rbac_matrix():
     # Child restrictions
     assert has_permission(ROLE_CHILD, "bills:view") is False
     assert has_permission(ROLE_CHILD, "bills:pay") is False
-    assert has_permission(ROLE_CHILD, "homes:delete") is False
+    assert has_permission(ROLE_CHILD, "home:delete") is False
     assert has_permission(ROLE_CHILD, "tasks:complete") is True
     assert has_permission(ROLE_CHILD, "shopping:check") is True
 

@@ -29,7 +29,7 @@ router = APIRouter(prefix="/homes/{home_id}/attention", tags=["Attention Center"
 
 @router.get("", response_model=ApiSuccessResponse[AttentionCenterResponse])
 async def get_home_attention_center(
-    home_ctx: HomeContext = Depends(require_home_permission("homes:view")),
+    home_ctx: HomeContext = Depends(require_home_permission("home:view")),
     db: AsyncSession = Depends(get_db),
 ):
     today = date.today()

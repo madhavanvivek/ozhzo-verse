@@ -18,7 +18,7 @@ router = APIRouter(tags=["Pilot Feedback"])
 @router.post("/homes/{home_id}/feedback", response_model=ApiSuccessResponse[FeedbackDTO], status_code=status.HTTP_201_CREATED)
 async def submit_home_pilot_feedback(
     payload: CreateFeedbackRequest,
-    home_ctx: HomeContext = Depends(require_home_permission("homes:view")),
+    home_ctx: HomeContext = Depends(require_home_permission("home:view")),
     db: AsyncSession = Depends(get_db),
 ):
     user = home_ctx.user

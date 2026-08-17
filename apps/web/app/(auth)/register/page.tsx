@@ -36,10 +36,36 @@ export default function RegisterPage() {
           password
         })
       });
-      const data = await res.json();
-      if (!data.success) {
-        throw new Error(data.error?.message || data.detail || 'Registration failed');
+      let data: any = null;
+      let rawText = '';
+      const contentType = res.headers.get('content-type') || '';
+
+      if (contentType.includes('application/json')) {
+        try {
+          data = await res.json();
+        } catch {
+          data = null;
+        }
+      } else {
+        try {
+          rawText = await res.text();
+        } catch {
+          rawText = '';
+        }
       }
+
+      if (!res.ok || (data && !data.success)) {
+        const errorMsg =
+          data?.error?.message ||
+          data?.detail ||
+          (rawText ? `Server error (${res.status}): ${rawText}` : `Request failed with status ${res.status}`);
+        throw new Error(errorMsg);
+      }
+
+      if (!data?.data?.access_token) {
+        throw new Error('Registration succeeded but no access token was returned.');
+      }
+
       localStorage.setItem('access_token', data.data.access_token);
       router.push('/dashboard');
     } catch (err: any) {

@@ -1,6 +1,6 @@
 'use client';
 
-import React, {useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { HomeSwitcher } from '@/components/home/HomeSwitcher';
@@ -21,7 +21,6 @@ import {
   Plus,
   X
 } from 'lucide-react';
-import { apiClient } from '@/lib/apiClient';
 
 export default function DashboardLayout({
   children,
@@ -29,54 +28,14 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
-
-  const [homes, setHomes] = useState<
-   { home_id: string; name: string; role: string }[]
-  >([]);
-  const [activeHomeId, setActiveHomeId] = useState<string | null>(null);
+  const [homes] = useState([
+    { home_id: '1', name: 'Madhavan Family Home', role: 'OWNER' }
+  ]);
+  const [activeHomeId, setActiveHomeId] = useState('1');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
-  useEffect(() => {
-    const loadHomes = async () => {
-      try {
-        const data = await apiClient.get<
-          Array<{
-            id: string;
-            name: string;
-            role: string;
-          }>
-        >('/homes');
 
-        const mappedHomes = data.map((home) => ({
-          home_id: home.id,
-          name: home.name,
-          role: home.role
-        }));
-
-        setHomes(mappedHomes);
-
-        const savedHomeId = localStorage.getItem('active_home_id');
-
-        if (savedHomeId && mappedHomes.some(h => h.home_id === savedHomeId)) {
-          setActiveHomeId(savedHomeId);
-        } else if (mappedHomes.length > 0) {
-          setActiveHomeId(mappedHomes[0].home_id);
-          localStorage.setItem('active_home_id', mappedHomes[0].home_id);
-        } else {
-          setActiveHomeId(null);
-          localStorage.removeItem('active_home_id');
-        }
-      } catch (error) {
-        console.error('Failed to load homes:', error);
-        setHomes([]);
-        setActiveHomeId(null);
-        localStorage.removeItem('active_home_id');
-      }
-    };
-
-    loadHomes();
-  }, []);
   const activeHome = homes.find(h => h.home_id === activeHomeId);
 
   const navItems = [
@@ -111,10 +70,7 @@ export default function DashboardLayout({
           <HomeSwitcher
             currentHome={activeHome}
             homes={homes}
-            onSelectHome={(homeId) => {
-  setActiveHomeId(homeId);
-  localStorage.setItem('active_home_id', homeId);
-}}
+            onSelectHome={setActiveHomeId}
           />
         </div>
 

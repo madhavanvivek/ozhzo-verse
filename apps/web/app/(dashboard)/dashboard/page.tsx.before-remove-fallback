@@ -115,7 +115,35 @@ export default function DashboardPage() {
         }
       }
 
-      setData(null);
+      // Fallback clean state if API has no home yet
+      setData({
+        greeting: {
+          greeting: 'Welcome to your Household Workspace',
+          user_display_name: 'Household Member',
+          date_formatted: new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }),
+          time_period: 'morning'
+        },
+        summary: {
+          home_id: 'default',
+          home_name: 'My Home',
+          currency: 'USD',
+          timezone: 'UTC',
+          members_count: 1,
+          active_tasks_count: 0,
+          low_stock_count: 0,
+          unpaid_bills_count: 0,
+          unpaid_bills_sum: 0,
+          upcoming_events_count: 0,
+          unread_notifications_count: 0
+        },
+        pending_tasks: [],
+        upcoming_bills: [],
+        upcoming_events: [],
+        low_stock_inventory: [],
+        shopping_items: [],
+        notifications: [],
+        role: 'OWNER'
+      });
     } catch (err: any) {
       setError('Unable to load dashboard data. Please verify your connection.');
     } finally {
@@ -154,44 +182,8 @@ export default function DashboardPage() {
     );
   }
 
-if (!data) {
-  return (
-    <div
-      style={{
-        padding: 'var(--space-8)',
-        textAlign: 'center'
-      }}
-    >
-      <h2
-        style={{
-          fontSize: '22px',
-          fontWeight: 700,
-          marginBottom: 'var(--space-2)'
-        }}
-      >
-        Welcome to Ozhzo Verse
-      </h2>
+  if (!data) return null;
 
-      <p
-        style={{
-          color: 'var(--color-text-secondary)',
-          marginBottom: 'var(--space-6)'
-        }}
-      >
-        You haven't created or joined a Home yet.
-      </p>
-
-      <Button
-        onClick={() => {
-          window.location.href = '/settings';
-        }}
-        variant="primary"
-      >
-        Create Your Home
-      </Button>
-    </div>
-  );
-}
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
       {/* Dynamic Time-Contextual Greeting */}

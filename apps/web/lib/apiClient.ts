@@ -117,15 +117,33 @@ class ApiClient {
       }
     }
 
-    const data: ApiResponse<T> = await response.json();
+    const contentType = response.headers.get('content-type') || '';
+    let data: any = null;
+    let rawText = '';
 
-    if (!data.success && 'error' in data) {
-      throw new Error(
-        data.error.message || 'API request failed'
-      );
+    if (contentType.includes('application/json')) {
+      try {
+        data = await response.json();
+      } catch {
+        data = null;
+      }
+    } else {
+      try {
+        rawText = await response.text();
+      } catch {
+        rawText = '';
+      }
     }
 
-    return data.data;
+    if (!response.ok || (data && !data.success)) {
+      const errorMsg =
+        data?.error?.message ||
+        data?.detail ||
+        (rawText ? `Server error (${response.status}): ${rawText}` : `Request failed with status ${response.status}`);
+      throw new Error(errorMsg);
+    }
+
+    return data?.data as T;
   }
 
   get<T>(endpoint: string) {

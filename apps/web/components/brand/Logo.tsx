@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import Link from 'next/link';
 
@@ -23,13 +25,13 @@ export const Logo: React.FC<LogoProps> = ({
   const isFull = variant === 'full';
 
   const src = isFull
-    ? '/images/ozhzo-logo.png'
+    ? '/brand/logo/ozhzo-verse-logo-primary-dark.svg'
     : theme === 'dark'
-      ? '/brand/icons/ozhzo-mark-dark.svg'
-      : '/brand/icons/ozhzo-mark-primary.svg';
+      ? '/brand/icons/ozhzo-verse-mark-dark.svg'
+      : '/brand/icons/ozhzo-verse-mark.svg';
 
   const defaultWidth = isFull ? 180 : 36;
-  const defaultHeight = isFull ? 120 : 36;
+  const defaultHeight = isFull ? 48 : 36;
 
   const finalWidth = width ?? defaultWidth;
   const finalHeight = height ?? defaultHeight;
@@ -66,6 +68,7 @@ export const Logo: React.FC<LogoProps> = ({
   return (
     <Link
       href={href}
+      className="ozhzo-brand-link"
       style={{
         display: 'inline-flex',
         textDecoration: 'none'

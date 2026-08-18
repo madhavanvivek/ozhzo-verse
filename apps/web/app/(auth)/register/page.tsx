@@ -81,11 +81,12 @@ export default function RegisterPage() {
           />
 
           <div>
-            <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '6px', color: 'var(--color-text-primary)' }}>
-              Mobile Number
+            <label htmlFor="phoneNumber" style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '6px', color: 'var(--color-text-primary)' }}>
+              Mobile Number (Optional)
             </label>
             <div style={{ display: 'flex', gap: '8px' }}>
               <select
+                aria-label="Country Code"
                 value={countryCode}
                 onChange={(e) => setCountryCode(e.target.value)}
                 style={{
@@ -102,11 +103,11 @@ export default function RegisterPage() {
                 <option value="+971">🇦🇪 +971</option>
               </select>
               <input
+                id="phoneNumber"
                 type="tel"
                 placeholder="9876543210"
                 value={phoneNumber}
                 onChange={(e) => setPhoneNumber(e.target.value)}
-                required
                 style={{
                   flex: 1,
                   padding: '8px 12px',
@@ -121,10 +122,11 @@ export default function RegisterPage() {
           <Input
             id="email"
             type="email"
-            label="Email Address (Optional)"
+            label="Email Address"
             placeholder="you@example.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
+            required
           />
 
           <Input

@@ -521,7 +521,7 @@ export default function DashboardPage() {
       )}
 
       {/* 2. Summary KPI Cards Grid (Home Status) */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 'var(--space-3)' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 'var(--space-3)' }}>
         <Link href="/tasks">
           <Card variant="subtle" style={{ padding: '14px 16px', cursor: 'pointer' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -572,7 +572,7 @@ export default function DashboardPage() {
       </div>
 
       {/* 3. Main Multi-Column Pulse Grid (Tasks, Low Stock, Bills, Shopping, Activity) */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 'var(--space-4)' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 'var(--space-4)' }}>
         
         {/* Chores & Tasks Module */}
         <Card>

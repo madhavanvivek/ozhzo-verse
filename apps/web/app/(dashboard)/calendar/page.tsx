@@ -192,14 +192,14 @@ export default function CalendarPage() {
       {/* Quick Add Bar */}
       <Card style={{ border: '2px solid var(--color-primary-900)', padding: 'var(--space-4)' }}>
         <form onSubmit={handleQuickAdd} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
             <input
               type="text"
               placeholder="Add event to family calendar... (e.g. Doctor appointment, Parent-teacher meeting)"
               value={quickTitle}
               onChange={(e) => setQuickTitle(e.target.value)}
               style={{
-                flex: 1,
+                flex: '1 1 220px',
                 height: '42px',
                 padding: '0 14px',
                 borderRadius: 'var(--radius-md)',
@@ -213,6 +213,7 @@ export default function CalendarPage() {
               value={quickDate}
               onChange={(e) => setQuickDate(e.target.value)}
               style={{
+                flex: '0 1 150px',
                 height: '42px',
                 padding: '0 12px',
                 borderRadius: 'var(--radius-md)',
@@ -220,18 +221,20 @@ export default function CalendarPage() {
                 fontSize: '13px'
               }}
             />
-            <Button type="submit" size="md">
-              <Plus size={16} />
-              <span>Add Event</span>
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              size="md"
-              onClick={() => setIsOptionsOpen(!isOptionsOpen)}
-            >
-              {isOptionsOpen ? 'Simple' : 'Options'}
-            </Button>
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <Button type="submit" size="md">
+                <Plus size={16} />
+                <span>Add Event</span>
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="md"
+                onClick={() => setIsOptionsOpen(!isOptionsOpen)}
+              >
+                {isOptionsOpen ? 'Simple' : 'Options'}
+              </Button>
+            </div>
           </div>
 
           {/* Quick Presets */}
@@ -297,7 +300,7 @@ export default function CalendarPage() {
       </Card>
 
       {/* Filter Tabs */}
-      <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--color-border-subtle)', paddingBottom: 'var(--space-2)' }}>
+      <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--color-border-subtle)', paddingBottom: 'var(--space-2)', overflowX: 'auto' }}>
         {[
           { key: 'ALL', label: `All Items (${items.length})` },
           { key: 'EVENT', label: `Events (${items.filter(i => i.source_type === 'EVENT').length})` },

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -14,8 +14,11 @@ import {
   UserCheck,
   RotateCcw,
   ArrowRight,
-
+  FolderPlus,
+  X,
+  Sparkles
 } from 'lucide-react';
+import { apiClient } from '@/lib/apiClient';
 
 interface Item {
   id: string;
@@ -40,213 +43,300 @@ interface Item {
 interface LocationNode {
   id: string;
   name: string;
-  type: string;
-  path: string;
+  location_type?: string;
+  path?: string;
+  item_count?: number;
   children?: LocationNode[];
 }
 
 export default function InventoryPage() {
+  const [activeHomeId, setActiveHomeId] = useState<string | null>(null);
+  const [items, setItems] = useState<Item[]>([]);
+  const [locationsTree, setLocationsTree] = useState<LocationNode[]>([]);
+  const [flatLocations, setFlatLocations] = useState<{ id: string; name: string; path?: string }[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
   const [activeTab, setActiveTab] = useState<'ALL' | 'CONSUMABLES' | 'ASSETS' | 'LOCATIONS' | 'BORROWED'>('ALL');
   const [search, setSearch] = useState('');
   const [selectedLocation, setSelectedLocation] = useState<string | null>(null);
+
+  // Modals state
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [isAddLocationOpen, setIsAddLocationOpen] = useState(false);
   const [isMoveOpen, setIsMoveOpen] = useState(false);
   const [isBorrowOpen, setIsBorrowOpen] = useState(false);
   const [isReturnOpen, setIsReturnOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
 
-  // Sample locations hierarchy tree
-  const locationsTree: LocationNode[] = [
-    {
-      id: 'loc-1',
-      name: 'Store Room',
-      type: 'ROOM',
-      path: 'Store Room',
-      children: [
-        {
-          id: 'loc-2',
-          name: '3rd Cupboard',
-          type: 'FURNITURE',
-          path: 'Store Room > 3rd Cupboard',
-          children: [
-            { id: 'loc-3', name: 'Blue Box', type: 'CONTAINER', path: 'Store Room > 3rd Cupboard > Blue Box' },
-            { id: 'loc-4', name: 'Black File', type: 'CONTAINER', path: 'Store Room > 3rd Cupboard > Black File' },
-          ],
-        },
-      ],
-    },
-    {
-      id: 'loc-5',
-      name: 'Kitchen',
-      type: 'ROOM',
-      path: 'Kitchen',
-      children: [
-        { id: 'loc-6', name: 'Upper Cabinet', type: 'FURNITURE', path: 'Kitchen > Upper Cabinet' },
-        { id: 'loc-7', name: 'Refrigerator', type: 'FURNITURE', path: 'Kitchen > Refrigerator' },
-      ],
-    },
-    {
-      id: 'loc-8',
-      name: 'Garage',
-      type: 'ROOM',
-      path: 'Garage',
-      children: [
-        { id: 'loc-9', name: 'Tool Rack', type: 'FURNITURE', path: 'Garage > Tool Rack' },
-      ],
-    },
-  ];
-
-  // Initial state items
-  const [items, setItems] = useState<Item[]>([
-    {
-      id: 'item-1',
-      name: 'Basmati Rice',
-      item_type: 'CONSUMABLE',
-      category_name: 'Pantry',
-      quantity: 2.0,
-      unit: 'kg',
-      min_threshold: 5.0,
-      preferred_quantity: 10.0,
-      location_path: 'Kitchen > Upper Cabinet',
-      asset_status: 'AVAILABLE',
-      status: 'LOW',
-      expiry_status: 'NORMAL',
-    },
-    {
-      id: 'item-2',
-      name: 'Extra Virgin Olive Oil',
-      item_type: 'CONSUMABLE',
-      category_name: 'Pantry',
-      quantity: 0,
-      unit: 'L',
-      min_threshold: 1.0,
-      preferred_quantity: 3.0,
-      location_path: 'Kitchen > Upper Cabinet',
-      asset_status: 'AVAILABLE',
-      status: 'OUT_OF_STOCK',
-      expiry_status: 'NORMAL',
-    },
-    {
-      id: 'item-3',
-      name: 'Cordless Power Drill',
-      item_type: 'ASSET',
-      category_name: 'Tools',
-      quantity: 1,
-      unit: 'pcs',
-      location_path: 'Garage > Tool Rack',
-      condition: 'EXCELLENT',
-      asset_status: 'AVAILABLE',
-      status: 'GOOD',
-      expiry_status: 'NORMAL',
-    },
-    {
-      id: 'item-4',
-      name: 'Heavy Duty Toolkit',
-      item_type: 'ASSET',
-      category_name: 'Tools',
-      quantity: 1,
-      unit: 'pcs',
-      location_path: 'Store Room > 3rd Cupboard > Blue Box',
-      condition: 'GOOD',
-      asset_status: 'BORROWED',
-      current_holder_name: 'Ashraf',
-      status: 'GOOD',
-      expiry_status: 'NORMAL',
-    },
-    {
-      id: 'item-5',
-      name: 'House Keys (Spare Set)',
-      item_type: 'ASSET',
-      category_name: 'Keys',
-      quantity: 1,
-      unit: 'pcs',
-      location_path: 'Store Room > 3rd Cupboard > Blue Box',
-      condition: 'GOOD',
-      asset_status: 'AVAILABLE',
-      status: 'GOOD',
-      expiry_status: 'NORMAL',
-    },
-  ]);
-
-  // Modals form state
+  // Form states for Add Item
   const [newItemName, setNewItemName] = useState('');
   const [newItemType, setNewItemType] = useState<'CONSUMABLE' | 'ASSET'>('CONSUMABLE');
-  const [newItemCategory] = useState('Pantry');
-  const [newItemQty] = useState('1');
-  const [newItemUnit] = useState('pcs');
-  const [newItemThreshold] = useState('1');
-  const [newItemLocationPath, setNewItemLocationPath] = useState('Store Room > 3rd Cupboard > Blue Box');
+  const [newItemQty, setNewItemQty] = useState('1');
+  const [newItemUnit, setNewItemUnit] = useState('pcs');
+  const [newItemThreshold, setNewItemThreshold] = useState('1');
+  const [newItemLocationId, setNewItemLocationId] = useState<string>('');
+  const [newItemCondition, setNewItemCondition] = useState('Good');
+  const [isSubmittingItem, setIsSubmittingItem] = useState(false);
+
+  // Form states for Add Location
+  const [newLocationName, setNewLocationName] = useState('');
+  const [newLocationType, setNewLocationType] = useState('ROOM');
+  const [newLocationParentId, setNewLocationParentId] = useState<string>('');
+  const [newLocationDescription, setNewLocationDescription] = useState('');
+  const [isSubmittingLocation, setIsSubmittingLocation] = useState(false);
 
   // Relocation state
-  const [targetLocation, setTargetLocation] = useState('Garage > Tool Rack');
+  const [targetLocationId, setTargetLocationId] = useState('');
   // Borrow state
   const [borrowerName, setBorrowerName] = useState('');
+  const [borrowerContact, setBorrowerContact] = useState('');
 
-  const handleAddItem = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newItemName) return;
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const locInputRef = useRef<HTMLInputElement>(null);
 
-    const qty = parseFloat(newItemQty) || 0;
-    const thresh = parseFloat(newItemThreshold) || 1;
-    let status: 'GOOD' | 'LOW' | 'OUT_OF_STOCK' = 'GOOD';
-    if (qty === 0) status = 'OUT_OF_STOCK';
-    else if (qty <= thresh) status = 'LOW';
+  const loadData = async (showLoadingState = false) => {
+    if (showLoadingState) setIsLoading(true);
+    try {
+      const savedHomeId = localStorage.getItem('active_home_id');
+      let homeId = savedHomeId;
 
-    const newItem: Item = {
-      id: `item-${Date.now()}`,
-      name: newItemName,
-      item_type: newItemType,
-      category_name: newItemCategory,
-      quantity: qty,
-      unit: newItemUnit,
-      min_threshold: newItemType === 'CONSUMABLE' ? thresh : undefined,
-      location_path: newItemLocationPath,
-      asset_status: 'AVAILABLE',
-      status,
-      expiry_status: 'NORMAL',
+      if (!homeId) {
+        const homes = await apiClient.get<Array<{ id: string }>>('/homes');
+        if (homes && homes.length > 0) {
+          homeId = homes[0].id;
+          localStorage.setItem('active_home_id', homeId);
+        }
+      }
+
+      setActiveHomeId(homeId);
+
+      if (homeId) {
+        const [itemsRes, flatLocsRes] = await Promise.allSettled([
+          apiClient.get<any>(`/homes/${homeId}/inventory/items`),
+          apiClient.get<any>(`/homes/${homeId}/locations`)
+        ]);
+
+        if (itemsRes.status === 'fulfilled' && itemsRes.value) {
+          const rawItems = itemsRes.value.items || itemsRes.value;
+          if (Array.isArray(rawItems)) {
+            setItems(rawItems.map((i: any) => ({
+              id: i.id,
+              name: i.name,
+              item_type: i.item_type || 'CONSUMABLE',
+              category_name: i.category_name || 'General',
+              quantity: parseFloat(i.quantity) || 0,
+              unit: i.unit || 'pcs',
+              min_threshold: i.min_threshold ? parseFloat(i.min_threshold) : undefined,
+              preferred_quantity: i.preferred_quantity ? parseFloat(i.preferred_quantity) : undefined,
+              location_id: i.location_id,
+              location_path: i.location_path || 'Unassigned',
+              condition: i.condition || 'Good',
+              asset_status: i.asset_status || 'AVAILABLE',
+              current_holder_name: i.current_holder_name,
+              expiry_date: i.expiry_date,
+              status: i.status || 'GOOD',
+              expiry_status: i.expiry_status || 'NORMAL',
+              notes: i.notes
+            })));
+          }
+        }
+
+        if (flatLocsRes.status === 'fulfilled' && flatLocsRes.value) {
+          const locs = Array.isArray(flatLocsRes.value) ? flatLocsRes.value : [];
+          setFlatLocations(locs.map((l: any) => ({
+            id: l.id,
+            name: l.name,
+            path: l.path || l.name
+          })));
+
+          const map = new Map<string, LocationNode>();
+          const roots: LocationNode[] = [];
+          locs.forEach((l: any) => {
+            map.set(l.id, {
+              id: l.id,
+              name: l.name,
+              location_type: l.location_type,
+              path: l.path || l.name,
+              item_count: l.item_count || 0,
+              children: []
+            });
+          });
+          locs.forEach((l: any) => {
+            const node = map.get(l.id)!;
+            if (l.parent_id && map.has(l.parent_id)) {
+              map.get(l.parent_id)!.children!.push(node);
+            } else {
+              roots.push(node);
+            }
+          });
+          setLocationsTree(roots);
+
+          if (locs.length > 0) {
+            setNewItemLocationId(locs[0].id);
+            setTargetLocationId(locs[0].id);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load inventory & locations:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData(true);
+    const handleHomeChanged = () => {
+      loadData(false);
     };
+    window.addEventListener('home-changed', handleHomeChanged);
+    return () => window.removeEventListener('home-changed', handleHomeChanged);
+  }, []);
 
-    setItems([...items, newItem]);
-    setNewItemName('');
-    setIsAddOpen(false);
+  const openAddItemModal = () => {
+    setIsAddOpen(true);
+    setTimeout(() => {
+      nameInputRef.current?.focus();
+    }, 100);
   };
 
-  const handleMoveItem = () => {
-    if (!selectedItem) return;
-    setItems(
-      items.map((i) =>
-        i.id === selectedItem.id ? { ...i, location_path: targetLocation } : i
-      )
-    );
-    setIsMoveOpen(false);
-    setSelectedItem(null);
+  const openAddLocationModal = (parentId?: string) => {
+    setNewLocationParentId(parentId || '');
+    setNewLocationName('');
+    setIsAddLocationOpen(true);
+    setTimeout(() => {
+      locInputRef.current?.focus();
+    }, 100);
   };
 
-  const handleBorrowItem = () => {
-    if (!selectedItem || !borrowerName) return;
-    setItems(
-      items.map((i) =>
-        i.id === selectedItem.id
-          ? { ...i, asset_status: 'BORROWED', current_holder_name: borrowerName }
-          : i
-      )
-    );
-    setBorrowerName('');
-    setIsBorrowOpen(false);
-    setSelectedItem(null);
+  const handleAddItem = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newItemName.trim() || !activeHomeId) return;
+
+    setIsSubmittingItem(true);
+    try {
+      const qty = parseFloat(newItemQty) || 1;
+      const thresh = parseFloat(newItemThreshold) || 1;
+
+      const payload = {
+        name: newItemName.trim(),
+        item_type: newItemType,
+        quantity: qty,
+        unit: newItemUnit || 'pcs',
+        min_threshold: newItemType === 'CONSUMABLE' ? thresh : undefined,
+        location_id: newItemLocationId || undefined,
+        condition: newItemType === 'ASSET' ? newItemCondition : undefined
+      };
+
+      await apiClient.post(`/homes/${activeHomeId}/inventory/items`, payload);
+      setNewItemName('');
+      setIsAddOpen(false);
+      await loadData();
+    } catch (err: any) {
+      console.error('Failed to add item:', err);
+      alert(err?.message || 'Failed to save item to Home Memory.');
+    } finally {
+      setIsSubmittingItem(false);
+    }
   };
 
-  const handleReturnItem = () => {
-    if (!selectedItem) return;
-    setItems(
-      items.map((i) =>
-        i.id === selectedItem.id
-          ? { ...i, asset_status: 'AVAILABLE', current_holder_name: undefined }
-          : i
-      )
-    );
-    setIsReturnOpen(false);
-    setSelectedItem(null);
+  const handleAddLocation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newLocationName.trim() || !activeHomeId) return;
+
+    setIsSubmittingLocation(true);
+    try {
+      const payload = {
+        name: newLocationName.trim(),
+        location_type: newLocationType,
+        parent_id: newLocationParentId || undefined,
+        description: newLocationDescription.trim() || undefined
+      };
+
+      await apiClient.post(`/homes/${activeHomeId}/locations`, payload);
+      setNewLocationName('');
+      setNewLocationDescription('');
+      setIsAddLocationOpen(false);
+      await loadData();
+    } catch (err: any) {
+      console.error('Failed to create location:', err);
+      alert(err?.message || 'Failed to create location.');
+    } finally {
+      setIsSubmittingLocation(false);
+    }
+  };
+
+  const handleMoveItem = async () => {
+    if (!selectedItem || !targetLocationId || !activeHomeId) return;
+    try {
+      await apiClient.post(`/homes/${activeHomeId}/inventory/items/${selectedItem.id}/move`, {
+        to_location_id: targetLocationId
+      });
+      setIsMoveOpen(false);
+      setSelectedItem(null);
+      await loadData();
+    } catch (err: any) {
+      console.error('Failed to move item:', err);
+      alert(err?.message || 'Failed to move item.');
+    }
+  };
+
+  const handleBorrowItem = async () => {
+    if (!selectedItem || !borrowerName.trim() || !activeHomeId) return;
+    try {
+      await apiClient.post(`/homes/${activeHomeId}/inventory/items/${selectedItem.id}/borrow`, {
+        borrower_name: borrowerName.trim(),
+        borrower_contact: borrowerContact.trim() || undefined
+      });
+      setBorrowerName('');
+      setBorrowerContact('');
+      setIsBorrowOpen(false);
+      setSelectedItem(null);
+      await loadData();
+    } catch (err: any) {
+      console.error('Failed to record borrowed asset:', err);
+      alert(err?.message || 'Failed to record loan.');
+    }
+  };
+
+  const handleReturnItem = async () => {
+    if (!selectedItem || !activeHomeId) return;
+    try {
+      await apiClient.post(`/homes/${activeHomeId}/inventory/items/${selectedItem.id}/return`, {});
+      setIsReturnOpen(false);
+      setSelectedItem(null);
+      await loadData();
+    } catch (err: any) {
+      console.error('Failed to return item:', err);
+      alert(err?.message || 'Failed to record return.');
+    }
+  };
+
+  const handleAdjustStock = async (item: Item, delta: number) => {
+    if (!activeHomeId) return;
+    try {
+      const movement_type = delta > 0 ? 'PURCHASE' : 'CONSUME';
+      await apiClient.post(`/homes/${activeHomeId}/inventory/items/${item.id}/movements`, {
+        quantity: Math.abs(delta),
+        movement_type
+      });
+      await loadData();
+    } catch (err: any) {
+      console.error('Failed to adjust stock:', err);
+    }
+  };
+
+  const handleDeleteItem = async (id: string) => {
+    if (!activeHomeId) return;
+    if (!confirm('Are you sure you want to delete this item from Home Memory?')) return;
+
+    try {
+      await apiClient.delete(`/homes/${activeHomeId}/inventory/items/${id}`);
+      await loadData();
+    } catch (err: any) {
+      console.error('Failed to delete item:', err);
+      alert(err?.message || 'Failed to delete item.');
+    }
   };
 
   const filteredItems = items.filter((item) => {
@@ -269,23 +359,98 @@ export default function InventoryPage() {
   const borrowedCount = items.filter((i) => i.asset_status === 'BORROWED').length;
   const totalAssets = items.filter((i) => i.item_type === 'ASSET').length;
 
+  const renderLocationTreeNodes = (nodes: LocationNode[], depth: number = 0) => {
+    return nodes.map((node) => {
+      const isSelected = selectedLocation === node.name;
+      return (
+        <div key={node.id} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '6px 10px',
+              paddingLeft: `${Math.max(10, depth * 16 + 10)}px`,
+              borderRadius: 'var(--radius-md)',
+              backgroundColor: isSelected ? 'var(--color-primary-100)' : 'transparent',
+              cursor: 'pointer',
+              fontSize: '13px',
+              fontWeight: depth === 0 ? 700 : 500,
+              color: isSelected ? 'var(--color-primary-900)' : 'var(--color-text-primary)',
+              transition: 'background-color 0.15s ease'
+            }}
+            onClick={() => setSelectedLocation(isSelected ? null : node.name)}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+              {depth === 0 ? <FolderOpen size={16} color="var(--color-primary-700)" /> : <Box size={14} color="var(--color-text-secondary)" />}
+              <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{node.name}</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openAddLocationModal(node.id);
+                }}
+                className="touch-target"
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: '4px',
+                  borderRadius: '4px',
+                  color: 'var(--color-text-secondary)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}
+                title={`Add sub-location inside ${node.name}`}
+                aria-label={`Add sub-location inside ${node.name}`}
+              >
+                <Plus size={14} />
+              </button>
+            </div>
+          </div>
+          {node.children && node.children.length > 0 && renderLocationTreeNodes(node.children, depth + 1)}
+        </div>
+      );
+    });
+  };
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)', maxWidth: '1100px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)', maxWidth: '1100px', width: '100%' }}>
       {/* Header */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
         <div>
-          <h1 style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--color-primary-900)' }}>
+          <h1 style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--color-primary-900)', lineHeight: 1.2 }}>
             Household Inventory & Home Memory
           </h1>
-          <p style={{ fontSize: '14px', color: 'var(--color-text-secondary)' }}>
+          <p style={{ fontSize: '14px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
             Know what we have, where it is kept, and who borrowed it.
           </p>
         </div>
 
-        <Button onClick={() => setIsAddOpen(true)}>
-          <Plus size={16} />
-          <span>Add Item / Asset</span>
-        </Button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <Button
+            id="addLocationBtn"
+            variant="secondary"
+            onClick={() => openAddLocationModal()}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+          >
+            <FolderPlus size={16} />
+            <span>+ New Location</span>
+          </Button>
+
+          <Button
+            id="addInventoryItemBtn"
+            variant="primary"
+            onClick={openAddItemModal}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+          >
+            <Plus size={16} />
+            <span>+ Add Item</span>
+          </Button>
+        </div>
       </div>
 
       {/* KPI Cards */}
@@ -298,17 +463,17 @@ export default function InventoryPage() {
           <span style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>{totalAssets} durable assets</span>
         </Card>
 
-        <Card style={{ padding: 'var(--space-4)', borderLeft: '4px solid #EAB308' }}>
-          <span style={{ fontSize: '12px', fontWeight: 600, color: '#A16207' }}>LOW STOCK</span>
-          <div style={{ fontSize: '24px', fontWeight: 800, color: '#A16207', marginTop: '4px' }}>
+        <Card style={{ padding: 'var(--space-4)', borderLeft: '4px solid var(--status-low-stock)' }}>
+          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--status-low-stock)' }}>LOW STOCK</span>
+          <div style={{ fontSize: '24px', fontWeight: 800, color: 'var(--status-low-stock)', marginTop: '4px' }}>
             {lowStockCount}
           </div>
           <span style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>Replenish soon</span>
         </Card>
 
-        <Card style={{ padding: 'var(--space-4)', borderLeft: '4px solid #EF4444' }}>
-          <span style={{ fontSize: '12px', fontWeight: 600, color: '#B91C1C' }}>OUT OF STOCK</span>
-          <div style={{ fontSize: '24px', fontWeight: 800, color: '#B91C1C', marginTop: '4px' }}>
+        <Card style={{ padding: 'var(--space-4)', borderLeft: '4px solid var(--status-overdue)' }}>
+          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--status-overdue)' }}>OUT OF STOCK</span>
+          <div style={{ fontSize: '24px', fontWeight: 800, color: 'var(--status-overdue)', marginTop: '4px' }}>
             {outOfStockCount}
           </div>
           <span style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>Add to shopping list</span>
@@ -323,8 +488,8 @@ export default function InventoryPage() {
         </Card>
       </div>
 
-      {/* Tabs */}
-      <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--color-border-subtle)', paddingBottom: '8px' }}>
+      {/* Navigation Tabs */}
+      <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--color-border-subtle)', paddingBottom: '8px', overflowX: 'auto' }}>
         <Button
           variant={activeTab === 'ALL' ? 'primary' : 'ghost'}
           size="sm"
@@ -364,110 +529,87 @@ export default function InventoryPage() {
 
       {/* Location Explorer View */}
       {activeTab === 'LOCATIONS' ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 1fr) 2fr', gap: 'var(--space-4)' }}>
+        <div
+          className="ozhzo-location-explorer-grid"
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'minmax(280px, 1fr) 2fr',
+            gap: 'var(--space-4)',
+            alignItems: 'start'
+          }}
+        >
           <Card style={{ padding: 'var(--space-4)' }}>
-            <h3 style={{ fontSize: '14px', fontWeight: 700, marginBottom: 'var(--space-3)' }}>Household Locations</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              {locationsTree.map((room) => (
-                <div key={room.id} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <div
-                    onClick={() => setSelectedLocation(room.name)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      padding: '6px 10px',
-                      borderRadius: 'var(--radius-md)',
-                      backgroundColor: selectedLocation === room.name ? 'var(--color-primary-50)' : 'transparent',
-                      cursor: 'pointer',
-                      fontSize: '13px',
-                      fontWeight: 600,
-                    }}
-                  >
-                    <FolderOpen size={16} color="var(--color-primary-700)" />
-                    <span>{room.name}</span>
-                  </div>
-
-                  {room.children && (
-                    <div style={{ paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      {room.children.map((sub) => (
-                        <div key={sub.id}>
-                          <div
-                            onClick={() => setSelectedLocation(sub.name)}
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '6px',
-                              padding: '5px 8px',
-                              borderRadius: 'var(--radius-md)',
-                              backgroundColor: selectedLocation === sub.name ? 'var(--color-primary-50)' : 'transparent',
-                              cursor: 'pointer',
-                              fontSize: '13px',
-                            }}
-                          >
-                            <Box size={14} color="var(--color-text-secondary)" />
-                            <span>{sub.name}</span>
-                          </div>
-
-                          {sub.children && (
-                            <div style={{ paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                              {sub.children.map((box) => (
-                                <div
-                                  key={box.id}
-                                  onClick={() => setSelectedLocation(box.name)}
-                                  style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '6px',
-                                    padding: '4px 8px',
-                                    borderRadius: 'var(--radius-md)',
-                                    backgroundColor: selectedLocation === box.name ? 'var(--color-primary-100)' : 'transparent',
-                                    cursor: 'pointer',
-                                    fontSize: '12px',
-                                    color: selectedLocation === box.name ? 'var(--color-primary-900)' : 'var(--color-text-secondary)',
-                                  }}
-                                >
-                                  <span>📍 {box.name}</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-3)' }}>
+              <h3 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--color-primary-900)' }}>
+                Household Hierarchy
+              </h3>
+              <Button size="sm" variant="secondary" onClick={() => openAddLocationModal()}>
+                <Plus size={14} />
+                <span>Add Root</span>
+              </Button>
             </div>
+
+            {locationsTree.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '20px', color: 'var(--color-text-secondary)', fontSize: '13px' }}>
+                <p>No locations created yet.</p>
+                <Button size="sm" style={{ marginTop: '8px' }} onClick={() => openAddLocationModal()}>
+                  + Create First Room
+                </Button>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                {renderLocationTreeNodes(locationsTree)}
+              </div>
+            )}
           </Card>
 
           <Card style={{ padding: 'var(--space-4)' }}>
-            <h3 style={{ fontSize: '14px', fontWeight: 700, marginBottom: 'var(--space-3)' }}>
-              Items inside: {selectedLocation || 'All Locations'}
-            </h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {filteredItems.map((item) => (
-                <div
-                  key={item.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '8px 12px',
-                    borderRadius: 'var(--radius-md)',
-                    border: '1px solid var(--color-border-subtle)',
-                  }}
-                >
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: '14px' }}>{item.name}</div>
-                    <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>{item.location_path}</div>
-                  </div>
-                  <Badge variant={item.asset_status === 'BORROWED' ? 'low-stock' : 'in-stock'}>
-                    {item.asset_status === 'BORROWED' ? `With ${item.current_holder_name}` : 'Available'}
-                  </Badge>
-                </div>
-              ))}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-3)' }}>
+              <h3 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--color-primary-900)' }}>
+                Items inside: {selectedLocation || 'All Locations'} ({filteredItems.length})
+              </h3>
+              {selectedLocation && (
+                <Button size="sm" variant="ghost" onClick={() => setSelectedLocation(null)}>
+                  Clear Filter
+                </Button>
+              )}
             </div>
+
+            {filteredItems.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '30px', color: 'var(--color-text-secondary)', fontSize: '13px' }}>
+                <p>No items found in this location.</p>
+                <Button size="sm" style={{ marginTop: '8px' }} onClick={openAddItemModal}>
+                  + Add Item Here
+                </Button>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {filteredItems.map((item) => (
+                  <div
+                    key={item.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '10px 14px',
+                      borderRadius: 'var(--radius-md)',
+                      border: '1px solid var(--color-border-subtle)',
+                      backgroundColor: 'var(--color-surface-subtle)'
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--color-text-primary)' }}>{item.name}</div>
+                      <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
+                        {item.location_path} • {item.quantity} {item.unit}
+                      </div>
+                    </div>
+                    <Badge variant={item.asset_status === 'BORROWED' ? 'low-stock' : item.status === 'LOW' ? 'low-stock' : item.status === 'OUT_OF_STOCK' ? 'overdue' : 'in-stock'}>
+                      {item.asset_status === 'BORROWED' ? `With ${item.current_holder_name}` : item.status}
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            )}
           </Card>
         </div>
       ) : (
@@ -485,272 +627,567 @@ export default function InventoryPage() {
           </div>
 
           {/* Items Grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 'var(--space-4)' }}>
-            {filteredItems.map((item) => (
-              <Card key={item.id} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                    <div>
-                      <span style={{ fontSize: '11px', fontWeight: 700, color: item.item_type === 'ASSET' ? 'var(--color-primary-700)' : 'var(--color-text-tertiary)', textTransform: 'uppercase' }}>
-                        {item.item_type} • {item.category_name || 'General'}
-                      </span>
-                      <h3 style={{ fontSize: '16px', fontWeight: 700, color: 'var(--color-primary-900)' }}>
-                        {item.name}
-                      </h3>
+          {isLoading ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 'var(--space-4)' }}>
+              {[1, 2, 3, 4].map((n) => (
+                <div key={n} style={{ height: '160px', backgroundColor: 'var(--color-surface-subtle)', borderRadius: 'var(--radius-md)', animation: 'pulse 1.5s infinite' }} />
+              ))}
+            </div>
+          ) : filteredItems.length === 0 ? (
+            <Card style={{ padding: 'var(--space-8)', textAlign: 'center' }}>
+              <Sparkles size={32} color="var(--color-primary-700)" style={{ margin: '0 auto 8px' }} />
+              <h3 style={{ fontSize: '16px', fontWeight: 700, color: 'var(--color-primary-900)' }}>
+                No items found
+              </h3>
+              <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
+                Try another filter or click &ldquo;+ Add Item&rdquo; to record your first household item.
+              </p>
+              <Button style={{ marginTop: '16px' }} onClick={openAddItemModal}>
+                + Add Item / Asset
+              </Button>
+            </Card>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 'var(--space-4)' }}>
+              {filteredItems.map((item) => (
+                <Card key={item.id} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                      <div>
+                        <span style={{ fontSize: '11px', fontWeight: 700, color: item.item_type === 'ASSET' ? 'var(--color-primary-700)' : 'var(--color-text-tertiary)', textTransform: 'uppercase' }}>
+                          {item.item_type} • {item.category_name || 'General'}
+                        </span>
+                        <h3 style={{ fontSize: '16px', fontWeight: 700, color: 'var(--color-primary-900)', marginTop: '2px' }}>
+                          {item.name}
+                        </h3>
+                      </div>
+                      {item.item_type === 'CONSUMABLE' ? (
+                        <Badge variant={item.status === 'GOOD' ? 'in-stock' : item.status === 'LOW' ? 'low-stock' : 'overdue'}>
+                          {item.status}
+                        </Badge>
+                      ) : (
+                        <Badge variant={item.asset_status === 'AVAILABLE' ? 'in-stock' : 'low-stock'}>
+                          {item.asset_status === 'BORROWED' ? `Borrowed (${item.current_holder_name})` : 'Available'}
+                        </Badge>
+                      )}
                     </div>
+
                     {item.item_type === 'CONSUMABLE' ? (
-                      <Badge variant={item.status === 'GOOD' ? 'in-stock' : item.status === 'LOW' ? 'low-stock' : 'overdue'}>
-                        {item.status}
-                      </Badge>
+                      <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--color-primary-900)', margin: '8px 0' }}>
+                        {item.quantity} <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--color-text-secondary)' }}>{item.unit}</span>
+                      </div>
                     ) : (
-                      <Badge variant={item.asset_status === 'AVAILABLE' ? 'in-stock' : 'low-stock'}>
-                        {item.asset_status === 'BORROWED' ? `Borrowed (${item.current_holder_name})` : 'Available'}
-                      </Badge>
+                      <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)', margin: '8px 0' }}>
+                        Condition: <strong>{item.condition || 'Good'}</strong>
+                      </div>
+                    )}
+
+                    {item.location_path && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: 'var(--color-primary-800)', backgroundColor: 'var(--color-surface-subtle)', padding: '4px 8px', borderRadius: '4px', marginTop: '6px' }}>
+                        <MapPin size={13} />
+                        <span style={{ fontWeight: 600 }}>{item.location_path}</span>
+                      </div>
                     )}
                   </div>
 
-                  {item.item_type === 'CONSUMABLE' ? (
-                    <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--color-primary-900)', margin: '8px 0' }}>
-                      {item.quantity} <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--color-text-secondary)' }}>{item.unit}</span>
-                    </div>
-                  ) : (
-                    <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)', margin: '8px 0' }}>
-                      Condition: <strong>{item.condition || 'Good'}</strong>
-                    </div>
-                  )}
-
-                  {item.location_path && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', color: 'var(--color-primary-800)', backgroundColor: 'var(--color-surface-overlay)', padding: '4px 8px', borderRadius: '4px' }}>
-                      <MapPin size={13} />
-                      <span style={{ fontWeight: 600 }}>{item.location_path}</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Card Action Controls */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 'var(--space-2)', borderTop: '1px solid var(--color-border-subtle)', gap: '6px' }}>
-                  {item.item_type === 'ASSET' ? (
-                    <>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => { setSelectedItem(item); setIsMoveOpen(true); }}
-                      >
-                        <ArrowRight size={13} />
-                        <span>Move</span>
-                      </Button>
-
-                      {item.asset_status === 'AVAILABLE' ? (
+                  {/* Card Action Controls */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 'var(--space-2)', borderTop: '1px solid var(--color-border-subtle)', gap: '6px' }}>
+                    {item.item_type === 'ASSET' ? (
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                         <Button
                           size="sm"
                           variant="secondary"
-                          onClick={() => { setSelectedItem(item); setIsBorrowOpen(true); }}
+                          onClick={() => { setSelectedItem(item); setIsMoveOpen(true); }}
                         >
-                          <UserCheck size={13} />
-                          <span>Borrow</span>
+                          <ArrowRight size={13} />
+                          <span>Move</span>
                         </Button>
-                      ) : (
+
+                        {item.asset_status === 'AVAILABLE' ? (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => { setSelectedItem(item); setIsBorrowOpen(true); }}
+                          >
+                            <UserCheck size={13} />
+                            <span>Borrow</span>
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="primary"
+                            onClick={() => { setSelectedItem(item); setIsReturnOpen(true); }}
+                          >
+                            <RotateCcw size={13} />
+                            <span>Return</span>
+                          </Button>
+                        )}
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', gap: '4px' }}>
                         <Button
                           size="sm"
-                          variant="primary"
-                          onClick={() => { setSelectedItem(item); setIsReturnOpen(true); }}
+                          variant="secondary"
+                          onClick={() => handleAdjustStock(item, -1)}
+                          aria-label={`Reduce ${item.name} quantity by 1`}
                         >
-                          <RotateCcw size={13} />
-                          <span>Return</span>
+                          -1 {item.unit}
                         </Button>
-                      )}
-                    </>
-                  ) : (
-                    <div style={{ display: 'flex', gap: '4px' }}>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => {
-                          setItems(items.map(i => i.id === item.id ? { ...i, quantity: Math.max(0, i.quantity - 1) } : i));
-                        }}
-                      >
-                        -1 {item.unit}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => {
-                          setItems(items.map(i => i.id === item.id ? { ...i, quantity: i.quantity + 1 } : i));
-                        }}
-                      >
-                        +1 {item.unit}
-                      </Button>
-                    </div>
-                  )}
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => handleAdjustStock(item, 1)}
+                          aria-label={`Increase ${item.name} quantity by 1`}
+                        >
+                          +1 {item.unit}
+                        </Button>
+                      </div>
+                    )}
 
-                  <Button size="sm" variant="ghost" style={{ color: 'var(--status-overdue)' }}>
-                    <Trash2 size={13} />
-                  </Button>
-                </div>
-              </Card>
-            ))}
-          </div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => handleDeleteItem(item.id)}
+                      style={{ color: 'var(--status-overdue)' }}
+                      aria-label={`Delete ${item.name}`}
+                    >
+                      <Trash2 size={15} />
+                    </Button>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
         </>
       )}
 
-      {/* Move Item Modal */}
-      {isMoveOpen && selectedItem && (
-        <Card style={{ border: '2px solid var(--color-primary-900)' }}>
-          <h3 style={{ fontSize: '16px', fontWeight: 700, marginBottom: 'var(--space-3)' }}>
-            Move &ldquo;{selectedItem.name}&rdquo;
-          </h3>
-          <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-3)' }}>
-            Current: {selectedItem.location_path}
-          </p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <label style={{ fontSize: '13px', fontWeight: 600 }}>Select New Destination Location:</label>
-            <select
-              value={targetLocation}
-              onChange={(e) => setTargetLocation(e.target.value)}
-              style={{ height: '40px', padding: '0 12px', borderRadius: 'var(--radius-md)' }}
-            >
-              <option value="Garage > Tool Rack">Garage &gt; Tool Rack</option>
-              <option value="Store Room > 3rd Cupboard > Blue Box">Store Room &gt; 3rd Cupboard &gt; Blue Box</option>
-              <option value="Kitchen > Upper Cabinet">Kitchen &gt; Upper Cabinet</option>
-            </select>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: 'var(--space-4)' }}>
-            <Button variant="ghost" onClick={() => setIsMoveOpen(false)}>Cancel</Button>
-            <Button onClick={handleMoveItem}>Confirm Relocation</Button>
-          </div>
-        </Card>
-      )}
-
-      {/* Borrow Asset Modal */}
-      {isBorrowOpen && selectedItem && (
-        <Card style={{ border: '2px solid var(--color-primary-900)' }}>
-          <h3 style={{ fontSize: '16px', fontWeight: 700, marginBottom: 'var(--space-3)' }}>
-            Borrow &ldquo;{selectedItem.name}&rdquo;
-          </h3>
-          <Input
-            id="borrower"
-            label="Borrower Name (e.g. Ashraf, Neighbor Bob)"
-            value={borrowerName}
-            onChange={(e) => setBorrowerName(e.target.value)}
-            required
-          />
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: 'var(--space-4)' }}>
-            <Button variant="ghost" onClick={() => setIsBorrowOpen(false)}>Cancel</Button>
-            <Button onClick={handleBorrowItem}>Confirm Loan</Button>
-          </div>
-        </Card>
-      )}
-
-      {/* Return Asset Modal */}
-      {isReturnOpen && selectedItem && (
-        <Card style={{ border: '2px solid var(--color-primary-900)' }}>
-          <h3 style={{ fontSize: '16px', fontWeight: 700, marginBottom: 'var(--space-3)' }}>
-            Return &ldquo;{selectedItem.name}&rdquo;
-          </h3>
-          <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-3)' }}>
-            Currently with: <strong>{selectedItem.current_holder_name}</strong>
-          </p>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: 'var(--space-4)' }}>
-            <Button variant="ghost" onClick={() => setIsReturnOpen(false)}>Cancel</Button>
-            <Button onClick={handleReturnItem}>Confirm Return to {selectedItem.location_path}</Button>
-          </div>
-        </Card>
-      )}
-
-      {/* Add Item Modal with Common Items Template Catalog */}
+      {/* Add Item Modal */}
       {isAddOpen && (
-        <Card style={{ border: '2px solid var(--color-primary-900)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-3)' }}>
-            <h3 style={{ fontSize: '16px', fontWeight: 700 }}>
-              Add Item to Home Inventory
-            </h3>
-            <Badge variant="neutral">Common Catalog or Custom</Badge>
-          </div>
-
-          {/* Quick Select Common Item Chips */}
-          <div style={{ marginBottom: 'var(--space-4)' }}>
-            <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '8px' }}>
-              POPULAR HOUSEHOLD ITEMS (Click to Pre-fill):
-            </label>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-              {[
-                { name: 'Rice', unit: 'kg', cat: 'Pantry' },
-                { name: 'Sugar', unit: 'kg', cat: 'Pantry' },
-                { name: 'Salt', unit: 'kg', cat: 'Pantry' },
-                { name: 'Milk', unit: 'L', cat: 'Refrigerator' },
-                { name: 'Cooking Oil', unit: 'L', cat: 'Pantry' },
-                { name: 'Toothpaste', unit: 'pcs', cat: 'Personal Care' },
-                { name: 'Detergent', unit: 'kg', cat: 'Cleaning' },
-                { name: 'Batteries (AA)', unit: 'pack', cat: 'Household' },
-              ].map((tpl) => (
-                <button
-                  key={tpl.name}
-                  type="button"
-                  onClick={() => {
-                    setNewItemName(tpl.name);
-                    setNewItemType('CONSUMABLE');
-                  }}
-                  style={{
-                    padding: '4px 10px',
-                    borderRadius: 'var(--radius-full)',
-                    background: newItemName === tpl.name ? 'var(--color-primary-900)' : 'var(--color-surface-hover)',
-                    color: newItemName === tpl.name ? '#ffffff' : 'var(--color-text-primary)',
-                    border: '1px solid var(--color-border)',
-                    fontSize: '12px',
-                    fontWeight: 500,
-                    cursor: 'pointer'
-                  }}
-                >
-                  + {tpl.name} ({tpl.unit})
-                </button>
-              ))}
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            zIndex: 100,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '16px'
+          }}
+          onClick={() => setIsAddOpen(false)}
+        >
+          <Card
+            style={{
+              width: '100%',
+              maxWidth: '560px',
+              border: '2px solid var(--color-primary-900)',
+              maxHeight: '90vh',
+              overflowY: 'auto'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-3)' }}>
+              <div>
+                <h3 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--color-primary-900)' }}>
+                  Add Item to Home Inventory
+                </h3>
+                <p style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                  Record durable tools, appliances, or consumables in Home Memory
+                </p>
+              </div>
+              <button
+                onClick={() => setIsAddOpen(false)}
+                className="touch-target"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}
+                aria-label="Close add item dialog"
+              >
+                <X size={20} color="var(--color-text-secondary)" />
+              </button>
             </div>
-          </div>
 
-          <form onSubmit={handleAddItem} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--space-3)' }}>
+            {/* Quick Catalog Chips */}
+            <div style={{ marginBottom: 'var(--space-4)' }}>
+              <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '8px' }}>
+                POPULAR HOUSEHOLD ITEMS (Click to Pre-fill):
+              </label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                {[
+                  { name: 'Basmati Rice', unit: 'kg', type: 'CONSUMABLE' as const },
+                  { name: 'Olive Oil', unit: 'L', type: 'CONSUMABLE' as const },
+                  { name: 'AA Batteries', unit: 'pack', type: 'CONSUMABLE' as const },
+                  { name: 'Cordless Drill', unit: 'pcs', type: 'ASSET' as const },
+                  { name: 'Toolkit', unit: 'pcs', type: 'ASSET' as const },
+                  { name: 'Spare House Keys', unit: 'pcs', type: 'ASSET' as const },
+                ].map((tpl) => (
+                  <button
+                    key={tpl.name}
+                    type="button"
+                    onClick={() => {
+                      setNewItemName(tpl.name);
+                      setNewItemUnit(tpl.unit);
+                      setNewItemType(tpl.type);
+                    }}
+                    style={{
+                      padding: '4px 10px',
+                      borderRadius: 'var(--radius-full)',
+                      background: newItemName === tpl.name ? 'var(--color-primary-900)' : 'var(--color-surface-subtle)',
+                      color: newItemName === tpl.name ? '#ffffff' : 'var(--color-text-primary)',
+                      border: '1px solid var(--color-border-subtle)',
+                      fontSize: '12px',
+                      fontWeight: 500,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    + {tpl.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <form onSubmit={handleAddItem} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
               <Input
-                id="name"
-                label="Item Name"
-                placeholder="e.g. Basmati Rice, House Keys, Pickle"
+                id="itemName"
+                ref={nameInputRef}
+                autoFocus
+                label="Item Name *"
+                placeholder="e.g. Cordless Power Drill, Basmati Rice"
                 value={newItemName}
                 onChange={(e) => setNewItemName(e.target.value)}
                 required
               />
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <label style={{ fontSize: '13px', fontWeight: 600 }}>Type</label>
-                <select
-                  value={newItemType}
-                  onChange={(e) => setNewItemType(e.target.value as any)}
-                  style={{ height: '40px', padding: '0 12px', borderRadius: 'var(--radius-md)' }}
-                >
-                  <option value="CONSUMABLE">Consumable (Pantry/Supplies)</option>
-                  <option value="ASSET">Household Asset (Durable Tool/Keys)</option>
-                </select>
+              <div
+                className="ozhzo-responsive-form-grid"
+                style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}
+              >
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label htmlFor="itemType" style={{ fontSize: '13px', fontWeight: 600 }}>Item Type</label>
+                  <select
+                    id="itemType"
+                    value={newItemType}
+                    onChange={(e) => setNewItemType(e.target.value as any)}
+                    style={{ height: '40px', padding: '0 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border-subtle)' }}
+                  >
+                    <option value="CONSUMABLE">Consumable (Pantry/Supplies)</option>
+                    <option value="ASSET">Household Asset (Tool/Durable)</option>
+                  </select>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label style={{ fontSize: '13px', fontWeight: 600 }}>Location</label>
+                  <select
+                    value={newItemLocationId}
+                    onChange={(e) => setNewItemLocationId(e.target.value)}
+                    style={{ height: '40px', padding: '0 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border-subtle)' }}
+                  >
+                    <option value="">-- No specific location --</option>
+                    {flatLocations.map((loc) => (
+                      <option key={loc.id} value={loc.id}>
+                        {loc.path || loc.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                <label style={{ fontSize: '13px', fontWeight: 600 }}>Hierarchical Location</label>
-                <select
-                  value={newItemLocationPath}
-                  onChange={(e) => setNewItemLocationPath(e.target.value)}
-                  style={{ height: '40px', padding: '0 12px', borderRadius: 'var(--radius-md)' }}
-                >
-                  <option value="Kitchen > Pantry > 2nd Shelf > Blue Container">Kitchen &gt; Pantry &gt; 2nd Shelf &gt; Blue Container</option>
-                  <option value="Store Room > 3rd Cupboard > Blue Box">Store Room &gt; 3rd Cupboard &gt; Blue Box</option>
-                  <option value="Garage > Tool Rack">Garage &gt; Tool Rack</option>
-                  <option value="Kitchen > Refrigerator">Kitchen &gt; Refrigerator</option>
-                </select>
+              <div
+                className="ozhzo-responsive-form-grid"
+                style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 'var(--space-3)' }}
+              >
+                <Input
+                  id="itemQty"
+                  label="Initial Quantity"
+                  type="number"
+                  step="0.1"
+                  value={newItemQty}
+                  onChange={(e) => setNewItemQty(e.target.value)}
+                />
+                <Input
+                  id="itemUnit"
+                  label="Unit (e.g. kg, pcs)"
+                  value={newItemUnit}
+                  onChange={(e) => setNewItemUnit(e.target.value)}
+                />
+                {newItemType === 'CONSUMABLE' ? (
+                  <Input
+                    id="itemThreshold"
+                    label="Min Alert Threshold"
+                    type="number"
+                    step="0.1"
+                    value={newItemThreshold}
+                    onChange={(e) => setNewItemThreshold(e.target.value)}
+                  />
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <label style={{ fontSize: '13px', fontWeight: 600 }}>Condition</label>
+                    <select
+                      value={newItemCondition}
+                      onChange={(e) => setNewItemCondition(e.target.value)}
+                      style={{ height: '40px', padding: '0 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border-subtle)' }}
+                    >
+                      <option value="Excellent">Excellent</option>
+                      <option value="Good">Good</option>
+                      <option value="Fair">Fair</option>
+                      <option value="Needs Repair">Needs Repair</option>
+                    </select>
+                  </div>
+                )}
               </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: 'var(--space-3)' }}>
+                <Button type="button" variant="ghost" onClick={() => setIsAddOpen(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isSubmittingItem}>
+                  {isSubmittingItem ? 'Saving...' : 'Save to Home Inventory'}
+                </Button>
+              </div>
+            </form>
+          </Card>
+        </div>
+      )}
+
+      {/* Add Location Modal */}
+      {isAddLocationOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            zIndex: 100,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '16px'
+          }}
+          onClick={() => setIsAddLocationOpen(false)}
+        >
+          <Card
+            style={{
+              width: '100%',
+              maxWidth: '480px',
+              border: '2px solid var(--color-primary-900)',
+              maxHeight: '90vh',
+              overflowY: 'auto'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-3)' }}>
+              <div>
+                <h3 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--color-primary-900)' }}>
+                  Add Location to Home
+                </h3>
+                <p style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                  Organize storage rooms, cupboards, shelves, and containers
+                </p>
+              </div>
+              <button
+                onClick={() => setIsAddLocationOpen(false)}
+                className="touch-target"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}
+                aria-label="Close location dialog"
+              >
+                <X size={20} color="var(--color-text-secondary)" />
+              </button>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: 'var(--space-3)' }}>
-              <Button type="button" variant="ghost" onClick={() => setIsAddOpen(false)}>Cancel</Button>
-              <Button type="submit">Save to Home Inventory</Button>
+            <form onSubmit={handleAddLocation} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+              <Input
+                id="locationName"
+                ref={locInputRef}
+                autoFocus
+                label="Location Name *"
+                placeholder="e.g. Master Bedroom, Tool Rack, Top Shelf"
+                value={newLocationName}
+                onChange={(e) => setNewLocationName(e.target.value)}
+                required
+              />
+
+              <div
+                className="ozhzo-responsive-form-grid"
+                style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}
+              >
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label htmlFor="locationType" style={{ fontSize: '13px', fontWeight: 600 }}>Location Type</label>
+                  <select
+                    id="locationType"
+                    value={newLocationType}
+                    onChange={(e) => setNewLocationType(e.target.value)}
+                    style={{ height: '40px', padding: '0 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border-subtle)' }}
+                  >
+                    <option value="ROOM">Room / Area</option>
+                    <option value="FURNITURE">Cupboard / Cabinet / Furniture</option>
+                    <option value="SHELF">Shelf / Rack</option>
+                    <option value="CONTAINER">Box / Container / Bin</option>
+                  </select>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label htmlFor="locationParent" style={{ fontSize: '13px', fontWeight: 600 }}>Parent Location</label>
+                  <select
+                    id="locationParent"
+                    value={newLocationParentId}
+                    onChange={(e) => setNewLocationParentId(e.target.value)}
+                    style={{ height: '40px', padding: '0 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border-subtle)' }}
+                  >
+                    <option value="">-- Root Level (No Parent) --</option>
+                    {flatLocations.map((loc) => (
+                      <option key={loc.id} value={loc.id}>
+                        {loc.path || loc.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <Input
+                id="locationDesc"
+                label="Description / Notes"
+                placeholder="Optional notes regarding this storage area..."
+                value={newLocationDescription}
+                onChange={(e) => setNewLocationDescription(e.target.value)}
+              />
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: 'var(--space-3)' }}>
+                <Button type="button" variant="ghost" onClick={() => setIsAddLocationOpen(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isSubmittingLocation}>
+                  {isSubmittingLocation ? 'Creating...' : 'Create Location'}
+                </Button>
+              </div>
+            </form>
+          </Card>
+        </div>
+      )}
+
+      {/* Move Item Modal */}
+      {isMoveOpen && selectedItem && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            zIndex: 100,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '16px'
+          }}
+          onClick={() => setIsMoveOpen(false)}
+        >
+          <Card
+            style={{ width: '100%', maxWidth: '440px', border: '2px solid var(--color-primary-900)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ fontSize: '16px', fontWeight: 700, marginBottom: 'var(--space-2)' }}>
+              Move &ldquo;{selectedItem.name}&rdquo;
+            </h3>
+            <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-3)' }}>
+              Current: {selectedItem.location_path}
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <label style={{ fontSize: '13px', fontWeight: 600 }}>Select New Destination Location:</label>
+              <select
+                value={targetLocationId}
+                onChange={(e) => setTargetLocationId(e.target.value)}
+                style={{ height: '40px', padding: '0 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border-subtle)' }}
+              >
+                {flatLocations.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.path || l.name}
+                  </option>
+                ))}
+              </select>
             </div>
-          </form>
-        </Card>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: 'var(--space-4)' }}>
+              <Button variant="ghost" onClick={() => setIsMoveOpen(false)}>Cancel</Button>
+              <Button onClick={handleMoveItem}>Confirm Relocation</Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* Borrow Asset Modal */}
+      {isBorrowOpen && selectedItem && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            zIndex: 100,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '16px'
+          }}
+          onClick={() => setIsBorrowOpen(false)}
+        >
+          <Card
+            style={{ width: '100%', maxWidth: '440px', border: '2px solid var(--color-primary-900)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ fontSize: '16px', fontWeight: 700, marginBottom: 'var(--space-2)' }}>
+              Borrow &ldquo;{selectedItem.name}&rdquo;
+            </h3>
+            <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-3)' }}>
+              Record who has custody of this household item.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+              <Input
+                id="borrower"
+                label="Borrower Name *"
+                placeholder="e.g. Ashraf, Neighbor Dave"
+                value={borrowerName}
+                onChange={(e) => setBorrowerName(e.target.value)}
+                required
+              />
+              <Input
+                id="contact"
+                label="Contact / Phone (Optional)"
+                placeholder="+1..."
+                value={borrowerContact}
+                onChange={(e) => setBorrowerContact(e.target.value)}
+              />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: 'var(--space-4)' }}>
+              <Button variant="ghost" onClick={() => setIsBorrowOpen(false)}>Cancel</Button>
+              <Button onClick={handleBorrowItem}>Confirm Loan</Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* Return Asset Modal */}
+      {isReturnOpen && selectedItem && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            zIndex: 100,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '16px'
+          }}
+          onClick={() => setIsReturnOpen(false)}
+        >
+          <Card
+            style={{ width: '100%', maxWidth: '440px', border: '2px solid var(--color-primary-900)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ fontSize: '16px', fontWeight: 700, marginBottom: 'var(--space-2)' }}>
+              Return &ldquo;{selectedItem.name}&rdquo;
+            </h3>
+            <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: 'var(--space-3)' }}>
+              Currently borrowed by: <strong>{selectedItem.current_holder_name}</strong>
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: 'var(--space-4)' }}>
+              <Button variant="ghost" onClick={() => setIsReturnOpen(false)}>Cancel</Button>
+              <Button onClick={handleReturnItem}>Confirm Return to {selectedItem.location_path}</Button>
+            </div>
+          </Card>
+        </div>
       )}
     </div>
   );

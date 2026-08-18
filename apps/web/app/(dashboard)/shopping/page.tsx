@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -9,83 +9,145 @@ import {
   Plus,
   CheckCircle2,
   Trash2,
-  Sparkles,
-
+  Sparkles
 } from 'lucide-react';
+import { apiClient } from '@/lib/apiClient';
 
 interface ShoppingItem {
   id: string;
   name: string;
   quantity: number;
   unit: string;
-  priority: 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT';
-  is_checked: boolean;
-  assigned_to_name?: string | null;
+  notes?: string | null;
+  status: 'PENDING' | 'PURCHASED' | 'CANCELLED';
+  added_by_name?: string | null;
+  purchased_by_name?: string | null;
   version: number;
 }
 
 export default function ShoppingPage() {
-  const [items, setItems] = useState<ShoppingItem[]>([
-    { id: '1', name: 'Extra Virgin Olive Oil', quantity: 1, unit: 'bottles', priority: 'HIGH', is_checked: false, assigned_to_name: 'Alex', version: 1 },
-    { id: '2', name: 'Almond Milk (Unsweetened)', quantity: 2, unit: 'liters', priority: 'HIGH', is_checked: false, assigned_to_name: 'Sarah', version: 1 },
-    { id: '3', name: 'Greek Yogurt (Plain)', quantity: 1, unit: 'tub', priority: 'MEDIUM', is_checked: false, assigned_to_name: null, version: 1 },
-    { id: '4', name: 'Organic Sourdough Bread', quantity: 1, unit: 'loaf', priority: 'LOW', is_checked: false, assigned_to_name: null, version: 1 },
-    { id: '5', name: 'Paper Towels (6-Pack)', quantity: 1, unit: 'pack', priority: 'MEDIUM', is_checked: true, assigned_to_name: 'Alex', version: 2 },
-  ]);
+  const [activeHomeId, setActiveHomeId] = useState<string | null>(null);
+  const [items, setItems] = useState<ShoppingItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
+  // Form State
   const [newItemName, setNewItemName] = useState('');
   const [newItemQty, setNewItemQty] = useState('1');
   const [newItemUnit, setNewItemUnit] = useState('pcs');
-  const [newItemPriority, setNewItemPriority] = useState<'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'>('MEDIUM');
+  const [newItemNotes, setNewItemNotes] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const activeItems = items.filter(i => !i.is_checked);
-  const checkedItems = items.filter(i => i.is_checked);
+  const loadData = async () => {
+    setIsLoading(true);
+    try {
+      const savedHomeId = localStorage.getItem('active_home_id');
+      let homeId = savedHomeId;
+
+      if (!homeId) {
+        const homes = await apiClient.get<Array<{ id: string }>>('/homes');
+        if (homes && homes.length > 0) {
+          homeId = homes[0].id;
+          localStorage.setItem('active_home_id', homeId);
+        }
+      }
+
+      setActiveHomeId(homeId);
+
+      if (homeId) {
+        const res = await apiClient.get<ShoppingItem[]>(`/homes/${homeId}/purchase-list?status_filter=ALL`);
+        if (Array.isArray(res)) {
+          setItems(res.map((i: any) => ({
+            id: i.id,
+            name: i.name,
+            quantity: parseFloat(i.quantity) || 1,
+            unit: i.unit || 'pcs',
+            notes: i.notes,
+            status: i.status || 'PENDING',
+            added_by_name: i.added_by_name,
+            purchased_by_name: i.purchased_by_name,
+            version: i.version || 1
+          })));
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load shopping list:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const activeItems = items.filter(i => i.status === 'PENDING');
+  const checkedItems = items.filter(i => i.status === 'PURCHASED');
   const totalCount = items.length;
   const completedCount = checkedItems.length;
   const progressPercent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
 
-  const handleToggleCheck = (id: string) => {
-    setItems(items.map(item => {
-      if (item.id === id) {
-        return { ...item, is_checked: !item.is_checked, version: item.version + 1 };
+  const handleToggleCheck = async (item: ShoppingItem) => {
+    if (!activeHomeId) return;
+
+    try {
+      if (item.status === 'PENDING') {
+        await apiClient.post(`/homes/${activeHomeId}/purchase-list/${item.id}/purchase`, {
+          restock_inventory: true
+        });
       }
-      return item;
-    }));
+      await loadData();
+    } catch (err: any) {
+      console.error('Failed to toggle purchase state:', err);
+      alert(err?.message || 'Failed to update item status.');
+    }
   };
 
-  const handleAddItem = (e: React.FormEvent) => {
+  const handleAddItem = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newItemName.trim()) return;
+    if (!newItemName.trim() || !activeHomeId) return;
 
-    const newItem: ShoppingItem = {
-      id: `item-${Date.now()}`,
-      name: newItemName.trim(),
-      quantity: parseFloat(newItemQty) || 1,
-      unit: newItemUnit || 'pcs',
-      priority: newItemPriority,
-      is_checked: false,
-      assigned_to_name: null,
-      version: 1,
-    };
+    setIsSubmitting(true);
+    try {
+      const payload = {
+        name: newItemName.trim(),
+        quantity: parseFloat(newItemQty) || 1,
+        unit: newItemUnit.trim() || 'pcs',
+        notes: newItemNotes.trim() || undefined
+      };
 
-    setItems([newItem, ...items]);
-    setNewItemName('');
-    setNewItemQty('1');
+      await apiClient.post(`/homes/${activeHomeId}/purchase-list`, payload);
+      setNewItemName('');
+      setNewItemQty('1');
+      setNewItemNotes('');
+      await loadData();
+    } catch (err: any) {
+      console.error('Failed to add purchase item:', err);
+      alert(err?.message || 'Failed to add item to purchase list.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleDeleteItem = (id: string) => {
-    setItems(items.filter(i => i.id !== id));
+  const handleDeleteItem = async (id: string) => {
+    if (!activeHomeId) return;
+    try {
+      await apiClient.delete(`/homes/${activeHomeId}/purchase-list/${id}`);
+      await loadData();
+    } catch (err: any) {
+      console.error('Failed to delete purchase item:', err);
+      alert(err?.message || 'Failed to remove item.');
+    }
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)', maxWidth: '900px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)', maxWidth: '900px', width: '100%' }}>
       {/* Header */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
         <div>
-          <h1 style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--color-primary-900)' }}>
+          <h1 style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--color-primary-900)', lineHeight: 1.2 }}>
             Household Shopping List
           </h1>
-          <p style={{ fontSize: '14px', color: 'var(--color-text-secondary)' }}>
+          <p style={{ fontSize: '14px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
             Shared family groceries and household supplies with live cross-member synchronization.
           </p>
         </div>
@@ -111,50 +173,41 @@ export default function ShoppingPage() {
       </Card>
 
       {/* Quick Add Bar */}
-      <Card>
-        <form onSubmit={handleAddItem} style={{ display: 'grid', gridTemplateColumns: '3fr 1fr 1fr 1fr auto', gap: 'var(--space-2)', alignItems: 'center' }}>
-          <Input
-            id="itemName"
-            placeholder="Add grocery or supply item..."
-            value={newItemName}
-            onChange={(e) => setNewItemName(e.target.value)}
-            required
-          />
-          <Input
-            id="itemQty"
-            type="number"
-            step="0.1"
-            placeholder="Qty"
-            value={newItemQty}
-            onChange={(e) => setNewItemQty(e.target.value)}
-          />
-          <Input
-            id="itemUnit"
-            placeholder="Unit (pcs, kg)"
-            value={newItemUnit}
-            onChange={(e) => setNewItemUnit(e.target.value)}
-          />
-          <select
-            value={newItemPriority}
-            onChange={(e) => setNewItemPriority(e.target.value as any)}
-            style={{
-              height: '42px',
-              padding: '0 8px',
-              borderRadius: 'var(--radius-md)',
-              border: '1px solid var(--color-border-strong)',
-              backgroundColor: 'var(--color-surface-card)',
-              fontSize: '13px'
-            }}
-          >
-            <option value="LOW">Low</option>
-            <option value="MEDIUM">Medium</option>
-            <option value="HIGH">High</option>
-            <option value="URGENT">Urgent</option>
-          </select>
-          <Button type="submit">
-            <Plus size={16} />
-            <span>Add</span>
-          </Button>
+      <Card style={{ padding: 'var(--space-4)' }}>
+        <form onSubmit={handleAddItem} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <div style={{ flex: '2 1 200px' }}>
+              <Input
+                id="itemName"
+                placeholder="Add grocery or supply item... (e.g. Olive Oil, Milk, Bread)"
+                value={newItemName}
+                onChange={(e) => setNewItemName(e.target.value)}
+                required
+              />
+            </div>
+            <div style={{ flex: '1 1 80px' }}>
+              <Input
+                id="itemQty"
+                type="number"
+                step="0.1"
+                placeholder="Qty"
+                value={newItemQty}
+                onChange={(e) => setNewItemQty(e.target.value)}
+              />
+            </div>
+            <div style={{ flex: '1 1 90px' }}>
+              <Input
+                id="itemUnit"
+                placeholder="Unit (pcs, kg)"
+                value={newItemUnit}
+                onChange={(e) => setNewItemUnit(e.target.value)}
+              />
+            </div>
+            <Button type="submit" disabled={isSubmitting} style={{ minHeight: '40px', padding: '0 18px' }}>
+              <Plus size={16} />
+              <span>{isSubmitting ? 'Adding...' : 'Add Item'}</span>
+            </Button>
+          </div>
         </form>
       </Card>
 
@@ -164,11 +217,17 @@ export default function ShoppingPage() {
           To Buy ({activeItems.length})
         </h2>
 
-        {activeItems.length === 0 ? (
+        {isLoading ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {[1, 2, 3].map((i) => (
+              <div key={i} style={{ height: '56px', backgroundColor: 'var(--color-surface-subtle)', borderRadius: 'var(--radius-md)', animation: 'pulse 1.5s infinite' }} />
+            ))}
+          </div>
+        ) : activeItems.length === 0 ? (
           <Card style={{ padding: 'var(--space-8)', textAlign: 'center' }}>
             <Sparkles size={28} color="var(--status-in-stock)" style={{ margin: '0 auto 8px' }} />
             <p style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-primary-900)' }}>All items purchased!</p>
-            <p style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>Your shopping list is clear.</p>
+            <p style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>Your shopping list is currently clear.</p>
           </Card>
         ) : (
           activeItems.map((item) => (
@@ -179,15 +238,17 @@ export default function ShoppingPage() {
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 padding: '12px 16px',
-                transition: 'all 0.15s ease'
+                transition: 'all 0.15s ease',
+                gap: '12px'
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0, flex: 1 }}>
                 <button
-                  onClick={() => handleToggleCheck(item.id)}
+                  onClick={() => handleToggleCheck(item)}
+                  className="touch-target"
                   style={{
-                    width: '22px',
-                    height: '22px',
+                    width: '28px',
+                    height: '28px',
                     borderRadius: '50%',
                     border: '2px solid var(--color-border-strong)',
                     backgroundColor: 'transparent',
@@ -195,27 +256,31 @@ export default function ShoppingPage() {
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    transition: 'border-color 0.15s ease'
+                    flexShrink: 0
                   }}
+                  title="Mark as Purchased"
+                  aria-label={`Mark ${item.name} as purchased`}
                 />
-                <div>
-                  <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text-primary)' }}>{item.name}</div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {item.name}
+                  </div>
                   <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
                     {item.quantity} {item.unit}
-                    {item.assigned_to_name && ` • Assigned to ${item.assigned_to_name}`}
+                    {item.added_by_name && ` • Added by ${item.added_by_name}`}
                   </div>
                 </div>
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <Badge variant={item.priority === 'URGENT' || item.priority === 'HIGH' ? 'overdue' : 'neutral'}>
-                  {item.priority}
-                </Badge>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
+                <Badge variant="neutral">Pending</Badge>
                 <button
                   onClick={() => handleDeleteItem(item.id)}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', padding: '4px' }}
+                  className="touch-target"
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', padding: '6px' }}
+                  aria-label={`Delete ${item.name}`}
                 >
-                  <Trash2 size={15} />
+                  <Trash2 size={16} />
                 </button>
               </div>
             </Card>
@@ -239,43 +304,45 @@ export default function ShoppingPage() {
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 padding: '10px 16px',
-                opacity: 0.75
+                opacity: 0.75,
+                gap: '12px'
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <button
-                  onClick={() => handleToggleCheck(item.id)}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0, flex: 1 }}>
+                <div
                   style={{
-                    width: '22px',
-                    height: '22px',
+                    width: '28px',
+                    height: '28px',
                     borderRadius: '50%',
-                    border: 'none',
                     backgroundColor: 'var(--status-in-stock)',
-                    color: 'white',
-                    cursor: 'pointer',
                     display: 'flex',
                     alignItems: 'center',
-                    justifyContent: 'center'
+                    justifyContent: 'center',
+                    flexShrink: 0
                   }}
                 >
-                  <CheckCircle2 size={16} />
-                </button>
-                <div>
-                  <div style={{ fontSize: '13px', fontWeight: 500, textDecoration: 'line-through', color: 'var(--color-text-secondary)' }}>
+                  <CheckCircle2 size={18} color="#ffffff" />
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: '14px', fontWeight: 500, color: 'var(--color-text-secondary)', textDecoration: 'line-through', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {item.name}
                   </div>
-                  <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>
-                    {item.quantity} {item.unit}
+                  <div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>
+                    {item.quantity} {item.unit} • Purchased
                   </div>
                 </div>
               </div>
 
-              <button
-                onClick={() => handleDeleteItem(item.id)}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', padding: '4px' }}
-              >
-                <Trash2 size={15} />
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                <button
+                  onClick={() => handleDeleteItem(item.id)}
+                  className="touch-target"
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', padding: '6px' }}
+                  aria-label={`Delete ${item.name}`}
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
             </Card>
           ))}
         </div>

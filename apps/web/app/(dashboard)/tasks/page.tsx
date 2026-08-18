@@ -289,14 +289,14 @@ export default function TasksPage() {
       {/* Quick Add Bar & Recurring Templates */}
       <Card style={{ border: '2px solid var(--color-primary-900)', padding: 'var(--space-4)' }}>
         <form onSubmit={handleCreateTask} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
             <input
               type="text"
               placeholder="Add a new task or chore... (e.g. Clean kitchen chimney, service RO)"
               value={quickTitle}
               onChange={(e) => setQuickTitle(e.target.value)}
               style={{
-                flex: 1,
+                flex: '1 1 220px',
                 height: '42px',
                 padding: '0 14px',
                 borderRadius: 'var(--radius-md)',
@@ -305,18 +305,20 @@ export default function TasksPage() {
               }}
               required
             />
-            <Button type="submit" size="md">
-              <Plus size={16} />
-              <span>Add Task</span>
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              size="md"
-              onClick={() => setIsDetailOpen(!isDetailOpen)}
-            >
-              {isDetailOpen ? 'Simple' : 'Options'}
-            </Button>
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <Button type="submit" size="md">
+                <Plus size={16} />
+                <span>Add Task</span>
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="md"
+                onClick={() => setIsDetailOpen(!isDetailOpen)}
+              >
+                {isDetailOpen ? 'Simple' : 'Options'}
+              </Button>
+            </div>
           </div>
 
           {/* Quick Preset Chips */}
@@ -440,7 +442,7 @@ export default function TasksPage() {
       </Card>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--color-border-subtle)', paddingBottom: 'var(--space-2)' }}>
+      <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--color-border-subtle)', paddingBottom: 'var(--space-2)', overflowX: 'auto' }}>
         {[
           { key: 'ALL', label: `All Active (${totalActive})` },
           { key: 'TODAY', label: `Due Today (${dueTodayCount})` },

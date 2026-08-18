@@ -1,17 +1,17 @@
-import React from 'react';
+import React, { forwardRef } from 'react';
 
-interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
+export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
   label?: string;
   error?: string;
 }
 
-export const Input: React.FC<InputProps> = ({
+export const Input = forwardRef<HTMLInputElement, InputProps>(({
   label,
   error,
   id,
   style,
   ...props
-}) => {
+}, ref) => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '100%' }}>
       {label && (
@@ -20,6 +20,7 @@ export const Input: React.FC<InputProps> = ({
         </label>
       )}
       <input
+        ref={ref}
         id={id}
         style={{
           height: '42px',
@@ -41,4 +42,6 @@ export const Input: React.FC<InputProps> = ({
       )}
     </div>
   );
-};
+});
+
+Input.displayName = 'Input';

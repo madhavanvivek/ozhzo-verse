@@ -25,26 +25,31 @@ export const HomeSwitcher: React.FC<HomeSwitcherProps> = ({
   const [isOpen, setIsOpen] = useState(false);
 
   return (
-    <div style={{ position: 'relative', display: 'inline-block' }}>
+    <div style={{ position: 'relative', display: 'inline-block', maxWidth: '100%', minWidth: 0 }}>
       <button
         onClick={() => setIsOpen(!isOpen)}
         style={{
           display: 'flex',
           alignItems: 'center',
-          gap: '8px',
-          padding: '6px 12px',
+          gap: '6px',
+          padding: '6px 10px',
           backgroundColor: 'var(--color-surface-subtle)',
           border: '1px solid var(--color-border-subtle)',
           borderRadius: 'var(--radius-md)',
           cursor: 'pointer',
           fontWeight: 600,
-          fontSize: '14px',
-          color: 'var(--color-text-primary)'
+          fontSize: '13px',
+          color: 'var(--color-text-primary)',
+          maxWidth: '100%',
+          minWidth: 0,
+          overflow: 'hidden'
         }}
       >
-        <HomeIcon size={16} color="var(--color-primary-900)" />
-        <span>{currentHome?.name || 'Select Home'}</span>
-        <ChevronDown size={14} color="var(--color-text-secondary)" />
+        <HomeIcon size={15} color="var(--color-primary-900)" style={{ flexShrink: 0 }} />
+        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flex: 1 }}>
+          {currentHome?.name || 'Select Home'}
+        </span>
+        <ChevronDown size={13} color="var(--color-text-secondary)" style={{ flexShrink: 0 }} />
       </button>
 
       {isOpen && (

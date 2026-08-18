@@ -178,7 +178,6 @@ async def register(
 
     # 3. Create User Profile
     new_profile = UserProfileModel(
-        id=uuid4(),
         user_id=new_user.id,
         display_name=payload.full_name,
         phone_number=normalized_phone,

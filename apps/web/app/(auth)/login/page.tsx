@@ -29,44 +29,15 @@ export default function LoginPage() {
         ? { phone_number: `${countryCode}${phoneNumber.trim()}`, password }
         : { email: email.trim(), password };
 
-      const res = await fetch('/api/v1/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      let data: any = null;
-      let rawText = '';
-      const contentType = res.headers.get('content-type') || '';
+      const res = await apiClient.post<{ access_token: string; refresh_token?: string | null }>('/auth/login', payload);
 
-      if (contentType.includes('application/json')) {
-        try {
-          data = await res.json();
-        } catch {
-          data = null;
-        }
-      } else {
-        try {
-          rawText = await res.text();
-        } catch {
-          rawText = '';
-        }
-      }
-
-      if (!res.ok || (data && !data.success)) {
-        const errorMsg =
-          data?.error?.message ||
-          data?.detail ||
-          (rawText ? `Server error (${res.status}): ${rawText}` : `Request failed with status ${res.status}`);
-        throw new Error(errorMsg);
-      }
-
-      if (!data?.data?.access_token) {
+      if (!res?.access_token) {
         throw new Error('Login succeeded but no access token was returned.');
       }
 
       apiClient.setTokens({
-        access_token: data.data.access_token,
-        refresh_token: data.data.refresh_token
+        access_token: res.access_token,
+        refresh_token: res.refresh_token
       });
 
       router.push('/dashboard');

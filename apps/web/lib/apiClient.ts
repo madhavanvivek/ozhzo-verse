@@ -19,7 +19,10 @@ export interface ApiResponse<T = any> {
   detail?: string;
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || '/api/v1';
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_URL ||
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  'https://ozhzo-api.onrender.com/api/v1';
 
 class ApiClient {
   private accessToken: string | null = null;

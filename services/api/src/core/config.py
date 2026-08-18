@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     ENABLE_DEMO_SUPER_ADMIN_BOOTSTRAP: bool = False
     DEMO_SUPER_ADMIN_EMAIL: str = "vivek@zinfog.com"
     DEMO_SUPER_ADMIN_PASSWORD: str | None = None
+    DEMO_OTP_ENABLED: bool = False
+    DEMO_OTP_CODE: str = "123456"
 
     # PostgreSQL Database
     DATABASE_HOST: str = "localhost"

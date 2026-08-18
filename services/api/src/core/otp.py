@@ -86,8 +86,8 @@ class OTPService:
         normalized = normalize_phone_number(phone_number)
         
         # Generate 6-digit OTP code
-        if settings.ENVIRONMENT in ["development", "test"]:
-            otp_code = "123456"
+        if settings.DEMO_OTP_ENABLED or settings.ENVIRONMENT in ["development", "test"]:
+            otp_code = settings.DEMO_OTP_CODE
         else:
             otp_code = f"{secrets.randbelow(900000) + 100000}"
 
@@ -117,8 +117,8 @@ class OTPService:
 
         await self.provider.send_otp(normalized, otp_code, purpose)
 
-        # Return code in test/dev for automated validation
-        dev_code = otp_code if settings.ENVIRONMENT in ["development", "test"] else None
+        # Return code in test/dev/demo mode for easy testing/automated validation
+        dev_code = otp_code if (settings.DEMO_OTP_ENABLED or settings.ENVIRONMENT in ["development", "test"]) else None
         return normalized, dev_code
 
     async def verify_otp(

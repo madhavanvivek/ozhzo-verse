@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import redis.asyncio as redis
 
 from src.api.dependencies import get_current_user
+from src.core.config import settings
 from src.core.security import hash_password, verify_password
 from src.core.otp import OTPService, normalize_phone_number
 from src.api.v1.auth import enforce_auth_rate_limit
@@ -200,7 +201,8 @@ async def send_phone_verification_otp(
         data=SendOTPResponse(
             message=f"Verification code sent to {norm_phone}.",
             phone_number=norm_phone,
-            otp_code=dev_code
+            otp_code=dev_code,
+            is_demo_otp=bool(settings.DEMO_OTP_ENABLED or settings.ENVIRONMENT in ["development", "test"])
         )
     )
 

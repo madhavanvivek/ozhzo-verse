@@ -24,6 +24,7 @@ function VerifyMobileForm() {
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
   const [isSendingOtp, setIsSendingOtp] = useState(false);
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
+  const [demoOtp, setDemoOtp] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -94,10 +95,23 @@ function VerifyMobileForm() {
 
     try {
       const fullPhone = `${countryCode}${phoneNumber.trim()}`;
-      await apiClient.post('/users/me/phone/send-otp', {
+      const res = await apiClient.post<{
+        message: string;
+        phone_number: string;
+        otp_code?: string | null;
+        is_demo_otp?: boolean;
+      }>('/users/me/phone/send-otp', {
         phone_number: fullPhone,
         country_code: countryCode
       });
+
+      if (res?.otp_code) {
+        setDemoOtp(res.otp_code);
+      } else if (res?.is_demo_otp) {
+        setDemoOtp('123456');
+      } else {
+        setDemoOtp(null);
+      }
 
       setSuccessMessage(`A 6-digit verification code was sent to ${fullPhone}`);
       setStep('otp');
@@ -451,6 +465,42 @@ function VerifyMobileForm() {
                     }}
                   />
                 </div>
+
+                {demoOtp && (
+                  <div
+                    id="demo-otp-banner"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      marginTop: '10px',
+                      padding: '6px 12px',
+                      backgroundColor: 'rgba(217, 119, 6, 0.08)',
+                      border: '1px solid rgba(217, 119, 6, 0.25)',
+                      borderRadius: '8px',
+                      fontSize: '12px',
+                      color: 'var(--color-primary-900, #0f172a)'
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: '10px',
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.06em',
+                        backgroundColor: 'rgba(217, 119, 6, 0.2)',
+                        color: '#d97706',
+                        padding: '2px 6px',
+                        borderRadius: '4px'
+                      }}
+                    >
+                      Demo Mode
+                    </span>
+                    <span>
+                      Demo OTP: <strong style={{ letterSpacing: '0.08em', color: '#d97706' }}>{demoOtp}</strong>
+                    </span>
+                  </div>
+                )}
               </div>
 
               <button

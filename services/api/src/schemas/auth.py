@@ -20,7 +20,8 @@ class SendOTPRequest(BaseModel):
 class SendOTPResponse(BaseModel):
     message: str
     phone_number: str
-    otp_code: Optional[str] = None  # Populated only in development/test mode
+    otp_code: Optional[str] = None  # Populated only in development/test/demo mode
+    is_demo_otp: bool = False
 
 
 class VerifyOTPRequest(BaseModel):
@@ -52,10 +53,10 @@ class TokenResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     expires_in: int
-    user_id: UUID
+    user_id: Optional[UUID] = None
     phone_number: Optional[str] = None
     email: Optional[str] = None
-    mobile_verified: bool = False
+    mobile_verified: Optional[bool] = False
 
 
 class ForgotPasswordRequest(BaseModel):

@@ -78,7 +78,8 @@ async def send_otp(
         data=SendOTPResponse(
             message=f"Verification code sent to {norm_phone}.",
             phone_number=norm_phone,
-            otp_code=dev_code
+            otp_code=dev_code,
+            is_demo_otp=bool(settings.DEMO_OTP_ENABLED or settings.ENVIRONMENT in ["development", "test"])
         )
     )
 
@@ -163,6 +164,7 @@ async def register(
 
     # 2. Create User record with Argon2id hash
     new_user = UserModel(
+        id=uuid4(),
         phone_number=normalized_phone,
         country_code=payload.country_code,
         email=normalized_email,
@@ -176,6 +178,7 @@ async def register(
 
     # 3. Create User Profile
     new_profile = UserProfileModel(
+        id=uuid4(),
         user_id=new_user.id,
         display_name=payload.full_name,
         phone_number=normalized_phone,
@@ -208,7 +211,7 @@ async def register(
             user_id=new_user.id,
             phone_number=new_user.phone_number,
             email=new_user.email,
-            mobile_verified=new_user.mobile_verified
+            mobile_verified=bool(new_user.mobile_verified) if new_user.mobile_verified is not None else False
         )
     )
 
@@ -283,7 +286,7 @@ async def login(
             user_id=user.id,
             phone_number=user.phone_number,
             email=user.email,
-            mobile_verified=user.mobile_verified
+            mobile_verified=bool(user.mobile_verified) if user.mobile_verified is not None else False
         )
     )
 
@@ -340,7 +343,7 @@ async def refresh_tokens(
             user_id=user.id,
             phone_number=user.phone_number,
             email=user.email,
-            mobile_verified=user.mobile_verified
+            mobile_verified=bool(user.mobile_verified) if user.mobile_verified is not None else False
         )
     )
 

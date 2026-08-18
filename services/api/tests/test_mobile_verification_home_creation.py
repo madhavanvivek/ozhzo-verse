@@ -299,3 +299,77 @@ async def test_09_authenticated_phone_verification_updates_profile():
     assert user.phone_number == phone
     assert res.data.mobile_verified is True
     assert mock_db.commit.called
+
+
+@pytest.mark.asyncio
+async def test_10_demo_otp_enabled_generates_and_accepts_fixed_code():
+    """10. When DEMO_OTP_ENABLED=True, 123456 is generated and verifies successfully."""
+    from src.core.config import settings
+
+    with patch.object(settings, "DEMO_OTP_ENABLED", True), patch.object(settings, "ENVIRONMENT", "staging"):
+        otp_service = OTPService()
+        mock_db = AsyncMock()
+        mock_res = MagicMock()
+        mock_res.scalars.return_value.all.return_value = []
+        mock_db.execute.return_value = mock_res
+
+        phone = "+919876543210"
+        norm_phone, code = await otp_service.create_and_send_otp(mock_db, phone, purpose="PHONE_VERIFICATION")
+        assert code == "123456"
+        assert norm_phone == phone
+
+        # Verification with 123456
+        otp_record = OTPVerificationModel(
+            id=uuid4(),
+            phone_number=norm_phone,
+            otp_code_hash=OTPService._hash_otp("123456", norm_phone),
+            purpose="PHONE_VERIFICATION",
+            is_verified=False,
+            attempts=0,
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=10)
+        )
+        mock_res_verify = MagicMock()
+        mock_res_verify.scalars.return_value.first.return_value = otp_record
+        mock_db.execute.return_value = mock_res_verify
+
+        verified = await otp_service.verify_otp(mock_db, norm_phone, "123456", purpose="PHONE_VERIFICATION")
+        assert verified is True
+        assert otp_record.is_verified is True
+
+
+@pytest.mark.asyncio
+async def test_11_demo_otp_disabled_in_production_fails_fixed_code():
+    """11. When DEMO_OTP_ENABLED=False and ENVIRONMENT=production, 123456 fails unless it was randomly generated."""
+    from src.core.config import settings
+
+    with patch.object(settings, "DEMO_OTP_ENABLED", False), patch.object(settings, "ENVIRONMENT", "production"):
+        otp_service = OTPService()
+        mock_db = AsyncMock()
+        mock_res = MagicMock()
+        mock_res.scalars.return_value.all.return_value = []
+        mock_db.execute.return_value = mock_res
+
+        phone = "+919876543210"
+        with patch("secrets.randbelow", return_value=888888):  # generated code will be 888888 + 100000 = 988888
+            norm_phone, dev_code = await otp_service.create_and_send_otp(mock_db, phone, purpose="PHONE_VERIFICATION")
+            assert dev_code is None  # Never leaked in production
+
+        # Stored hash is for 988888
+        otp_record = OTPVerificationModel(
+            id=uuid4(),
+            phone_number=norm_phone,
+            otp_code_hash=OTPService._hash_otp("988888", norm_phone),
+            purpose="PHONE_VERIFICATION",
+            is_verified=False,
+            attempts=0,
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=10)
+        )
+        mock_res_verify = MagicMock()
+        mock_res_verify.scalars.return_value.first.return_value = otp_record
+        mock_db.execute.return_value = mock_res_verify
+
+        # Attempting 123456 fails
+        with pytest.raises(HTTPException) as exc:
+            await otp_service.verify_otp(mock_db, norm_phone, "123456", purpose="PHONE_VERIFICATION")
+        assert exc.value.status_code == 400
+        assert "Invalid OTP verification code" in exc.value.detail

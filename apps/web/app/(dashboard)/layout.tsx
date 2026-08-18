@@ -52,6 +52,7 @@ export default function DashboardLayout({
     display_name: string;
     email?: string | null;
     phone_number?: string | null;
+    mobile_verified?: boolean;
   } | null>(null);
   const [unreadCount, setUnreadCount] = useState(0);
 
@@ -70,6 +71,7 @@ export default function DashboardLayout({
           display_name: string;
           email?: string | null;
           phone_number?: string | null;
+          mobile_verified?: boolean;
         }>('/users/me'),
         apiClient.get<
           Array<{
@@ -252,6 +254,9 @@ export default function DashboardLayout({
               localStorage.setItem('active_home_id', homeId);
               window.dispatchEvent(new Event('home-changed'));
             }}
+            onCreateNewHome={() => {
+              router.push('/dashboard?action=create_home');
+            }}
           />
         </div>
 
@@ -316,6 +321,9 @@ export default function DashboardLayout({
                     setActiveHomeId(homeId);
                     localStorage.setItem('active_home_id', homeId);
                     window.dispatchEvent(new Event('home-changed'));
+                  }}
+                  onCreateNewHome={() => {
+                    router.push('/dashboard?action=create_home');
                   }}
                 />
               </div>

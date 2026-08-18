@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
+    ENABLE_DEMO_SUPER_ADMIN_BOOTSTRAP: bool = False
+    DEMO_SUPER_ADMIN_EMAIL: str = "vivek@zinfog.com"
+    DEMO_SUPER_ADMIN_PASSWORD: str | None = None
 
     # PostgreSQL Database
     DATABASE_HOST: str = "localhost"

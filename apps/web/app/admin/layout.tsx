@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { ShieldAlert, ArrowLeft, RefreshCw, AlertOctagon } from 'lucide-react';
 import { apiClient } from '@/lib/apiClient';
 import { AdminNav } from './components/AdminNav';
@@ -13,19 +13,24 @@ export default function AdminLayout({
   children: React.ReactNode;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const isLoginPage = pathname === '/admin/login' || pathname.startsWith('/admin/login');
+
   const [user, setUser] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(!isLoginPage);
   const [isForbidden, setIsForbidden] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
   const checkSuperAdminAuth = async () => {
+    if (isLoginPage) return;
+
     setIsLoading(true);
     setIsForbidden(false);
 
     try {
       const token = apiClient.getAccessToken();
       if (!token) {
-        router.replace('/login?redirect=/admin');
+        router.replace(`/admin/login?redirect=${encodeURIComponent(pathname || '/admin')}`);
         return;
       }
 
@@ -33,7 +38,7 @@ export default function AdminLayout({
       const profile = await apiClient.get<any>('/users/me');
 
       if (!profile) {
-        router.replace('/login?redirect=/admin');
+        router.replace(`/admin/login?redirect=${encodeURIComponent(pathname || '/admin')}`);
         return;
       }
 
@@ -50,12 +55,12 @@ export default function AdminLayout({
     } catch (err: any) {
       const msg = err?.message || '';
       if (msg.includes('401') || msg.includes('sign in') || msg.includes('Unauthorized')) {
-        router.replace('/login?redirect=/admin');
+        router.replace(`/admin/login?redirect=${encodeURIComponent(pathname || '/admin')}`);
       } else if (msg.includes('403') || msg.includes('privileges required')) {
         setIsForbidden(true);
       } else {
         // Retry or assume not authenticated
-        router.replace('/login?redirect=/admin');
+        router.replace(`/admin/login?redirect=${encodeURIComponent(pathname || '/admin')}`);
       }
     } finally {
       setIsLoading(false);
@@ -63,14 +68,21 @@ export default function AdminLayout({
   };
 
   useEffect(() => {
-    checkSuperAdminAuth();
-  }, []);
+    if (!isLoginPage) {
+      checkSuperAdminAuth();
+    }
+  }, [pathname, isLoginPage]);
 
   const handleLogout = () => {
     apiClient.clearTokens();
     apiClient.setActiveHomeId(null);
-    router.replace('/login');
+    router.replace('/admin/login');
   };
+
+  // If on /admin/login, bypass the admin console layout frame
+  if (isLoginPage) {
+    return <>{children}</>;
+  }
 
   // 1. Loading State
   if (isLoading) {

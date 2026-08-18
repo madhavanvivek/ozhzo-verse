@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Card } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -20,7 +21,9 @@ import {
   Plus,
   X,
   Package,
-  ArrowRight
+  ArrowRight,
+  Phone,
+  ShieldCheck
 } from 'lucide-react';
 import { apiClient } from '@/lib/apiClient';
 
@@ -91,10 +94,21 @@ interface DashboardData {
   role: string;
 }
 
-export default function DashboardPage() {
+function DashboardPageContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
   const [data, setData] = useState<DashboardData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [userProfile, setUserProfile] = useState<{
+    id?: string;
+    email?: string | null;
+    phone_number?: string | null;
+    mobile_verified?: boolean;
+    display_name?: string;
+  } | null>(null);
 
   // Modal states for State A (Create Home & Join Home)
   const [isCreateHomeOpen, setIsCreateHomeOpen] = useState(false);
@@ -112,6 +126,17 @@ export default function DashboardPage() {
   const [invitationToken, setInvitationToken] = useState('');
   const [isJoiningHome, setIsJoiningHome] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
+
+  const loadUserProfile = async () => {
+    try {
+      const profile = await apiClient.get<any>('/users/me');
+      if (profile) {
+        setUserProfile(profile);
+      }
+    } catch (err) {
+      console.error('Failed to load user profile:', err);
+    }
+  };
 
   const fetchDashboard = async () => {
     setIsLoading(true);
@@ -148,14 +173,29 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchDashboard();
+    loadUserProfile();
 
     const handleHomeChanged = () => {
       fetchDashboard();
+      loadUserProfile();
     };
 
     window.addEventListener('home-changed', handleHomeChanged);
     return () => window.removeEventListener('home-changed', handleHomeChanged);
   }, []);
+
+  useEffect(() => {
+    if (searchParams.get('action') === 'create_home') {
+      setIsCreateHomeOpen(true);
+      if (typeof window !== 'undefined') {
+        const savedDraft = localStorage.getItem('draft_home_name');
+        if (savedDraft) {
+          setNewHomeName(savedDraft);
+          localStorage.removeItem('draft_home_name');
+        }
+      }
+    }
+  }, [searchParams]);
 
   const handleCreateHome = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -184,7 +224,16 @@ export default function DashboardPage() {
       await fetchDashboard();
     } catch (err: any) {
       console.error('Create home failed:', err);
-      setCreateError(err?.message || 'Failed to create Home workspace.');
+      const msg = err?.message || '';
+      if (
+        msg.includes('MOBILE_VERIFICATION_REQUIRED') ||
+        msg.includes('Mobile number verification is required') ||
+        msg.includes('verification is required')
+      ) {
+        router.push('/verify-mobile?redirect=/dashboard&action=create_home');
+        return;
+      }
+      setCreateError(msg || 'Failed to create Home workspace.');
     } finally {
       setIsCreatingHome(false);
     }
@@ -214,6 +263,323 @@ export default function DashboardPage() {
     } finally {
       setIsJoiningHome(false);
     }
+  };
+
+  const maskPhoneNumber = (phone?: string | null): string => {
+    if (!phone) return '';
+    const clean = phone.trim();
+    if (clean.length <= 4) return clean;
+    const lastFour = clean.slice(-4);
+    const prefix = clean.slice(0, Math.min(3, clean.length - 4));
+    return `${prefix} •••• ••${lastFour}`;
+  };
+
+  const renderCreateHomeModal = () => {
+    if (!isCreateHomeOpen) return null;
+
+    const isUnverified = userProfile ? userProfile.mobile_verified === false : false;
+    const isVerifiedJustNow = !isUnverified && userProfile?.mobile_verified === true && searchParams.get('action') === 'create_home';
+
+    const handleNavigateToVerify = () => {
+      if (newHomeName.trim()) {
+        localStorage.setItem('draft_home_name', newHomeName.trim());
+      }
+      router.push('/verify-mobile?redirect=/dashboard&action=create_home');
+    };
+
+    return (
+      <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+        <div style={{ width: '100%', maxWidth: '480px', maxHeight: '90vh', overflowY: 'auto', backgroundColor: 'var(--color-surface-card)', borderRadius: 'var(--radius-lg)', padding: '24px', boxShadow: 'var(--shadow-modal)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Home size={20} color="var(--color-primary-900)" />
+              <h3 style={{ fontSize: '18px', fontWeight: 700 }}>Create Your Home</h3>
+            </div>
+            <button
+              onClick={() => setIsCreateHomeOpen(false)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              aria-label="Close dialog"
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          {/* Unverified Guidance Banner */}
+          {isUnverified && (
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+                padding: '14px 16px',
+                backgroundColor: 'rgba(217, 119, 6, 0.08)',
+                border: '1px solid rgba(217, 119, 6, 0.3)',
+                borderRadius: 'var(--radius-md)',
+                marginBottom: '16px'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: '24px',
+                    height: '24px',
+                    borderRadius: '50%',
+                    backgroundColor: 'rgba(217, 119, 6, 0.2)',
+                    color: '#d97706',
+                    flexShrink: 0
+                  }}
+                >
+                  <Phone size={13} />
+                </div>
+                <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--color-primary-900)' }}>
+                  Verify your mobile number to continue
+                </div>
+              </div>
+
+              <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', lineHeight: 1.4 }}>
+                A verified mobile number is required before you can create a Home.
+                {userProfile?.phone_number && (
+                  <span style={{ display: 'block', marginTop: '2px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
+                    Linked mobile: {maskPhoneNumber(userProfile.phone_number)}
+                  </span>
+                )}
+              </div>
+
+              <button
+                type="button"
+                id="modal-verify-mobile-action-btn"
+                onClick={handleNavigateToVerify}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  minHeight: '44px',
+                  padding: '0 16px',
+                  backgroundColor: 'var(--color-primary-900)',
+                  color: 'var(--color-primary-contrast)',
+                  border: 'none',
+                  borderRadius: 'var(--radius-md)',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  alignSelf: 'flex-start',
+                  marginTop: '4px'
+                }}
+              >
+                <ShieldCheck size={15} /> Verify Mobile Number
+              </button>
+            </div>
+          )}
+
+          {/* Verified Success Banner */}
+          {isVerifiedJustNow && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '10px 14px',
+                backgroundColor: 'rgba(16, 185, 129, 0.08)',
+                border: '1px solid rgba(16, 185, 129, 0.3)',
+                borderRadius: 'var(--radius-md)',
+                color: '#047857',
+                fontSize: '13px',
+                fontWeight: 600,
+                marginBottom: '16px'
+              }}
+            >
+              <CheckCircle2 size={16} style={{ color: '#10b981', flexShrink: 0 }} />
+              <div>
+                Mobile number verified. You can now create your Home.
+              </div>
+            </div>
+          )}
+
+          {createError && (
+            <div style={{ padding: '10px 14px', backgroundColor: 'var(--status-overdue-bg)', color: 'var(--status-overdue)', borderRadius: 'var(--radius-md)', fontSize: '13px', marginBottom: '16px' }}>
+              {createError}
+            </div>
+          )}
+
+          <form onSubmit={handleCreateHome} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div style={{ opacity: isUnverified ? 0.75 : 1 }}>
+              <Input
+                id="homeName"
+                label="Household Name"
+                placeholder="e.g. Sunnyvale Haven"
+                value={newHomeName}
+                onChange={(e) => setNewHomeName(e.target.value)}
+                required={!isUnverified}
+                disabled={isUnverified}
+                autoFocus={!isUnverified}
+              />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', opacity: isUnverified ? 0.75 : 1 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label htmlFor="modalCountry" style={{ fontSize: '13px', fontWeight: 600 }}>Country</label>
+                <select
+                  id="modalCountry"
+                  value={newHomeCountry}
+                  onChange={(e) => setNewHomeCountry(e.target.value)}
+                  disabled={isUnverified}
+                  style={{
+                    height: '40px',
+                    padding: '0 10px',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--color-border-strong)',
+                    fontSize: '13px',
+                    backgroundColor: isUnverified ? 'var(--color-surface-subtle)' : 'var(--color-surface-card)',
+                    cursor: isUnverified ? 'not-allowed' : 'default'
+                  }}
+                >
+                  <option value="US">United States (US)</option>
+                  <option value="IN">India (IN)</option>
+                  <option value="GB">United Kingdom (GB)</option>
+                  <option value="CA">Canada (CA)</option>
+                  <option value="AU">Australia (AU)</option>
+                  <option value="DE">Germany (DE)</option>
+                </select>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label htmlFor="modalCurrency" style={{ fontSize: '13px', fontWeight: 600 }}>Primary Currency</label>
+                <select
+                  id="modalCurrency"
+                  value={newHomeCurrency}
+                  onChange={(e) => setNewHomeCurrency(e.target.value)}
+                  disabled={isUnverified}
+                  style={{
+                    height: '40px',
+                    padding: '0 10px',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--color-border-strong)',
+                    fontSize: '13px',
+                    backgroundColor: isUnverified ? 'var(--color-surface-subtle)' : 'var(--color-surface-card)',
+                    cursor: isUnverified ? 'not-allowed' : 'default'
+                  }}
+                >
+                  <option value="USD">USD ($)</option>
+                  <option value="EUR">EUR (€)</option>
+                  <option value="GBP">GBP (£)</option>
+                  <option value="CAD">CAD ($)</option>
+                  <option value="AUD">AUD ($)</option>
+                  <option value="INR">INR (₹)</option>
+                </select>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', opacity: isUnverified ? 0.75 : 1 }}>
+              <label htmlFor="modalTimezone" style={{ fontSize: '13px', fontWeight: 600 }}>Timezone</label>
+              <select
+                id="modalTimezone"
+                value={newHomeTimezone}
+                onChange={(e) => setNewHomeTimezone(e.target.value)}
+                disabled={isUnverified}
+                style={{
+                  height: '40px',
+                  padding: '0 10px',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--color-border-strong)',
+                  fontSize: '13px',
+                  backgroundColor: isUnverified ? 'var(--color-surface-subtle)' : 'var(--color-surface-card)',
+                  cursor: isUnverified ? 'not-allowed' : 'default'
+                }}
+              >
+                <option value="UTC">UTC</option>
+                <option value="America/New_York">America/New York (EST)</option>
+                <option value="America/Chicago">America/Chicago (CST)</option>
+                <option value="America/Los_Angeles">America/Los Angeles (PST)</option>
+                <option value="Europe/London">Europe/London (GMT)</option>
+                <option value="Asia/Kolkata">Asia/Kolkata (IST)</option>
+              </select>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
+              <Button type="button" variant="secondary" onClick={() => setIsCreateHomeOpen(false)} style={{ minHeight: '44px' }}>
+                Cancel
+              </Button>
+              {isUnverified ? (
+                <Button
+                  type="button"
+                  id="modal-primary-verify-btn"
+                  variant="primary"
+                  onClick={handleNavigateToVerify}
+                  style={{ minHeight: '44px' }}
+                >
+                  <ShieldCheck size={16} style={{ marginRight: '6px' }} /> Verify Mobile Number
+                </Button>
+              ) : (
+                <Button
+                  type="submit"
+                  id="modal-primary-create-btn"
+                  variant="primary"
+                  isLoading={isCreatingHome}
+                  style={{ minHeight: '44px' }}
+                >
+                  Create Home
+                </Button>
+              )}
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  };
+
+  const renderJoinHomeModal = () => {
+    if (!isJoinHomeOpen) return null;
+
+    return (
+      <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+        <div style={{ width: '100%', maxWidth: '480px', maxHeight: '90vh', overflowY: 'auto', backgroundColor: 'var(--color-surface-card)', borderRadius: 'var(--radius-lg)', padding: '24px', boxShadow: 'var(--shadow-modal)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Users size={20} color="var(--color-primary-900)" />
+              <h3 style={{ fontSize: '18px', fontWeight: 700 }}>Join a Home</h3>
+            </div>
+            <button
+              onClick={() => setIsJoinHomeOpen(false)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              aria-label="Close dialog"
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          {joinError && (
+            <div style={{ padding: '10px 14px', backgroundColor: 'var(--status-overdue-bg)', color: 'var(--status-overdue)', borderRadius: 'var(--radius-md)', fontSize: '13px', marginBottom: '16px' }}>
+              {joinError}
+            </div>
+          )}
+
+          <form onSubmit={handleJoinHome} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <Input
+              id="invitationToken"
+              label="Invitation Code / Token"
+              placeholder="Paste invitation code here"
+              value={invitationToken}
+              onChange={(e) => setInvitationToken(e.target.value)}
+              required
+              autoFocus
+            />
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
+              <Button type="button" variant="secondary" onClick={() => setIsJoinHomeOpen(false)} style={{ minHeight: '44px' }}>
+                Cancel
+              </Button>
+              <Button type="submit" variant="primary" isLoading={isJoiningHome} style={{ minHeight: '44px' }}>
+                Join Home
+              </Button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
   };
 
   if (isLoading) {
@@ -329,146 +695,8 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Modal: Create Your Home */}
-        {isCreateHomeOpen && (
-          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div style={{ width: '90%', maxWidth: '480px', backgroundColor: 'var(--color-surface-card)', borderRadius: 'var(--radius-lg)', padding: '24px', boxShadow: 'var(--shadow-modal)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Home size={20} color="var(--color-primary-900)" />
-                  <h3 style={{ fontSize: '18px', fontWeight: 700 }}>Create Your Home</h3>
-                </div>
-                <button onClick={() => setIsCreateHomeOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
-                  <X size={18} />
-                </button>
-              </div>
-
-              {createError && (
-                <div style={{ padding: '10px 14px', backgroundColor: 'var(--status-overdue-bg)', color: 'var(--status-overdue)', borderRadius: 'var(--radius-md)', fontSize: '13px', marginBottom: '16px' }}>
-                  {createError}
-                </div>
-              )}
-
-              <form onSubmit={handleCreateHome} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                <Input
-                  id="homeName"
-                  label="Household Name"
-                  placeholder="e.g. Sunnyvale Haven"
-                  value={newHomeName}
-                  onChange={(e) => setNewHomeName(e.target.value)}
-                  required
-                  autoFocus
-                />
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    <label htmlFor="modalCountry" style={{ fontSize: '13px', fontWeight: 600 }}>Country</label>
-                    <select
-                      id="modalCountry"
-                      value={newHomeCountry}
-                      onChange={(e) => setNewHomeCountry(e.target.value)}
-                      style={{ height: '40px', padding: '0 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border-strong)', fontSize: '13px', backgroundColor: 'var(--color-surface-card)' }}
-                    >
-                      <option value="US">United States (US)</option>
-                      <option value="IN">India (IN)</option>
-                      <option value="GB">United Kingdom (GB)</option>
-                      <option value="CA">Canada (CA)</option>
-                      <option value="AU">Australia (AU)</option>
-                      <option value="DE">Germany (DE)</option>
-                    </select>
-                  </div>
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    <label htmlFor="modalCurrency" style={{ fontSize: '13px', fontWeight: 600 }}>Primary Currency</label>
-                    <select
-                      id="modalCurrency"
-                      value={newHomeCurrency}
-                      onChange={(e) => setNewHomeCurrency(e.target.value)}
-                      style={{ height: '40px', padding: '0 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border-strong)', fontSize: '13px', backgroundColor: 'var(--color-surface-card)' }}
-                    >
-                      <option value="USD">USD ($)</option>
-                      <option value="EUR">EUR (€)</option>
-                      <option value="GBP">GBP (£)</option>
-                      <option value="CAD">CAD ($)</option>
-                      <option value="AUD">AUD ($)</option>
-                      <option value="INR">INR (₹)</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <label htmlFor="modalTimezone" style={{ fontSize: '13px', fontWeight: 600 }}>Timezone</label>
-                  <select
-                    id="modalTimezone"
-                    value={newHomeTimezone}
-                    onChange={(e) => setNewHomeTimezone(e.target.value)}
-                    style={{ height: '40px', padding: '0 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border-strong)', fontSize: '13px', backgroundColor: 'var(--color-surface-card)' }}
-                  >
-                    <option value="UTC">UTC</option>
-                    <option value="America/New_York">America/New York (EST)</option>
-                    <option value="America/Chicago">America/Chicago (CST)</option>
-                    <option value="America/Los_Angeles">America/Los Angeles (PST)</option>
-                    <option value="Europe/London">Europe/London (GMT)</option>
-                    <option value="Asia/Kolkata">Asia/Kolkata (IST)</option>
-                  </select>
-                </div>
-
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
-                  <Button type="button" variant="secondary" onClick={() => setIsCreateHomeOpen(false)}>
-                    Cancel
-                  </Button>
-                  <Button type="submit" variant="primary" isLoading={isCreatingHome}>
-                    Create Home
-                  </Button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
-
-        {/* Modal: Join a Home */}
-        {isJoinHomeOpen && (
-          <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div style={{ width: '90%', maxWidth: '480px', backgroundColor: 'var(--color-surface-card)', borderRadius: 'var(--radius-lg)', padding: '24px', boxShadow: 'var(--shadow-modal)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Users size={20} color="var(--color-primary-900)" />
-                  <h3 style={{ fontSize: '18px', fontWeight: 700 }}>Join a Home</h3>
-                </div>
-                <button onClick={() => setIsJoinHomeOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
-                  <X size={18} />
-                </button>
-              </div>
-
-              {joinError && (
-                <div style={{ padding: '10px 14px', backgroundColor: 'var(--status-overdue-bg)', color: 'var(--status-overdue)', borderRadius: 'var(--radius-md)', fontSize: '13px', marginBottom: '16px' }}>
-                  {joinError}
-                </div>
-              )}
-
-              <form onSubmit={handleJoinHome} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                <Input
-                  id="invitationToken"
-                  label="Invitation Code / Token"
-                  placeholder="Paste invitation code here"
-                  value={invitationToken}
-                  onChange={(e) => setInvitationToken(e.target.value)}
-                  required
-                  autoFocus
-                />
-
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
-                  <Button type="button" variant="secondary" onClick={() => setIsJoinHomeOpen(false)}>
-                    Cancel
-                  </Button>
-                  <Button type="submit" variant="primary" isLoading={isJoiningHome}>
-                    Join Home
-                  </Button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
+        {renderCreateHomeModal()}
+        {renderJoinHomeModal()}
       </div>
     );
   }
@@ -789,7 +1017,23 @@ export default function DashboardPage() {
           )}
         </Card>
 
+        {renderCreateHomeModal()}
+        {renderJoinHomeModal()}
       </div>
     </div>
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense
+      fallback={
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh' }}>
+          <RefreshCw size={28} className="animate-spin" style={{ color: 'var(--color-primary-900)' }} />
+        </div>
+      }
+    >
+      <DashboardPageContent />
+    </Suspense>
   );
 }

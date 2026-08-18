@@ -113,12 +113,6 @@ def require_home_permission(required_permission: str):
         db: AsyncSession = Depends(get_db),
         redis_client: redis.Redis = Depends(get_redis_client),
     ) -> HomeContext:
-        if current_user.phone_number and not current_user.mobile_verified:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Mobile number verification is required before accessing Home workspace."
-            )
-
         query = select(HomeMemberModel).where(
             HomeMemberModel.home_id == home_id,
             HomeMemberModel.user_id == current_user.id,

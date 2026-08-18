@@ -20,7 +20,7 @@ from src.infrastructure.database.models import (
     UserModel
 )
 from src.infrastructure.cache.redis_client import get_redis_client
-from src.core.exceptions import TierLimitExceededException
+from src.core.exceptions import TierLimitExceededException, MobileVerificationRequiredException
 from src.schemas.common import ApiSuccessResponse
 from src.schemas.home import CreateHomeRequest, HomeDTO, HomeDetailDTO, MessageResponse, UpdateHomeRequest
 
@@ -75,11 +75,8 @@ async def create_home(
     db: AsyncSession = Depends(get_db),
     redis_client: redis.Redis = Depends(get_redis_client),
 ):
-    if current_user.phone_number and not current_user.mobile_verified:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Mobile number verification is required before creating a Home."
-        )
+    if not current_user.mobile_verified:
+        raise MobileVerificationRequiredException()
 
     # Check free tier limit (1 active owned home for regular users)
     if not getattr(current_user, "is_super_admin", False):

@@ -53,3 +53,13 @@ class TierLimitExceededException(BaseDomainException):
             status_code=402,
             details={"resource": resource, "limit": limit},
         )
+
+
+class MobileVerificationRequiredException(BaseDomainException):
+    def __init__(self, message: str = "Mobile number verification is required before creating a Home."):
+        super().__init__(
+            message=message,
+            code="MOBILE_VERIFICATION_REQUIRED",
+            status_code=403,
+            details={"action": "CREATE_HOME", "verification_required": "mobile"},
+        )

@@ -38,6 +38,75 @@ async def test_get_my_profile():
     assert res.data.email == "alex@example.com"
     assert res.data.display_name == "Alex Rivera"
     assert res.data.timezone == "America/New_York"
+    assert res.data.is_super_admin is False
+    assert res.data.system_role == "USER"
+    assert not hasattr(res.data, "password_hash")
+    assert not hasattr(res.data, "password")
+
+
+@pytest.mark.asyncio
+async def test_get_my_profile_super_admin():
+    mock_db = AsyncMock()
+    user_id = uuid4()
+    profile = UserProfileModel(
+        user_id=user_id,
+        display_name="Super Admin User",
+        timezone="UTC",
+        preferred_language="en"
+    )
+    user = UserModel(
+        id=user_id,
+        email="superadmin@ozhzo.com",
+        is_active=True,
+        is_verified=True,
+        is_super_admin=True,
+        system_role="SUPER_ADMIN",
+        profile=profile
+    )
+
+    mock_res = MagicMock()
+    mock_res.all.return_value = []
+    mock_db.execute.return_value = mock_res
+
+    res = await get_my_profile(current_user=user, db=mock_db)
+
+    assert res.success is True
+    assert res.data.email == "superadmin@ozhzo.com"
+    assert res.data.is_super_admin is True
+    assert res.data.system_role == "SUPER_ADMIN"
+    assert not hasattr(res.data, "password_hash")
+
+
+@pytest.mark.asyncio
+async def test_get_my_profile_household_owner_not_super_admin():
+    """Household OWNER is a household role, not a platform role. is_super_admin must be False and system_role USER."""
+    mock_db = AsyncMock()
+    user_id = uuid4()
+    profile = UserProfileModel(
+        user_id=user_id,
+        display_name="Household Owner",
+        timezone="UTC",
+        preferred_language="en"
+    )
+    user = UserModel(
+        id=user_id,
+        email="owner@ozhzo.com",
+        is_active=True,
+        is_verified=True,
+        is_super_admin=False,
+        system_role="USER",
+        profile=profile
+    )
+
+    mock_res = MagicMock()
+    mock_res.all.return_value = []
+    mock_db.execute.return_value = mock_res
+
+    res = await get_my_profile(current_user=user, db=mock_db)
+
+    assert res.success is True
+    assert res.data.is_super_admin is False
+    assert res.data.system_role == "USER"
 
 
 @pytest.mark.asyncio

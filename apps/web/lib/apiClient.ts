@@ -218,7 +218,11 @@ class ApiClient {
       throw new Error(errorMsg);
     }
 
-    return data?.data as T;
+    if (data && typeof data === 'object' && 'data' in data && data.data !== undefined) {
+      return data.data as T;
+    }
+
+    return data as T;
   }
 
   get<T>(endpoint: string) {

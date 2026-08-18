@@ -2,12 +2,12 @@ import json
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import List, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.dependencies import get_current_user, require_super_admin
+from src.api.dependencies import get_current_user, require_admin_permission, require_super_admin
 from src.infrastructure.database.session import get_db
 from src.infrastructure.database.models import (
     PromotionModel,
@@ -76,6 +76,7 @@ async def create_subscription_plan(
         raise HTTPException(status_code=409, detail=f"Plan with code '{payload.code}' already exists.")
 
     new_plan = SubscriptionPlanModel(
+        id=uuid4(),
         name=payload.name,
         code=payload.code.upper(),
         description=payload.description,
@@ -229,6 +230,7 @@ async def create_subscription_price(
     seat_list_price = payload.additional_member_list_price
 
     new_price = SubscriptionPriceModel(
+        id=uuid4(),
         plan_id=plan.id,
         country=country_code,
         region=payload.region.upper(),
@@ -356,6 +358,7 @@ async def create_promotion(
         raise HTTPException(status_code=409, detail=f"Promotion with code '{payload.code}' already exists.")
 
     new_promo = PromotionModel(
+        id=uuid4(),
         name=payload.name,
         code=payload.code.upper().strip(),
         description=payload.description,
@@ -373,6 +376,7 @@ async def create_promotion(
         maximum_redemptions=payload.maximum_redemptions,
         maximum_redemptions_per_user=payload.maximum_redemptions_per_user,
         minimum_purchase=payload.minimum_purchase,
+        redemptions_count=0,
         created_by=super_admin.id
     )
     db.add(new_promo)
@@ -527,6 +531,7 @@ async def create_subscription_feature(
         raise HTTPException(status_code=409, detail=f"Feature with code '{payload.code}' already exists.")
 
     new_feat = SubscriptionFeatureModel(
+        id=uuid4(),
         code=payload.code.upper(),
         name=payload.name,
         description=payload.description,

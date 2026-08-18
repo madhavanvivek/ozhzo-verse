@@ -2,7 +2,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import List, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import selectinload
@@ -76,6 +76,7 @@ async def create_coupon(
         raise HTTPException(status_code=409, detail=f"Coupon with code '{payload.code}' already exists.")
 
     new_coupon = CouponModel(
+        id=uuid4(),
         campaign_id=payload.campaign_id,
         name=payload.name,
         code=payload.code.upper().strip(),
@@ -140,15 +141,15 @@ async def create_coupon(
             start_date=new_coupon.start_date,
             end_date=new_coupon.end_date,
             maximum_total_redemptions=new_coupon.maximum_total_redemptions,
-            redemptions_count=new_coupon.redemptions_count,
-            maximum_redemptions_per_user=new_coupon.maximum_redemptions_per_user,
-            maximum_redemptions_per_home=new_coupon.maximum_redemptions_per_home,
-            allow_stacking=new_coupon.allow_stacking,
+            redemptions_count=new_coupon.redemptions_count or 0,
+            maximum_redemptions_per_user=new_coupon.maximum_redemptions_per_user or 1,
+            maximum_redemptions_per_home=new_coupon.maximum_redemptions_per_home or 1,
+            allow_stacking=bool(new_coupon.allow_stacking),
             status=new_coupon.status,
             notes=new_coupon.notes,
             internal_reason=new_coupon.internal_reason,
-            created_at=new_coupon.created_at,
-            updated_at=new_coupon.updated_at
+            created_at=new_coupon.created_at or datetime.now(timezone.utc),
+            updated_at=new_coupon.updated_at or datetime.now(timezone.utc)
         )
     )
 
@@ -353,6 +354,7 @@ async def create_campaign(
         raise HTTPException(status_code=409, detail=f"Campaign with code '{payload.code}' already exists.")
 
     new_campaign = CampaignModel(
+        id=uuid4(),
         name=payload.name,
         code=payload.code.upper().strip(),
         description=payload.description,
@@ -361,6 +363,7 @@ async def create_campaign(
         end_date=payload.end_date,
         budget_limit=payload.budget_limit,
         maximum_redemptions=payload.maximum_redemptions,
+        redemptions_count=0,
         country=payload.country.upper() if payload.country else None,
         state=payload.state,
         created_by=super_admin.id
@@ -466,6 +469,7 @@ async def create_direct_grant(
     expiry_date = now + timedelta(days=days_to_add)
 
     grant = SubscriptionGrantModel(
+        id=uuid4(),
         user_id=payload.user_id,
         home_id=payload.home_id,
         plan_id=plan.id,
@@ -517,8 +521,8 @@ async def create_direct_grant(
             status=grant.status,
             reason=grant.reason,
             granted_by=grant.granted_by,
-            created_at=grant.created_at,
-            updated_at=grant.updated_at
+            created_at=grant.created_at or datetime.now(timezone.utc),
+            updated_at=grant.updated_at or datetime.now(timezone.utc)
         )
     )
 

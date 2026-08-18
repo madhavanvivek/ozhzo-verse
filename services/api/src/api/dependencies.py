@@ -8,7 +8,7 @@ import redis.asyncio as redis
 
 from src.core.security import decode_token
 from src.core.exceptions import PermissionDeniedException
-from src.domain.permissions import has_permission
+from src.domain.permissions import has_permission, has_platform_permission
 from src.infrastructure.database.session import get_db
 from src.infrastructure.database.models import HomeMemberModel, UserModel
 from src.infrastructure.cache.redis_client import get_redis_client
@@ -68,14 +68,35 @@ async def require_super_admin(
 ) -> UserModel:
     """
     Guards system-level administrative endpoints.
-    Only users with is_super_admin=True can access.
+    Only users with is_super_admin=True or system_role=SUPER_ADMIN can access.
     """
-    if not current_user.is_super_admin:
+    is_admin = bool(current_user.is_super_admin) or (getattr(current_user, "system_role", "USER") in ["SUPER_ADMIN", "PLATFORM_ADMIN"])
+    if not is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Super Admin privileges required to perform this action."
         )
     return current_user
+
+
+def require_admin_permission(permission: str):
+    """
+    Fine-grained platform permission dependency checking explicit platform capabilities.
+    """
+    async def admin_permission_dependency(
+        current_user: UserModel = Depends(get_current_user),
+    ) -> UserModel:
+        if current_user.is_super_admin:
+            return current_user
+        system_role = getattr(current_user, "system_role", "USER")
+        if not has_platform_permission(system_role, permission):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Super Admin privileges required to perform this action."
+            )
+        return current_user
+
+    return admin_permission_dependency
 
 
 class HomeContext:

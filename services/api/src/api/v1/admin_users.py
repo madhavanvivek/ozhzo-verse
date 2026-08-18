@@ -1,13 +1,13 @@
 import json
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Any, List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import desc, func, select
+from sqlalchemy import asc, desc, func, or_, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.dependencies import require_super_admin
+from src.api.dependencies import require_admin_permission, require_super_admin
 from src.infrastructure.database.session import get_db
 from src.infrastructure.database.models import (
     HomeMemberModel,
@@ -27,6 +27,33 @@ from src.schemas.admin import (
 )
 
 router = APIRouter(prefix="/admin/users", tags=["Super Admin - Users"])
+
+
+def _extract_int_param(param_val: Any, default_val: int) -> int:
+    if hasattr(param_val, "default") and not isinstance(param_val, int):
+        return int(param_val.default)
+    try:
+        return int(param_val)
+    except (TypeError, ValueError):
+        return default_val
+
+
+def _extract_str_param(param_val: Any, default_val: Optional[str] = None) -> Optional[str]:
+    if param_val is None:
+        return default_val
+    if isinstance(param_val, str):
+        return param_val
+    if hasattr(param_val, "default") and isinstance(param_val.default, str):
+        return param_val.default
+    return default_val
+
+
+def _extract_bool_param(param_val: Any) -> Optional[bool]:
+    if isinstance(param_val, bool):
+        return param_val
+    if hasattr(param_val, "default") and isinstance(param_val.default, bool):
+        return param_val.default
+    return None
 
 
 async def record_user_audit(
@@ -54,28 +81,62 @@ async def record_user_audit(
 async def list_and_search_users(
     query: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
+    system_role: Optional[str] = Query(None),
+    sort_by: str = Query("created_at"),
+    sort_order: str = Query("desc"),
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
-    super_admin: UserModel = Depends(require_super_admin),
+    super_admin: UserModel = Depends(require_admin_permission("admin:users:view")),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Search and list platform users for Super Admin.
+    Supports pagination, search, status/role filtering, and safe sorting.
     """
+    lim = _extract_int_param(limit, 50)
+    off = _extract_int_param(offset, 0)
+    q_str = _extract_str_param(query)
+    role_str = _extract_str_param(system_role)
+    active_bool = _extract_bool_param(is_active)
+    sort_by_str = _extract_str_param(sort_by, "created_at") or "created_at"
+    sort_order_str = _extract_str_param(sort_order, "desc") or "desc"
+
     stmt = (
         select(UserModel, UserProfileModel.display_name, func.count(HomeMemberModel.id).label("homes_count"))
         .outerjoin(UserProfileModel, UserModel.id == UserProfileModel.user_id)
         .outerjoin(HomeMemberModel, UserModel.id == HomeMemberModel.user_id)
         .group_by(UserModel.id, UserProfileModel.display_name)
-        .order_by(desc(UserModel.created_at))
-        .limit(limit)
-        .offset(offset)
     )
 
-    if query:
-        stmt = stmt.where(UserModel.email.ilike(f"%{query.strip()}%"))
-    if is_active is not None:
-        stmt = stmt.where(UserModel.is_active == is_active)
+    if q_str:
+        clean_q = f"%{q_str.strip()}%"
+        stmt = stmt.where(
+            or_(
+                UserModel.email.ilike(clean_q),
+                UserModel.phone_number.ilike(clean_q),
+                UserProfileModel.display_name.ilike(clean_q)
+            )
+        )
+
+    if active_bool is not None:
+        stmt = stmt.where(UserModel.is_active == active_bool)
+
+    if role_str:
+        stmt = stmt.where(UserModel.system_role == role_str.upper().strip())
+
+    # Safe sorting
+    sort_col = UserModel.created_at
+    if sort_by_str == "email":
+        sort_col = UserModel.email
+    elif sort_by_str == "updated_at":
+        sort_col = UserModel.updated_at
+
+    if sort_order_str.lower() == "asc":
+        stmt = stmt.order_by(asc(sort_col))
+    else:
+        stmt = stmt.order_by(desc(sort_col))
+
+    stmt = stmt.limit(lim).offset(off)
 
     res = await db.execute(stmt)
     rows = res.all()
@@ -84,13 +145,16 @@ async def list_and_search_users(
         AdminUserListItemDTO(
             id=u.id,
             email=u.email,
-            display_name=disp or "User",
-            is_active=u.is_active,
-            is_verified=u.is_verified,
-            is_super_admin=u.is_super_admin,
-            system_role=getattr(u, "system_role", "SUPER_ADMIN" if u.is_super_admin else "USER"),
+            phone_number=u.phone_number,
+            country_code=u.country_code,
+            display_name=disp or (u.email.split("@")[0] if u.email else "User"),
+            is_active=bool(u.is_active) if u.is_active is not None else True,
+            is_verified=bool(u.is_verified) if u.is_verified is not None else False,
+            mobile_verified=bool(u.mobile_verified) if u.mobile_verified is not None else False,
+            is_super_admin=bool(u.is_super_admin),
+            system_role=getattr(u, "system_role", None) or ("SUPER_ADMIN" if u.is_super_admin else "USER"),
             homes_count=h_count or 0,
-            created_at=u.created_at
+            created_at=u.created_at or datetime.now(timezone.utc)
         )
         for u, disp, h_count in rows
     ]
@@ -100,11 +164,12 @@ async def list_and_search_users(
 @router.get("/{user_id}", response_model=ApiSuccessResponse[AdminUserDetailDTO])
 async def get_user_detail(
     user_id: UUID,
-    super_admin: UserModel = Depends(require_super_admin),
+    super_admin: UserModel = Depends(require_admin_permission("admin:users:view")),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Get detailed profile and Home memberships of a platform user.
+    Never exposes passwords, tokens, or private secrets.
     """
     user_query = (
         select(UserModel)
@@ -133,14 +198,21 @@ async def get_user_detail(
         for m, h_name in memberships_rows
     ]
 
+    profile = user.profile
     return ApiSuccessResponse(
         data=AdminUserDetailDTO(
             id=user.id,
             email=user.email,
-            display_name=user.profile.display_name if user.profile else "User",
-            is_active=user.is_active,
-            is_verified=user.is_verified,
-            is_super_admin=user.is_super_admin,
+            phone_number=user.phone_number,
+            country_code=user.country_code,
+            display_name=profile.display_name if profile else (user.email.split("@")[0] if user.email else "User"),
+            avatar_url=profile.avatar_url if profile else None,
+            timezone=(profile.timezone if profile else None) or "UTC",
+            preferred_language=(profile.preferred_language if profile else None) or "en",
+            is_active=bool(user.is_active) if user.is_active is not None else True,
+            is_verified=bool(user.is_verified) if user.is_verified is not None else False,
+            mobile_verified=bool(user.mobile_verified) if user.mobile_verified is not None else False,
+            is_super_admin=bool(user.is_super_admin),
             system_role=getattr(user, "system_role", "SUPER_ADMIN" if user.is_super_admin else "USER"),
             created_at=user.created_at,
             updated_at=user.updated_at,
@@ -153,11 +225,12 @@ async def get_user_detail(
 async def suspend_user(
     user_id: UUID,
     payload: SuspendEntityRequest,
-    super_admin: UserModel = Depends(require_super_admin),
+    super_admin: UserModel = Depends(require_admin_permission("admin:users:disable")),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Suspend a platform user account and record audit trail.
+    Super Admins cannot suspend their own accounts.
     """
     if user_id == super_admin.id:
         raise HTTPException(status_code=400, detail="Super Admin cannot suspend their own account.")
@@ -181,14 +254,14 @@ async def suspend_user(
     )
     await db.commit()
 
-    return ApiSuccessResponse(data=MessageResponse(message=f"User {user.email} suspended successfully."))
+    return ApiSuccessResponse(data=MessageResponse(message=f"User {user.email or user.phone_number or user.id} suspended successfully."))
 
 
 @router.post("/{user_id}/reactivate", response_model=ApiSuccessResponse[MessageResponse])
 async def reactivate_user(
     user_id: UUID,
     payload: ReactivateEntityRequest,
-    super_admin: UserModel = Depends(require_super_admin),
+    super_admin: UserModel = Depends(require_admin_permission("admin:users:edit")),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -213,4 +286,4 @@ async def reactivate_user(
     )
     await db.commit()
 
-    return ApiSuccessResponse(data=MessageResponse(message=f"User {user.email} reactivated successfully."))
+    return ApiSuccessResponse(data=MessageResponse(message=f"User {user.email or user.phone_number or user.id} reactivated successfully."))

@@ -299,6 +299,7 @@ async def test_15_to_19_limits_and_dates():
     # 18. Expired coupon
     past_date = datetime.now(timezone.utc) - timedelta(days=5)
     expired_coupon = CouponModel(id=uuid4(), code="EXP", status="ACTIVE", end_date=past_date)
+    mock_db.execute.side_effect = None
     mock_db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=expired_coupon))
     c, valid, r = await evaluate_coupon("EXP", plan_id, "US", None, None, None, "USD", uid, hid, mock_db)
     assert valid is False
@@ -307,6 +308,7 @@ async def test_15_to_19_limits_and_dates():
     # 19. Future coupon
     future_date = datetime.now(timezone.utc) + timedelta(days=5)
     future_coupon = CouponModel(id=uuid4(), code="FUT", status="ACTIVE", start_date=future_date)
+    mock_db.execute.side_effect = None
     mock_db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=future_coupon))
     c, valid, r = await evaluate_coupon("FUT", plan_id, "US", None, None, None, "USD", uid, hid, mock_db)
     assert valid is False

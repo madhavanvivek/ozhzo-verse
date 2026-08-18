@@ -74,3 +74,64 @@ ROLE_PERMISSIONS_MAP: Dict[str, Set[str]] = {
 def has_permission(role: str, permission: str) -> bool:
     granted_permissions = ROLE_PERMISSIONS_MAP.get(role.upper(), set())
     return permission in granted_permissions
+
+
+# Platform / System Role Definitions
+PLATFORM_ROLE_SUPER_ADMIN = "SUPER_ADMIN"
+PLATFORM_ROLE_PLATFORM_ADMIN = "PLATFORM_ADMIN"
+PLATFORM_ROLE_SUPPORT_ADMIN = "SUPPORT_ADMIN"
+PLATFORM_ROLE_ANALYST = "ANALYST"
+PLATFORM_ROLE_USER = "USER"
+
+# Platform Permission Matrix Definition
+PLATFORM_ROLE_PERMISSIONS_MAP: Dict[str, Set[str]] = {
+    PLATFORM_ROLE_SUPER_ADMIN: {
+        "admin:dashboard:view",
+        "admin:users:view",
+        "admin:users:edit",
+        "admin:users:disable",
+        "admin:homes:view",
+        "admin:homes:view_details",
+        "admin:homes:edit",
+        "admin:subscriptions:view",
+        "admin:subscriptions:manage",
+        "admin:coupons:view",
+        "admin:coupons:manage",
+        "admin:activity:view",
+    },
+    PLATFORM_ROLE_PLATFORM_ADMIN: {
+        "admin:dashboard:view",
+        "admin:users:view",
+        "admin:users:edit",
+        "admin:users:disable",
+        "admin:homes:view",
+        "admin:homes:view_details",
+        "admin:homes:edit",
+        "admin:subscriptions:view",
+        "admin:subscriptions:manage",
+        "admin:coupons:view",
+        "admin:coupons:manage",
+        "admin:activity:view",
+    },
+    PLATFORM_ROLE_SUPPORT_ADMIN: {
+        "admin:dashboard:view",
+        "admin:users:view",
+        "admin:homes:view",
+        "admin:homes:view_details",
+        "admin:activity:view",
+    },
+    PLATFORM_ROLE_ANALYST: {
+        "admin:dashboard:view",
+        "admin:users:view",
+        "admin:homes:view",
+        "admin:activity:view",
+    },
+    PLATFORM_ROLE_USER: set(),
+}
+
+
+def has_platform_permission(system_role: str, permission: str) -> bool:
+    if not system_role:
+        return False
+    granted = PLATFORM_ROLE_PERMISSIONS_MAP.get(system_role.upper(), set())
+    return permission in granted

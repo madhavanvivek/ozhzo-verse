@@ -15,15 +15,15 @@ class CampaignDTO(BaseModel):
     code: str
     description: Optional[str] = None
     status: str  # ACTIVE, INACTIVE, SCHEDULED, EXPIRED
-    start_date: datetime
+    start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
     budget_limit: Optional[Decimal] = None
     maximum_redemptions: Optional[int] = None
     redemptions_count: int = 0
     country: Optional[str] = None
     state: Optional[str] = None
-    created_at: datetime
-    updated_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 class CreateCampaignRequest(BaseModel):
@@ -82,8 +82,8 @@ class CouponDTO(BaseModel):
     status: str  # ACTIVE, INACTIVE, EXPIRED, SCHEDULED
     notes: Optional[str] = None
     internal_reason: Optional[str] = None
-    created_at: datetime
-    updated_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 class CreateCouponRequest(BaseModel):
@@ -144,13 +144,13 @@ class SubscriptionGrantDTO(BaseModel):
     duration_value: int
     duration_unit: str  # DAYS, MONTHS, YEARS
     discount_value: Decimal
-    start_date: datetime
-    expiry_date: datetime
+    start_date: Optional[datetime] = None
+    expiry_date: Optional[datetime] = None
     status: str  # ACTIVE, EXPIRED, REVOKED
     reason: str
     granted_by: UUID
-    created_at: datetime
-    updated_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 class CreateSubscriptionGrantRequest(BaseModel):

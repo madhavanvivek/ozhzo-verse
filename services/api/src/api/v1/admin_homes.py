@@ -1,13 +1,13 @@
 import json
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Any, List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.dependencies import require_super_admin
+from src.api.dependencies import require_admin_permission, require_super_admin
 from src.infrastructure.database.session import get_db
 from src.infrastructure.database.models import (
     HomeMemberModel,
@@ -28,6 +28,25 @@ from src.schemas.admin import (
 )
 
 router = APIRouter(prefix="/admin/homes", tags=["Super Admin - Homes"])
+
+
+def _extract_int_param(param_val: Any, default_val: int) -> int:
+    if hasattr(param_val, "default") and not isinstance(param_val, int):
+        return int(param_val.default)
+    try:
+        return int(param_val)
+    except (TypeError, ValueError):
+        return default_val
+
+
+def _extract_str_param(param_val: Any, default_val: Optional[str] = None) -> Optional[str]:
+    if param_val is None:
+        return default_val
+    if isinstance(param_val, str):
+        return param_val
+    if hasattr(param_val, "default") and isinstance(param_val.default, str):
+        return param_val.default
+    return default_val
 
 
 async def record_home_audit(
@@ -57,12 +76,17 @@ async def list_and_search_homes(
     status: Optional[str] = Query(None),
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
-    super_admin: UserModel = Depends(require_super_admin),
+    super_admin: UserModel = Depends(require_admin_permission("admin:homes:view")),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Search and list platform homes for Super Admin.
     """
+    lim = _extract_int_param(limit, 50)
+    off = _extract_int_param(offset, 0)
+    q_str = _extract_str_param(query)
+    status_str = _extract_str_param(status)
+
     stmt = (
         select(
             HomeModel,
@@ -75,14 +99,14 @@ async def list_and_search_homes(
         .outerjoin(SubscriptionModel, HomeModel.id == SubscriptionModel.home_id)
         .group_by(HomeModel.id, UserModel.email, SubscriptionModel.status)
         .order_by(desc(HomeModel.created_at))
-        .limit(limit)
-        .offset(offset)
+        .limit(lim)
+        .offset(off)
     )
 
-    if query:
-        stmt = stmt.where(HomeModel.name.ilike(f"%{query.strip()}%"))
-    if status:
-        stmt = stmt.where(HomeModel.status == status.upper())
+    if q_str:
+        stmt = stmt.where(HomeModel.name.ilike(f"%{q_str.strip()}%"))
+    if status_str:
+        stmt = stmt.where(HomeModel.status == status_str.upper().strip())
 
     res = await db.execute(stmt)
     rows = res.all()
@@ -92,11 +116,11 @@ async def list_and_search_homes(
             id=h.id,
             name=h.name,
             status=getattr(h, "status", "ACTIVE"),
-            currency=h.currency,
+            currency=getattr(h, "currency", None) or "USD",
             created_by_email=c_email,
             members_count=m_count or 0,
             subscription_status=s_status or "TRIALING",
-            created_at=h.created_at
+            created_at=h.created_at or datetime.now(timezone.utc)
         )
         for h, c_email, m_count, s_status in rows
     ]
@@ -106,7 +130,7 @@ async def list_and_search_homes(
 @router.get("/{home_id}", response_model=ApiSuccessResponse[AdminHomeDetailDTO])
 async def get_home_detail(
     home_id: UUID,
-    super_admin: UserModel = Depends(require_super_admin),
+    super_admin: UserModel = Depends(require_admin_permission("admin:homes:view_details")),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -126,7 +150,7 @@ async def get_home_detail(
 
     # Fetch members
     members_query = (
-        select(HomeMemberModel, UserModel.email, UserProfileModel.display_name)
+        select(HomeMemberModel, UserModel.email, UserModel.phone_number, UserProfileModel.display_name)
         .join(UserModel, HomeMemberModel.user_id == UserModel.id)
         .outerjoin(UserProfileModel, UserModel.id == UserProfileModel.user_id)
         .where(HomeMemberModel.home_id == home_id)
@@ -137,13 +161,14 @@ async def get_home_detail(
     member_dtos = [
         AdminHomeMemberItemDTO(
             user_id=m.user_id,
-            display_name=disp or "Member",
+            display_name=disp or (u_email.split("@")[0] if u_email else "Member"),
             email=u_email,
+            phone_number=u_phone,
             role=m.role,
             status=m.status,
             created_at=m.created_at
         )
-        for m, u_email, disp in members_rows
+        for m, u_email, u_phone, disp in members_rows
     ]
 
     # Fetch subscription
@@ -175,7 +200,7 @@ async def get_home_detail(
 async def suspend_home(
     home_id: UUID,
     payload: SuspendEntityRequest,
-    super_admin: UserModel = Depends(require_super_admin),
+    super_admin: UserModel = Depends(require_admin_permission("admin:homes:edit")),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -207,7 +232,7 @@ async def suspend_home(
 async def reactivate_home(
     home_id: UUID,
     payload: ReactivateEntityRequest,
-    super_admin: UserModel = Depends(require_super_admin),
+    super_admin: UserModel = Depends(require_admin_permission("admin:homes:edit")),
     db: AsyncSession = Depends(get_db),
 ):
     """

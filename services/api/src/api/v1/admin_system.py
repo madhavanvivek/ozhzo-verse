@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.dependencies import require_super_admin
+from src.api.dependencies import require_admin_permission, require_super_admin
 from src.infrastructure.database.session import get_db
 from src.infrastructure.database.models import (
     HomeMemberModel,
@@ -19,7 +19,7 @@ router = APIRouter(prefix="/admin/system", tags=["Super Admin - System"])
 
 @router.get("/config", response_model=ApiSuccessResponse[AdminSystemConfigDTO])
 async def get_system_configuration(
-    super_admin: UserModel = Depends(require_super_admin),
+    super_admin: UserModel = Depends(require_admin_permission("admin:dashboard:view")),
 ):
     """
     Get global platform system configuration for Super Admin.
@@ -47,11 +47,11 @@ async def get_system_configuration(
 
 @router.get("/analytics-summary", response_model=ApiSuccessResponse[AdminAnalyticsSummaryDTO])
 async def get_analytics_summary(
-    super_admin: UserModel = Depends(require_super_admin),
+    super_admin: UserModel = Depends(require_admin_permission("admin:dashboard:view")),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Analytics foundation metrics summary for Super Admin dashboard.
+    Analytics foundation metrics summary for Super Admin dashboard with real DB counts.
     """
     # Total & active users
     tot_users = (await db.execute(select(func.count(UserModel.id)))).scalar() or 0
@@ -69,7 +69,7 @@ async def get_analytics_summary(
 
     # Subscriptions & paid seats
     act_subs = (await db.execute(select(func.count(SubscriptionModel.id)).where(SubscriptionModel.status.in_(["ACTIVE", "TRIALING"])))).scalar() or 0
-    paid_seats = (await db.execute(select(func.sum(SubscriptionModel.paid_member_seats)))).scalar() or 0
+    paid_seats_val = (await db.execute(select(func.sum(SubscriptionModel.paid_member_seats)))).scalar() or 0
 
     return ApiSuccessResponse(
         data=AdminAnalyticsSummaryDTO(
@@ -81,7 +81,7 @@ async def get_analytics_summary(
             suspended_homes=sus_homes,
             average_members_per_home=round(avg_members, 2),
             total_active_subscriptions=act_subs,
-            total_paid_member_seats=int(paid_seats),
+            total_paid_member_seats=int(paid_seats_val),
             generated_at=datetime.now(timezone.utc)
         )
     )

@@ -257,7 +257,7 @@ async def evaluate_coupon(
             CouponRedemptionModel.user_id == user_id
         )
         user_redemptions = (await db.execute(user_redemptions_query)).scalar() or 0
-        if user_redemptions >= coupon.maximum_redemptions_per_user:
+        if coupon.maximum_redemptions_per_user is not None and user_redemptions >= coupon.maximum_redemptions_per_user:
             return None, False, f"You have already redeemed coupon '{coupon.code}' the maximum allowed number of times."
 
     # 6. Per-Home Redemption Limit
@@ -267,7 +267,7 @@ async def evaluate_coupon(
             CouponRedemptionModel.home_id == home_id
         )
         home_redemptions = (await db.execute(home_redemptions_query)).scalar() or 0
-        if home_redemptions >= coupon.maximum_redemptions_per_home:
+        if coupon.maximum_redemptions_per_home is not None and home_redemptions >= coupon.maximum_redemptions_per_home:
             return None, False, f"Coupon '{coupon.code}' has already been redeemed for this Home."
 
     # 7. Geographic Restrictions (Country, State, District, Postal Code)
@@ -280,13 +280,15 @@ async def evaluate_coupon(
     if coupon.postal_code and postal_code and coupon.postal_code.strip() != postal_code.strip():
         return None, False, f"Coupon '{coupon.code}' is restricted to postal code {coupon.postal_code}."
 
-    # 8. Plan & Currency compatibility
-    if coupon.applicable_plan_id and coupon.applicable_plan_id != plan_id:
-        return None, False, f"Coupon '{coupon.code}' is not applicable to this subscription plan."
+    # 8. Currency Restrictions
     if coupon.currency and coupon.currency.upper() != currency.upper():
         return None, False, f"Coupon '{coupon.code}' is valid only for {coupon.currency}."
 
-    # 9. Dynamic Eligibility Types
+    # 9. Plan Compatibility
+    if coupon.applicable_plan_id and coupon.applicable_plan_id != plan_id:
+        return None, False, f"Coupon '{coupon.code}' is not applicable to this subscription plan."
+
+    # 10. Eligibility Type (e.g., NEW_USER)
     if coupon.eligibility_type == "NEW_USER" and user_id:
         prev_sub = (await db.execute(select(SubscriptionModel).where(
             SubscriptionModel.home_id.in_(select(HomeModel.id).where(HomeModel.created_by == user_id))
@@ -330,6 +332,12 @@ async def evaluate_promotion(
         return None, False, f"Promotion code '{promo.code}' is not applicable to this plan."
     if promo.maximum_redemptions is not None and promo.redemptions_count >= promo.maximum_redemptions:
         return None, False, f"Promotion code '{promo.code}' has reached its maximum redemption limit."
+    if promo.new_users_only and user_id:
+        prev_sub = (await db.execute(select(SubscriptionModel).where(
+            SubscriptionModel.home_id.in_(select(HomeModel.id).where(HomeModel.created_by == user_id))
+        ))).first()
+        if prev_sub:
+            return None, False, f"Promotion code '{promo.code}' is reserved for new users only."
 
     return promo, True, "Promotion code applied successfully."
 
@@ -487,12 +495,17 @@ async def calculate_subscription_price(
     Authoritative Centralized Pricing Calculator.
     Evaluates Standard List Price + Coupons (Free Periods, Percentage, Fixed) + Promotions.
     """
-    await bootstrap_default_subscription_data(db)
-
     # 1. Lookup Plan
     plan_query = select(SubscriptionPlanModel).where(SubscriptionPlanModel.code == (payload.plan_code or "OZHZO_HOME"))
     plan = (await db.execute(plan_query)).scalar_one_or_none()
-    if not plan or plan.status != "ACTIVE":
+    if not plan:
+        try:
+            await bootstrap_default_subscription_data(db)
+            plan = (await db.execute(plan_query)).scalar_one_or_none()
+        except Exception:
+            pass
+
+    if not plan or getattr(plan, "status", "ACTIVE") != "ACTIVE":
         raise HTTPException(status_code=404, detail="Active subscription plan not found.")
 
     # 2. Lookup Regional Standard List Price
@@ -610,7 +623,7 @@ async def calculate_subscription_price(
     seats_discount_total = (Decimal(payload.additional_seats) * unit_discount_amount).quantize(Decimal("0.01"))
     seats_effective_total = (Decimal(payload.additional_seats) * unit_effective_price).quantize(Decimal("0.01"))
 
-    intro_admin_free = plan.introductory_enabled
+    intro_admin_free = bool(getattr(plan, "introductory_enabled", False))
     total_payable = Decimal("0.00") if is_free_period else seats_effective_total
 
     return ApiSuccessResponse(
@@ -618,7 +631,7 @@ async def calculate_subscription_price(
             plan_code=plan.code,
             country=price.country,
             currency=price.currency,
-            billing_period=price.billing_period,
+            billing_period=getattr(price, "billing_period", None) or period or "ANNUAL",
             list_price=unit_list_price,
             discount_type=discount_type,
             discount_value=discount_value,
@@ -632,7 +645,7 @@ async def calculate_subscription_price(
             free_days_granted=free_days_granted,
             free_period_expiry=free_period_expiry,
             payment_required=payment_required and (total_payable > Decimal("0.00")),
-            included_members=plan.included_members,
+            included_members=getattr(plan, "included_members", None) or 1,
             additional_seats=payload.additional_seats,
             seats_list_total=seats_list_total,
             seats_discount_total=seats_discount_total,

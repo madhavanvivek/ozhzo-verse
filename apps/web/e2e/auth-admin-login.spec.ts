@@ -325,4 +325,178 @@ test.describe('Ozhzo Verse Authentication and Super Admin Access Flow', () => {
     await expect(page.locator('#change-password-btn')).toBeVisible();
   });
 
+  test('8. /admin/users renders real users list, shows SUPER ADMIN badge for vivek@zinfog.com, and supports search', async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('access_token', 'mock-super-admin-jwt');
+    });
+
+    // Mock /users/me as Super Admin
+    await page.route('**/api/v1/users/me', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: {
+            id: '99999999-9999-9999-9999-999999999999',
+            email: 'vivek@zinfog.com',
+            is_super_admin: true,
+            system_role: 'SUPER_ADMIN',
+            homes: []
+          }
+        })
+      });
+    });
+
+    // Mock /admin/users list
+    await page.route('**/api/v1/admin/users*', async (route) => {
+      const url = route.request().url();
+      if (url.includes('query=vivek')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: [
+              {
+                id: '99999999-9999-9999-9999-999999999999',
+                email: 'vivek@zinfog.com',
+                phone_number: '+1234567890',
+                display_name: 'Vivek',
+                is_active: true,
+                is_verified: true,
+                mobile_verified: true,
+                is_super_admin: true,
+                system_role: 'SUPER_ADMIN',
+                homes_count: 2,
+                created_at: '2026-01-01T00:00:00Z'
+              }
+            ]
+          })
+        });
+      } else {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: [
+              {
+                id: '99999999-9999-9999-9999-999999999999',
+                email: 'vivek@zinfog.com',
+                phone_number: '+1234567890',
+                display_name: 'Vivek',
+                is_active: true,
+                is_verified: true,
+                mobile_verified: true,
+                is_super_admin: true,
+                system_role: 'SUPER_ADMIN',
+                homes_count: 2,
+                created_at: '2026-01-01T00:00:00Z'
+              },
+              {
+                id: '88888888-8888-8888-8888-888888888888',
+                email: 'member@example.com',
+                phone_number: '+1987654321',
+                display_name: 'Regular Household Member',
+                is_active: true,
+                is_verified: true,
+                mobile_verified: true,
+                is_super_admin: false,
+                system_role: 'USER',
+                homes_count: 1,
+                created_at: '2026-01-02T00:00:00Z'
+              }
+            ]
+          })
+        });
+      }
+    });
+
+    await page.goto('/admin/users');
+    await expect(page.getByRole('heading', { name: 'User Accounts Management' })).toBeVisible();
+
+    // Verify vivek@zinfog.com is listed in table
+    await expect(page.getByRole('table').getByText('vivek@zinfog.com')).toBeVisible();
+    await expect(page.getByRole('table').getByText('SUPER ADMIN')).toBeVisible();
+    await expect(page.getByRole('table').getByText('2 Homes')).toBeVisible();
+
+    // Verify search
+    const searchInput = page.getByPlaceholder('Search by email, phone, or name...');
+    await searchInput.fill('vivek@zinfog.com');
+    await page.getByRole('button', { name: 'Search' }).click();
+    await expect(page.getByRole('table').getByText('vivek@zinfog.com')).toBeVisible();
+  });
+
+  test('9. /admin/users/[id] displays user inspection detail without exposing secret credentials', async ({ page }) => {
+    const vivekId = '99999999-9999-9999-9999-999999999999';
+
+    await page.addInitScript(() => {
+      localStorage.setItem('access_token', 'mock-super-admin-jwt');
+    });
+
+    // Mock /users/me as Super Admin
+    await page.route('**/api/v1/users/me', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: {
+            id: vivekId,
+            email: 'vivek@zinfog.com',
+            is_super_admin: true,
+            system_role: 'SUPER_ADMIN',
+            homes: []
+          }
+        })
+      });
+    });
+
+    // Mock /admin/users/{id}
+    await page.route(`**/api/v1/admin/users/${vivekId}`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: {
+            id: vivekId,
+            email: 'vivek@zinfog.com',
+            phone_number: '+1234567890',
+            country_code: '+1',
+            display_name: 'Vivek',
+            is_active: true,
+            is_verified: true,
+            mobile_verified: true,
+            is_super_admin: true,
+            system_role: 'SUPER_ADMIN',
+            created_at: '2026-01-01T00:00:00Z',
+            updated_at: '2026-01-01T00:00:00Z',
+            memberships: [
+              {
+                home_id: '33333333-3333-3333-3333-333333333333',
+                home_name: 'Main Villa',
+                role: 'OWNER',
+                status: 'ACTIVE',
+                joined_at: '2026-01-01T00:00:00Z'
+              }
+            ]
+          }
+        })
+      });
+    });
+
+    await page.goto(`/admin/users/${vivekId}`);
+    await expect(page.getByText('vivek@zinfog.com').first()).toBeVisible();
+    await expect(page.getByText('Platform Super Admin')).toBeVisible();
+    await expect(page.getByText('Main Villa')).toBeVisible();
+    await expect(page.getByText('OWNER')).toBeVisible();
+
+    // Verify that sensitive strings are not present in DOM
+    const bodyText = await page.textContent('body');
+    expect(bodyText).not.toContain('password_hash');
+    expect(bodyText).not.toContain('argon2id');
+  });
+
 });

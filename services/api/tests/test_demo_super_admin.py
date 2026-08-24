@@ -375,3 +375,160 @@ async def test_q_bootstrap_idempotency_and_password_preservation():
         # User's changed password is preserved!
         assert verify_password("MyNewChangedPass@2026", restarted_user.password_hash) is True
         assert verify_password("Caseno@123", restarted_user.password_hash) is False
+
+
+# ==============================================================================
+# TEST R: GET /admin/users Includes Super Admin
+# ==============================================================================
+@pytest.mark.asyncio
+async def test_r_admin_users_list_includes_super_admin():
+    """R. GET /admin/users returns real Super Admin account with role and homes count."""
+    from src.api.v1.admin_users import list_and_search_users
+
+    super_user = UserModel(
+        id=uuid4(),
+        email="vivek@zinfog.com",
+        password_hash=hash_password("Caseno@123"),
+        is_active=True,
+        is_verified=True,
+        is_super_admin=True,
+        system_role="SUPER_ADMIN",
+        created_at=datetime.now(timezone.utc)
+    )
+
+    mock_db = AsyncMock()
+    mock_res = MagicMock()
+    # Row tuple: (UserModel, display_name, homes_count)
+    mock_res.all.return_value = [(super_user, "Vivek", 2)]
+    mock_db.execute.return_value = mock_res
+
+    res = await list_and_search_users(super_admin=super_user, db=mock_db)
+    assert res.success is True
+    assert len(res.data) == 1
+    u = res.data[0]
+    assert u.email == "vivek@zinfog.com"
+    assert u.is_super_admin is True
+    assert u.system_role == "SUPER_ADMIN"
+    assert u.display_name == "Vivek"
+    assert u.homes_count == 2
+
+
+# ==============================================================================
+# TEST S: /admin/users Search and Role Filtering
+# ==============================================================================
+@pytest.mark.asyncio
+async def test_s_admin_users_search_and_filters():
+    """S. Searching vivek@zinfog.com and filtering by SUPER_ADMIN returns Super Admin."""
+    from src.api.v1.admin_users import list_and_search_users
+
+    super_user = UserModel(
+        id=uuid4(),
+        email="vivek@zinfog.com",
+        password_hash=hash_password("Caseno@123"),
+        is_active=True,
+        is_verified=True,
+        is_super_admin=True,
+        system_role="SUPER_ADMIN",
+        created_at=datetime.now(timezone.utc)
+    )
+
+    mock_db = AsyncMock()
+    mock_res = MagicMock()
+    mock_res.all.return_value = [(super_user, "Vivek", 1)]
+    mock_db.execute.return_value = mock_res
+
+    # 1. Search by email
+    res_search = await list_and_search_users(query="vivek@zinfog.com", super_admin=super_user, db=mock_db)
+    assert len(res_search.data) == 1
+    assert res_search.data[0].email == "vivek@zinfog.com"
+
+    # 2. Filter by status ACTIVE
+    res_active = await list_and_search_users(is_active=True, super_admin=super_user, db=mock_db)
+    assert len(res_active.data) == 1
+
+    # 3. Filter by role SUPER_ADMIN
+    res_role = await list_and_search_users(system_role="SUPER_ADMIN", super_admin=super_user, db=mock_db)
+    assert len(res_role.data) == 1
+    assert res_role.data[0].system_role == "SUPER_ADMIN"
+
+
+# ==============================================================================
+# TEST T: GET /admin/users/{id} Detail Never Exposes Secrets
+# ==============================================================================
+@pytest.mark.asyncio
+async def test_t_admin_user_detail_never_exposes_secrets():
+    """T. GET /admin/users/{id} retrieves user inspection detail without password or tokens."""
+    from src.api.v1.admin_users import get_user_detail
+
+    user_id = uuid4()
+    super_user = UserModel(
+        id=user_id,
+        email="vivek@zinfog.com",
+        password_hash=hash_password("Caseno@123"),
+        is_active=True,
+        is_verified=True,
+        is_super_admin=True,
+        system_role="SUPER_ADMIN",
+        created_at=datetime.now(timezone.utc)
+    )
+
+    mock_db = AsyncMock()
+    # Mock user query
+    mock_res_user = MagicMock()
+    mock_res_user.scalar_one_or_none.return_value = super_user
+    # Mock memberships query
+    mock_res_members = MagicMock()
+    mock_res_members.all.return_value = []
+
+    mock_db.execute.side_effect = [mock_res_user, mock_res_members]
+
+    res = await get_user_detail(user_id=user_id, super_admin=super_user, db=mock_db)
+    assert res.success is True
+    assert res.data.id == user_id
+    assert res.data.email == "vivek@zinfog.com"
+    assert res.data.is_super_admin is True
+    assert res.data.system_role == "SUPER_ADMIN"
+
+    # Verify no secret leakage
+    detail_str = res.model_dump_json() if hasattr(res, "model_dump_json") else json.dumps(res.dict(), default=str)
+    assert "password_hash" not in detail_str
+    assert "Caseno@123" not in detail_str
+    assert "refresh_token" not in detail_str
+    assert "access_token" not in detail_str
+
+
+# ==============================================================================
+# TEST U: Admin Analytics Counts Real DB Users & Homes
+# ==============================================================================
+@pytest.mark.asyncio
+async def test_u_admin_analytics_counts_real_db_records():
+    """U. GET /admin/system/analytics-summary aggregates real counts directly from database."""
+    from src.api.v1.admin_system import get_analytics_summary
+
+    super_user = UserModel(
+        id=uuid4(),
+        email="vivek@zinfog.com",
+        is_super_admin=True,
+        system_role="SUPER_ADMIN"
+    )
+
+    mock_db = AsyncMock()
+    mock_res = MagicMock()
+    mock_res.scalar.side_effect = [
+        15,  # tot_users
+        14,  # act_users
+        5,   # tot_homes
+        5,   # act_homes
+        12,  # tot_memberships
+        4,   # act_subs
+        10   # paid_seats
+    ]
+    mock_db.execute.return_value = mock_res
+
+    res = await get_analytics_summary(super_admin=super_user, db=mock_db)
+    assert res.success is True
+    assert res.data.total_users == 15
+    assert res.data.active_users == 14
+    assert res.data.suspended_users == 1
+    assert res.data.total_homes == 5
+    assert res.data.average_members_per_home == 2.4

@@ -102,9 +102,14 @@ async def list_and_search_users(
     sort_order_str = _extract_str_param(sort_order, "desc") or "desc"
 
     stmt = (
-        select(UserModel, UserProfileModel.display_name, func.count(HomeMemberModel.id).label("homes_count"))
+        select(
+            UserModel,
+            UserProfileModel.display_name,
+            func.count(HomeMemberModel.id).label("homes_count")
+        )
         .outerjoin(UserProfileModel, UserModel.id == UserProfileModel.user_id)
         .outerjoin(HomeMemberModel, UserModel.id == HomeMemberModel.user_id)
+        .where(UserModel.deleted_at == None)
         .group_by(UserModel.id, UserProfileModel.display_name)
     )
 
@@ -122,7 +127,13 @@ async def list_and_search_users(
         stmt = stmt.where(UserModel.is_active == active_bool)
 
     if role_str:
-        stmt = stmt.where(UserModel.system_role == role_str.upper().strip())
+        norm_role = role_str.upper().strip()
+        if norm_role == "SUPER_ADMIN":
+            stmt = stmt.where(or_(UserModel.system_role == "SUPER_ADMIN", UserModel.is_super_admin == True))
+        elif norm_role == "USER":
+            stmt = stmt.where(UserModel.system_role == "USER", UserModel.is_super_admin == False)
+        else:
+            stmt = stmt.where(UserModel.system_role == norm_role)
 
     # Safe sorting
     sort_col = UserModel.created_at

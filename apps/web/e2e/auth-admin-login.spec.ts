@@ -779,7 +779,7 @@ test.describe('Ozhzo Verse Authentication and Super Admin Access Flow', () => {
     });
 
     await page.goto('/admin/homes');
-    const searchInput = page.getByPlaceholder('Search by workspace name...');
+    const searchInput = page.getByPlaceholder(/Search by workspace name/i);
     await searchInput.fill('ichu');
     await page.keyboard.press('Enter');
 

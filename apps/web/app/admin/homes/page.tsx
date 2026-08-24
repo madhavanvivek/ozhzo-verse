@@ -518,15 +518,42 @@ export default function AdminHomesPage() {
       {error && (
         <div
           style={{
-            padding: '16px',
+            padding: '16px 20px',
             backgroundColor: 'var(--status-overdue-bg, #fef2f2)',
             border: '1px solid #fecaca',
             borderRadius: 'var(--radius-md, 10px)',
             color: 'var(--status-overdue, #ef4444)',
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
             fontSize: '14px'
           }}
         >
-          {error}
+          <div>
+            <span style={{ fontWeight: 700 }}>Unable to load household workspaces:</span> {error}
+          </div>
+          <button
+            onClick={fetchHomes}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '8px 14px',
+              borderRadius: 'var(--radius-md, 8px)',
+              backgroundColor: 'var(--status-overdue, #ef4444)',
+              color: '#ffffff',
+              border: 'none',
+              fontSize: '13px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              minHeight: '36px'
+            }}
+          >
+            <RefreshCw size={14} />
+            <span>Retry</span>
+          </button>
         </div>
       )}
 

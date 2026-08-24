@@ -259,9 +259,9 @@ async def bulk_user_action(
             failed.append({"user_id": str(uid), "reason": "User not found or already deactivated."})
             continue
 
-        # Critical Guardrail: vivek@zinfog.com must NEVER be deleted via bulk test action
-        if action_norm == "DELETE_TEST_USERS" and (user.email and user.email.lower() == "vivek@zinfog.com"):
-            failed.append({"user_id": str(uid), "reason": "Protected master account cannot be removed."})
+        # Critical Guardrail: Protected master account vivek@zinfog.com must NEVER be suspended or deleted via bulk action
+        if (user.email and user.email.lower() == "vivek@zinfog.com") and action_norm in {"SUSPEND", "HOLD", "DELETE", "DEACTIVATE", "DELETE_TEST_USERS"}:
+            failed.append({"user_id": str(uid), "reason": "Protected master Super Admin account cannot be suspended or removed."})
             continue
 
         old_state = {"is_active": user.is_active, "deleted_at": user.deleted_at}
@@ -424,6 +424,9 @@ async def suspend_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
 
+    if user.email and user.email.lower() == "vivek@zinfog.com":
+        raise HTTPException(status_code=400, detail="Protected primary Super Admin account cannot be suspended.")
+
     old_state = {"is_active": user.is_active}
     user.is_active = False
     user.updated_at = datetime.now(timezone.utc)
@@ -492,6 +495,9 @@ async def hold_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found.")
 
+    if user.email and user.email.lower() == "vivek@zinfog.com":
+        raise HTTPException(status_code=400, detail="Protected primary Super Admin account cannot be placed on hold.")
+
     old_state = {"is_active": user.is_active}
     user.is_active = False
     user.updated_at = datetime.now(timezone.utc)
@@ -526,6 +532,9 @@ async def delete_user(
     user = await db.get(UserModel, user_id)
     if not user or user.deleted_at is not None:
         raise HTTPException(status_code=404, detail="User not found or already deleted.")
+
+    if user.email and user.email.lower() == "vivek@zinfog.com":
+        raise HTTPException(status_code=400, detail="Protected primary Super Admin account cannot be deleted.")
 
     # Validate active home ownership
     owner_query = select(HomeModel).where(HomeModel.created_by == user.id, HomeModel.deleted_at == None)

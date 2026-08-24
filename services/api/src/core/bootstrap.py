@@ -36,14 +36,23 @@ async def seed_demo_super_admin(db: AsyncSession) -> UserModel | None:
     try:
         query = select(UserModel).where(UserModel.email == email).order_by(UserModel.is_super_admin.desc(), UserModel.created_at.asc())
         result = await db.execute(query)
+        matching_users: list[UserModel] = []
         try:
-            single = result.scalar_one_or_none()
-            matching_users = [single] if single else []
+            if hasattr(result, "scalars"):
+                all_res = result.scalars().all()
+                if isinstance(all_res, list):
+                    matching_users = [u for u in all_res if isinstance(u, UserModel)]
         except Exception:
+            pass
+
+        if not matching_users:
             try:
-                matching_users = result.scalars().all()
+                if hasattr(result, "scalar_one_or_none"):
+                    single = result.scalar_one_or_none()
+                    if single and isinstance(single, UserModel):
+                        matching_users = [single]
             except Exception:
-                matching_users = []
+                pass
 
         if not matching_users:
             default_pwd = (initial_password or "Caseno@123").strip()
@@ -84,13 +93,13 @@ async def seed_demo_super_admin(db: AsyncSession) -> UserModel | None:
                     dup.email = f"dup_{dup.id}_{email}"
                 logger.info("Deduplicated %d extra records for %s", len(matching_users) - 1, email)
 
-            # If account has no password hash, or if an explicit DEMO_SUPER_ADMIN_PASSWORD was configured, apply it
+            # Preserve existing password hash unless uninitialized or explicitly forced via environment
             if not user.password_hash:
                 user.password_hash = hash_password((initial_password or "Caseno@123").strip())
                 logger.info("Initialized password hash for existing Super Admin account: %s", email)
-            elif initial_password:
+            elif settings.FORCE_SUPER_ADMIN_PASSWORD_RESET and initial_password:
                 user.password_hash = hash_password(initial_password.strip())
-                logger.info("Updated Super Admin password to configured DEMO_SUPER_ADMIN_PASSWORD for: %s", email)
+                logger.info("Forced Super Admin password reset via FORCE_SUPER_ADMIN_PASSWORD_RESET for: %s", email)
             else:
                 logger.info("Ensured platform Super Admin authorization for account: %s (password preserved)", email)
 

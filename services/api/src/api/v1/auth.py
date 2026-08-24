@@ -1,4 +1,5 @@
 import json
+from typing import Any
 from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 from datetime import datetime, timezone
@@ -216,6 +217,26 @@ async def register(
     )
 
 
+def _extract_authenticated_user(result: Any) -> UserModel | None:
+    if result is None:
+        return None
+    try:
+        if hasattr(result, "scalars"):
+            first_user = result.scalars().first()
+            if first_user and isinstance(first_user, UserModel):
+                return first_user
+    except Exception:
+        pass
+    try:
+        if hasattr(result, "scalar_one_or_none"):
+            u = result.scalar_one_or_none()
+            if u and isinstance(u, UserModel):
+                return u
+    except Exception:
+        pass
+    return None
+
+
 @router.post("/login", response_model=ApiSuccessResponse[TokenResponse])
 async def login(
     payload: LoginRequest,
@@ -234,13 +255,7 @@ async def login(
             UserModel.deleted_at == None
         ).order_by(UserModel.is_super_admin.desc(), UserModel.created_at.asc())
         result = await db.execute(query)
-        try:
-            user = result.scalar_one_or_none()
-        except Exception:
-            try:
-                user = result.scalars().first()
-            except Exception:
-                user = None
+        user = _extract_authenticated_user(result)
 
     # 2. Lookup by email
     elif payload.email:
@@ -253,13 +268,7 @@ async def login(
             UserModel.deleted_at == None
         ).order_by(UserModel.is_super_admin.desc(), UserModel.created_at.asc())
         result = await db.execute(query)
-        try:
-            user = result.scalar_one_or_none()
-        except Exception:
-            try:
-                user = result.scalars().first()
-            except Exception:
-                user = None
+        user = _extract_authenticated_user(result)
 
     else:
         raise HTTPException(
@@ -398,13 +407,7 @@ async def forgot_password(
         UserModel.deleted_at == None
     ).order_by(UserModel.is_super_admin.desc(), UserModel.created_at.asc())
     result = await db.execute(query)
-    try:
-        user = result.scalar_one_or_none()
-    except Exception:
-        try:
-            user = result.scalars().first()
-        except Exception:
-            user = None
+    user = _extract_authenticated_user(result)
 
     reset_token = None
     if user:

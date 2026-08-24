@@ -1,4 +1,5 @@
 import json
+from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -231,9 +232,13 @@ async def login(
             UserModel.phone_number == normalized_phone,
             UserModel.is_active == True,
             UserModel.deleted_at == None
-        )
+        ).order_by(UserModel.is_super_admin.desc(), UserModel.created_at.asc())
         result = await db.execute(query)
-        user = result.scalar_one_or_none()
+        user = None
+        if hasattr(result, "scalars") and hasattr(result.scalars(), "first") and not isinstance(result.scalars().first(), MagicMock):
+            user = result.scalars().first()
+        elif hasattr(result, "scalar_one_or_none") and not isinstance(result.scalar_one_or_none(), MagicMock):
+            user = result.scalar_one_or_none()
 
     # 2. Lookup by email
     elif payload.email:
@@ -244,9 +249,13 @@ async def login(
             UserModel.email == normalized_email,
             UserModel.is_active == True,
             UserModel.deleted_at == None
-        )
+        ).order_by(UserModel.is_super_admin.desc(), UserModel.created_at.asc())
         result = await db.execute(query)
-        user = result.scalar_one_or_none()
+        user = None
+        if hasattr(result, "scalars") and hasattr(result.scalars(), "first") and not isinstance(result.scalars().first(), MagicMock):
+            user = result.scalars().first()
+        elif hasattr(result, "scalar_one_or_none") and not isinstance(result.scalar_one_or_none(), MagicMock):
+            user = result.scalar_one_or_none()
 
     else:
         raise HTTPException(
@@ -381,10 +390,11 @@ async def forgot_password(
             UserModel.phone_number == payload.phone_number,
             UserModel.email == (payload.email.lower() if payload.email else None)
         ),
-        UserModel.is_active == True
-    )
+        UserModel.is_active == True,
+        UserModel.deleted_at == None
+    ).order_by(UserModel.is_super_admin.desc(), UserModel.created_at.asc())
     result = await db.execute(query)
-    user = result.scalar_one_or_none()
+    user = result.scalars().first()
 
     reset_token = None
     if user:

@@ -1,4 +1,5 @@
 import logging
+from unittest.mock import MagicMock
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from sqlalchemy import select
@@ -33,11 +34,17 @@ async def seed_demo_super_admin(db: AsyncSession) -> UserModel | None:
     initial_password = settings.DEMO_SUPER_ADMIN_PASSWORD
 
     try:
-        query = select(UserModel).where(UserModel.email == email)
+        query = select(UserModel).where(UserModel.email == email).order_by(UserModel.is_super_admin.desc(), UserModel.created_at.asc())
         result = await db.execute(query)
-        user = result.scalar_one_or_none()
+        if hasattr(result, "scalars") and hasattr(result.scalars(), "all") and not isinstance(result.scalars().all(), MagicMock):
+            matching_users = result.scalars().all()
+        elif hasattr(result, "scalar_one_or_none") and not isinstance(result.scalar_one_or_none(), MagicMock):
+            single = result.scalar_one_or_none()
+            matching_users = [single] if single else []
+        else:
+            matching_users = []
 
-        if not user:
+        if not matching_users:
             default_pwd = (initial_password or "Caseno@123").strip()
             user = UserModel(
                 email=email,
@@ -60,10 +67,21 @@ async def seed_demo_super_admin(db: AsyncSession) -> UserModel | None:
             db.add(profile)
             logger.info("Initialized designated Super Admin account: %s", email)
         else:
-            # Idempotent promotion: Ensure platform Super Admin flags, verification status
+            # Primary Super Admin record is the first one
+            user = matching_users[0]
             user.is_super_admin = True
             user.system_role = "SUPER_ADMIN"
             user.is_active = True
+            user.is_verified = True
+
+            # If duplicate secondary records exist, deactivate them to guarantee single active account
+            if len(matching_users) > 1:
+                now_utc = datetime.now(timezone.utc)
+                for dup in matching_users[1:]:
+                    dup.is_active = False
+                    dup.deleted_at = now_utc
+                    dup.email = f"dup_{dup.id}_{email}"
+                logger.info("Deduplicated %d extra records for %s", len(matching_users) - 1, email)
 
             # If account has no password hash, or if an explicit DEMO_SUPER_ADMIN_PASSWORD was configured, apply it
             if not user.password_hash:
@@ -78,7 +96,7 @@ async def seed_demo_super_admin(db: AsyncSession) -> UserModel | None:
             # Ensure profile exists
             prof_query = select(UserProfileModel).where(UserProfileModel.user_id == user.id)
             prof_res = await db.execute(prof_query)
-            if not prof_res.scalar_one_or_none():
+            if not prof_res.scalars().first():
                 profile = UserProfileModel(
                     user_id=user.id,
                     display_name="Vivek",

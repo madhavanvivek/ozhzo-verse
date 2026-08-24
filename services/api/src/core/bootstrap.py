@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import settings
-from src.core.security import hash_password
+from src.core.security import hash_password, verify_password
 from src.infrastructure.database.models import CouponModel, UserModel, UserProfileModel
 
 logger = logging.getLogger(__name__)
@@ -93,15 +93,16 @@ async def seed_demo_super_admin(db: AsyncSession) -> UserModel | None:
                     dup.email = f"dup_{dup.id}_{email}"
                 logger.info("Deduplicated %d extra records for %s", len(matching_users) - 1, email)
 
-            # Preserve existing password hash unless uninitialized or explicitly forced via environment
-            if not user.password_hash:
-                user.password_hash = hash_password((initial_password or "Caseno@123").strip())
-                logger.info("Initialized password hash for existing Super Admin account: %s", email)
-            elif settings.FORCE_SUPER_ADMIN_PASSWORD_RESET and initial_password:
-                user.password_hash = hash_password(initial_password.strip())
-                logger.info("Forced Super Admin password reset via FORCE_SUPER_ADMIN_PASSWORD_RESET for: %s", email)
+            # Synchronize password hash
+            target_pwd = (initial_password or "").strip()
+            if not user.password_hash and target_pwd:
+                user.password_hash = hash_password(target_pwd)
+                logger.info("Synchronized authoritative password hash for Super Admin: %s", email)
+            elif target_pwd and settings.FORCE_SUPER_ADMIN_PASSWORD_RESET and not verify_password(target_pwd, user.password_hash):
+                user.password_hash = hash_password(target_pwd)
+                logger.info("Reset authoritative password hash for Super Admin: %s", email)
             else:
-                logger.info("Ensured platform Super Admin authorization for account: %s (password preserved)", email)
+                logger.info("Ensured platform Super Admin authorization for account: %s (password verified/active)", email)
 
             # Ensure profile exists
             prof_query = select(UserProfileModel).where(UserProfileModel.user_id == user.id)

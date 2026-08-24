@@ -264,7 +264,8 @@ async def delete_location(
         InventoryItemModel.location_id == location_id,
         InventoryItemModel.deleted_at == None
     )
-    item_count = (await db.execute(item_count_query)).scalar() or 0
+    raw_cnt = (await db.execute(item_count_query)).scalar()
+    item_count = raw_cnt if isinstance(raw_cnt, int) else 0
     if item_count > 0 and not force:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

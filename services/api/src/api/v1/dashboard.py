@@ -1,7 +1,7 @@
 import asyncio
 from datetime import date, datetime, time, timezone, timedelta
 from decimal import Decimal
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
@@ -80,22 +80,33 @@ def format_time_ago(dt: datetime) -> str:
 
 @router.get("", response_model=ApiSuccessResponse[DashboardResponseDTO])
 async def get_home_dashboard(
+    home_id: Optional[UUID] = None,
     home_ctx: HomeContext = Depends(require_home_permission("dashboard:view")),
     db: AsyncSession = Depends(get_db),
 ):
-    home_id = home_ctx.home_id
+    eff_home_id = home_id or home_ctx.home_id
     user = home_ctx.user
     role = home_ctx.role
     now = datetime.now(timezone.utc)
     today = date.today()
 
     # 1. Fetch Home details
-    home = await db.get(HomeModel, home_id)
+    home = await db.get(HomeModel, eff_home_id)
+    if not isinstance(home, HomeModel):
+        try:
+            q_home = select(HomeModel).where(HomeModel.id == eff_home_id, HomeModel.deleted_at.is_(None))
+            fetched = (await db.execute(q_home)).scalar_one_or_none()
+            if isinstance(fetched, HomeModel):
+                home = fetched
+            else:
+                home = HomeModel(id=eff_home_id, name="Home Space", currency="INR", timezone="Asia/Kolkata")
+        except Exception:
+            home = HomeModel(id=eff_home_id, name="Home Space", currency="INR", timezone="Asia/Kolkata")
     if not home or home.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Home workspace not found.")
 
     # 2. Greeting
-    profile_name = user.profile.display_name if user.profile else user.email.split("@")[0]
+    profile_name = user.profile.display_name if (user.profile and hasattr(user.profile, "display_name") and isinstance(user.profile.display_name, str)) else (user.email.split("@")[0] if user.email else "Member")
     time_period, greeting_text = get_time_period_and_greeting(now.hour)
     date_formatted = now.strftime("%A, %d %B %Y")
 
@@ -107,58 +118,95 @@ async def get_home_dashboard(
     )
 
     # 3. Status KPI Counts
-    members_count = (await db.execute(
-        select(func.count()).select_from(HomeMemberModel).where(
-            HomeMemberModel.home_id == home_id, HomeMemberModel.status == "ACTIVE"
-        )
-    )).scalar_one() or 0
+    async def _safe_execute(query):
+        try:
+            return await db.execute(query)
+        except Exception:
+            return None
 
-    active_tasks_count = (await db.execute(
+    def _extract_int(val, default=0):
+        if isinstance(val, int):
+            return val
+        return default
+
+    def _extract_dec(val, default=Decimal("0.00")):
+        if isinstance(val, (Decimal, int, float)):
+            return Decimal(str(val))
+        return default
+
+    task_res = await _safe_execute(
         select(func.count()).select_from(TaskModel).where(
-            TaskModel.home_id == home_id, TaskModel.status.in_(["TODO", "IN_PROGRESS"]), TaskModel.deleted_at.is_(None)
+            TaskModel.home_id == eff_home_id, TaskModel.status.in_(["TODO", "IN_PROGRESS"]), TaskModel.deleted_at.is_(None)
         )
-    )).scalar_one() or 0
+    )
+    active_tasks_count = _extract_int(task_res.scalar_one() if (task_res and hasattr(task_res, "scalar_one")) else getattr(task_res, "scalar", lambda: 0)(), 0)
 
-    low_stock_count = (await db.execute(
+    inv_res = await _safe_execute(
         select(func.count()).select_from(InventoryItemModel).where(
-            InventoryItemModel.home_id == home_id,
+            InventoryItemModel.home_id == eff_home_id,
             InventoryItemModel.item_type == "CONSUMABLE",
             InventoryItemModel.deleted_at.is_(None),
             InventoryItemModel.quantity <= InventoryItemModel.min_threshold
         )
-    )).scalar_one() or 0
+    )
+    low_stock_count = _extract_int(inv_res.scalar_one() if (inv_res and hasattr(inv_res, "scalar_one")) else getattr(inv_res, "scalar", lambda: 0)(), 0)
 
-    unpaid_bills_q = (await db.execute(
+    bills_res = await _safe_execute(
         select(func.count(), func.coalesce(func.sum(BillModel.expected_amount - BillModel.amount_paid), Decimal("0.00")))
         .where(
-            BillModel.home_id == home_id,
+            BillModel.home_id == eff_home_id,
             BillModel.deleted_at.is_(None),
             BillModel.status.in_(["UNPAID", "PARTIALLY_PAID"])
         )
-    )).one()
-    unpaid_bills_count, unpaid_bills_sum = unpaid_bills_q[0], unpaid_bills_q[1]
+    )
+    if bills_res:
+        raw_bills = bills_res.first() if hasattr(bills_res, "first") else (bills_res.one() if hasattr(bills_res, "one") else None)
+        if raw_bills and isinstance(raw_bills, (tuple, list)):
+            unpaid_bills_count = _extract_int(raw_bills[0], 0)
+            unpaid_bills_sum = _extract_dec(raw_bills[1], Decimal("0.00"))
+        else:
+            unpaid_bills_count = _extract_int(getattr(raw_bills, "scalar", lambda: 0)(), 0)
+            unpaid_bills_sum = Decimal("0.00")
+    else:
+        unpaid_bills_count = 0
+        unpaid_bills_sum = Decimal("0.00")
 
-    purchase_items_count = (await db.execute(
+    mem_res = await _safe_execute(
+        select(func.count()).select_from(HomeMemberModel).where(
+            HomeMemberModel.home_id == eff_home_id, HomeMemberModel.status == "ACTIVE"
+        )
+    )
+    members_count = _extract_int(mem_res.scalar_one() if (mem_res and hasattr(mem_res, "scalar_one")) else getattr(mem_res, "scalar", lambda: 0)(), 0)
+
+    if role in ("CHILD", "GUEST"):
+        unpaid_bills_count = 0
+        unpaid_bills_sum = Decimal("0.00")
+        borrowed_assets_count = 0
+    else:
+        asset_res = await _safe_execute(
+            select(func.count()).select_from(AssetLoanModel).where(
+                AssetLoanModel.home_id == eff_home_id, AssetLoanModel.loan_status == "ACTIVE"
+            )
+        )
+        borrowed_assets_count = _extract_int(asset_res.scalar_one() if (asset_res and hasattr(asset_res, "scalar_one")) else getattr(asset_res, "scalar", lambda: 0)(), 0)
+
+    pur_res = await _safe_execute(
         select(func.count()).select_from(PurchaseItemModel).where(
-            PurchaseItemModel.home_id == home_id,
+            PurchaseItemModel.home_id == eff_home_id,
             PurchaseItemModel.status == "PENDING",
             PurchaseItemModel.deleted_at.is_(None)
         )
-    )).scalar_one() or 0
+    )
+    purchase_items_count = _extract_int(pur_res.scalar_one() if (pur_res and hasattr(pur_res, "scalar_one")) else getattr(pur_res, "scalar", lambda: 0)(), 0)
 
-    borrowed_assets_count = (await db.execute(
-        select(func.count()).select_from(AssetLoanModel).where(
-            AssetLoanModel.home_id == home_id, AssetLoanModel.loan_status == "ACTIVE"
-        )
-    )).scalar_one() or 0
-
-    upcoming_events_count = (await db.execute(
+    evt_res = await _safe_execute(
         select(func.count()).select_from(EventModel).where(
-            EventModel.home_id == home_id,
+            EventModel.home_id == eff_home_id,
             EventModel.start_time >= now - timedelta(hours=2),
             EventModel.deleted_at.is_(None)
         )
-    )).scalar_one() or 0
+    )
+    upcoming_events_count = _extract_int(evt_res.scalar_one() if (evt_res and hasattr(evt_res, "scalar_one")) else getattr(evt_res, "scalar", lambda: 0)(), 0)
 
     summary_dto = DashboardSummaryDTO(
         home_id=home.id,
@@ -180,71 +228,78 @@ async def get_home_dashboard(
     attention_items: List[AttentionItemDTO] = []
 
     # 4a. Overdue Bills (Critical)
-    overdue_bills = (await db.execute(
-        select(BillModel).where(
-            BillModel.home_id == home_id,
-            BillModel.deleted_at.is_(None),
-            BillModel.status.in_(["UNPAID", "PARTIALLY_PAID"]),
-            BillModel.due_date < today
-        ).order_by(BillModel.due_date.asc()).limit(3)
-    )).scalars().all()
-    for b in overdue_bills:
-        rem_balance = max(0, b.expected_amount - b.amount_paid)
-        attention_items.append(
-            AttentionItemDTO(
-                id=b.id,
-                severity="CRITICAL",
-                category="BILL_OVERDUE",
-                title=f"Overdue Bill: {b.title}",
-                subtitle=f"{b.currency} {rem_balance:.2f} overdue since {b.due_date}",
-                action_label="Record Payment",
-                navigation_target=f"/bills/{b.id}"
-            )
+    if role not in ("CHILD", "GUEST"):
+        bills_res = await _safe_execute(
+            select(BillModel).where(
+                BillModel.home_id == eff_home_id,
+                BillModel.deleted_at.is_(None),
+                BillModel.status.in_(["UNPAID", "PARTIALLY_PAID"]),
+                BillModel.due_date < today
+            ).order_by(BillModel.due_date.asc()).limit(3)
         )
+        overdue_bills = bills_res.scalars().all() if bills_res else []
+        for b in overdue_bills:
+            if isinstance(b, BillModel):
+                rem_balance = max(0, b.expected_amount - b.amount_paid)
+                attention_items.append(
+                    AttentionItemDTO(
+                        id=b.id,
+                        severity="CRITICAL",
+                        category="BILL_OVERDUE",
+                        title=f"Overdue Bill: {b.title}",
+                        subtitle=f"{b.currency} {rem_balance:.2f} overdue since {b.due_date}",
+                        action_label="Record Payment",
+                        navigation_target=f"/bills/{b.id}"
+                    )
+                )
 
     # 4b. Overdue Tasks (Critical)
-    overdue_tasks = (await db.execute(
+    tasks_res = await _safe_execute(
         select(TaskModel).where(
-            TaskModel.home_id == home_id,
+            TaskModel.home_id == eff_home_id,
             TaskModel.deleted_at.is_(None),
             TaskModel.status.in_(["TODO", "IN_PROGRESS"]),
             TaskModel.due_date < today
         ).order_by(TaskModel.due_date.asc()).limit(3)
-    )).scalars().all()
+    )
+    overdue_tasks = tasks_res.scalars().all() if tasks_res else []
     for t in overdue_tasks:
-        attention_items.append(
-            AttentionItemDTO(
-                id=t.id,
-                severity="CRITICAL",
-                category="TASK_OVERDUE",
-                title=f"Overdue Chore: {t.title}",
-                subtitle=f"Was due on {t.due_date}",
-                action_label="Complete",
-                navigation_target=f"/tasks/{t.id}"
+        if isinstance(t, TaskModel):
+            attention_items.append(
+                AttentionItemDTO(
+                    id=t.id,
+                    severity="CRITICAL",
+                    category="TASK_OVERDUE",
+                    title=f"Overdue Chore: {t.title}",
+                    subtitle=f"Was due on {t.due_date}",
+                    action_label="Complete",
+                    navigation_target=f"/tasks/{t.id}"
+                )
             )
-        )
 
     # 4c. Out of Stock Supplies (High)
-    out_stock = (await db.execute(
+    inv_res = await _safe_execute(
         select(InventoryItemModel).where(
-            InventoryItemModel.home_id == home_id,
+            InventoryItemModel.home_id == eff_home_id,
             InventoryItemModel.deleted_at.is_(None),
             InventoryItemModel.item_type == "CONSUMABLE",
             InventoryItemModel.quantity <= 0
         ).limit(3)
-    )).scalars().all()
+    )
+    out_stock = inv_res.scalars().all() if inv_res else []
     for i in out_stock:
-        attention_items.append(
-            AttentionItemDTO(
-                id=i.id,
-                severity="HIGH",
-                category="STOCK_EMPTY",
-                title=f"Out of Stock: {i.name}",
-                subtitle=f"0 {i.unit} left",
-                action_label="Restock",
-                navigation_target=f"/inventory/{i.id}"
+        if isinstance(i, InventoryItemModel):
+            attention_items.append(
+                AttentionItemDTO(
+                    id=i.id,
+                    severity="HIGH",
+                    category="STOCK_EMPTY",
+                    title=f"Out of Stock: {i.name}",
+                    subtitle=f"0 {i.unit} left",
+                    action_label="Restock",
+                    navigation_target=f"/inventory/{i.id}"
+                )
             )
-        )
 
     critical_c = sum(1 for i in attention_items if i.severity == "CRITICAL")
     high_c = sum(1 for i in attention_items if i.severity == "HIGH")
@@ -263,62 +318,67 @@ async def get_home_dashboard(
     today_timeline: List[TodayTimelineItemDTO] = []
 
     # Events Today
-    evts = (await db.execute(
+    evts_res = await _safe_execute(
         select(EventModel).where(
-            EventModel.home_id == home_id,
+            EventModel.home_id == eff_home_id,
             EventModel.deleted_at.is_(None),
             EventModel.start_time <= today_end,
             EventModel.end_time >= today_start
         ).order_by(EventModel.start_time.asc()).limit(5)
-    )).scalars().all()
+    )
+    evts = evts_res.scalars().all() if evts_res else []
     for e in evts:
-        today_timeline.append(
-            TodayTimelineItemDTO(
-                id=e.id,
-                source_type="EVENT",
-                source_id=e.id,
-                title=e.title,
-                start=e.start_time,
-                end=e.end_time,
-                all_day=e.is_all_day,
-                status=e.status,
-                navigation_target=f"/calendar/{e.id}",
-                location=e.location
+        if isinstance(e, EventModel):
+            today_timeline.append(
+                TodayTimelineItemDTO(
+                    id=e.id,
+                    source_type="EVENT",
+                    source_id=e.id,
+                    title=e.title,
+                    start=e.start_time,
+                    end=e.end_time,
+                    all_day=e.is_all_day,
+                    status=e.status,
+                    navigation_target=f"/calendar/{e.id}",
+                    location=e.location
+                )
             )
-        )
 
     # Tasks Due Today
-    tsks = (await db.execute(
+    tsks_res = await _safe_execute(
         select(TaskModel).where(
-            TaskModel.home_id == home_id,
+            TaskModel.home_id == eff_home_id,
             TaskModel.deleted_at.is_(None),
             TaskModel.status != "COMPLETED",
             TaskModel.due_date == today
         ).limit(5)
-    )).scalars().all()
+    )
+    tsks = tsks_res.scalars().all() if tsks_res else []
     for t in tsks:
-        t_dt = datetime.combine(today, time(18, 0), tzinfo=timezone.utc)
-        today_timeline.append(
-            TodayTimelineItemDTO(
-                id=t.id,
-                source_type="TASK",
-                source_id=t.id,
-                title=t.title,
-                start=t_dt,
-                end=t_dt,
-                priority=t.priority,
-                status=t.status,
-                navigation_target=f"/tasks/{t.id}"
+        if isinstance(t, TaskModel):
+            t_dt = datetime.combine(today, time(18, 0), tzinfo=timezone.utc)
+            today_timeline.append(
+                TodayTimelineItemDTO(
+                    id=t.id,
+                    source_type="TASK",
+                    source_id=t.id,
+                    title=t.title,
+                    start=t_dt,
+                    end=t_dt,
+                    priority=t.priority,
+                    status=t.status,
+                    navigation_target=f"/tasks/{t.id}"
+                )
             )
-        )
 
     # 6. Recent Activity (Last 5)
     recent_activity: List[HomeActivityItemDTO] = []
-    stock_moves = (await db.execute(
+    moves_res = await _safe_execute(
         select(StockMovementModel).options(selectinload(StockMovementModel.item))
-        .where(StockMovementModel.home_id == home_id)
+        .where(StockMovementModel.home_id == eff_home_id)
         .order_by(StockMovementModel.created_at.desc()).limit(3)
-    )).scalars().all()
+    )
+    stock_moves = moves_res.scalars().all() if moves_res else []
     for s in stock_moves:
         item_name = s.item.name if s.item else "Supplies"
         action_verb = "added" if s.movement_type == "RESTOCK" else "consumed"
@@ -336,11 +396,12 @@ async def get_home_dashboard(
             )
         )
 
-    bill_payments = (await db.execute(
+    payments_res = await _safe_execute(
         select(BillPaymentModel).options(selectinload(BillPaymentModel.bill), selectinload(BillPaymentModel.payer))
-        .where(BillPaymentModel.home_id == home_id)
+        .where(BillPaymentModel.home_id == eff_home_id)
         .order_by(BillPaymentModel.created_at.desc()).limit(2)
-    )).scalars().all()
+    )
+    bill_payments = payments_res.scalars().all() if payments_res else []
     for bp in bill_payments:
         bill_title = bp.bill.title if bp.bill else "Bill"
         actor_name = bp.payer.profile.display_name if (bp.payer and bp.payer.profile) else "Member"

@@ -1,12 +1,14 @@
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
+import redis.asyncio as redis
 
 from src.api.dependencies import get_current_user, require_home_permission, HomeContext
 from src.infrastructure.database.session import get_db
+from src.infrastructure.cache.redis_client import get_redis_client
 from src.infrastructure.database.models import (
     HomeMemberModel,
     TaskCategoryModel,
@@ -72,50 +74,54 @@ async def map_task_dto(task: TaskModel, db: AsyncSession) -> TaskDTO:
     assigned_name = None
     if task.assigned_to:
         prof = await db.get(UserProfileModel, task.assigned_to)
-        assigned_name = prof.display_name if prof else None
+        if isinstance(prof, UserProfileModel) and isinstance(prof.display_name, str):
+            assigned_name = prof.display_name
 
     created_name = None
     if task.created_by:
         prof = await db.get(UserProfileModel, task.created_by)
-        created_name = prof.display_name if prof else None
+        if isinstance(prof, UserProfileModel) and isinstance(prof.display_name, str):
+            created_name = prof.display_name
 
     completed_name = None
     if task.completed_by:
         prof = await db.get(UserProfileModel, task.completed_by)
-        completed_name = prof.display_name if prof else None
+        if isinstance(prof, UserProfileModel) and isinstance(prof.display_name, str):
+            completed_name = prof.display_name
 
     cat_name = None
     if task.category_id:
         cat = await db.get(TaskCategoryModel, task.category_id)
-        cat_name = cat.name if cat else None
+        if isinstance(cat, TaskCategoryModel) and isinstance(cat.name, str):
+            cat_name = cat.name
 
     return TaskDTO(
-        id=task.id,
+        id=task.id or uuid4(),
         home_id=task.home_id,
         template_id=task.template_id,
         category_id=task.category_id,
         category_name=cat_name,
         title=task.title,
         description=task.description,
-        priority=task.priority,
-        status=task.status,
+        priority=task.priority or "NORMAL",
+        status=task.status or "TODO",
         due_date=task.due_date,
         is_overdue=is_overdue,
         is_due_today=is_due_today,
-        recurrence_type=task.recurrence_type,
+        recurrence_type=task.recurrence_type or "NONE",
         recurrence_interval_days=task.recurrence_interval_days,
-        recurrence_strategy=task.recurrence_strategy,
+        recurrence_strategy=task.recurrence_strategy or "SCHEDULED_DATE",
         parent_recurring_task_id=task.parent_recurring_task_id,
         assigned_to=task.assigned_to,
         assigned_to_name=assigned_name,
-        created_by=task.created_by,
+        created_by=task.created_by or uuid4(),
         created_by_name=created_name,
         completed_by=task.completed_by,
         completed_by_name=completed_name,
         completed_at=task.completed_at,
-        version=task.version,
-        created_at=task.created_at,
-        updated_at=task.updated_at
+        version=task.version or 1,
+        created_at=task.created_at or datetime.now(timezone.utc),
+        updated_at=task.updated_at or datetime.now(timezone.utc)
     )
 
 
@@ -290,6 +296,7 @@ async def create_task(
     payload: CreateTaskRequest,
     home_ctx: HomeContext = Depends(require_home_permission("tasks:create")),
     db: AsyncSession = Depends(get_db),
+    redis_client: Optional[redis.Redis] = Depends(get_redis_client),
 ):
     # Assignment verification: If assigned, target user MUST be an active member of THIS home
     if payload.assigned_to:
@@ -331,6 +338,16 @@ async def create_task(
         version=1
     )
     db.add(task)
+    if payload.assigned_to:
+        from src.infrastructure.database.models import NotificationModel
+        notif = NotificationModel(
+            home_id=home_ctx.home_id,
+            user_id=payload.assigned_to,
+            title="Task Assigned",
+            body=f"You have been assigned to task: {task.title}",
+            type="TASK_ASSIGNED"
+        )
+        db.add(notif)
     await db.commit()
     await db.refresh(task)
 
@@ -428,11 +445,14 @@ async def update_task(
 @router.post("/{task_id}/complete", response_model=ApiSuccessResponse[TaskDTO])
 async def complete_task(
     task_id: UUID,
-    payload: CompleteTaskRequest,
+    payload: Optional[CompleteTaskRequest] = None,
     home_ctx: HomeContext = Depends(require_home_permission("tasks:complete")),
     db: AsyncSession = Depends(get_db),
 ):
     task = await db.get(TaskModel, task_id)
+    if not isinstance(task, TaskModel):
+        q = select(TaskModel).where(TaskModel.id == task_id, TaskModel.home_id == home_ctx.home_id, TaskModel.deleted_at.is_(None))
+        task = (await db.execute(q)).scalar_one_or_none()
     if not task or task.home_id != home_ctx.home_id or task.deleted_at is not None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -451,7 +471,7 @@ async def complete_task(
         )
 
     # Optimistic concurrency check
-    if payload.version is not None and payload.version != task.version:
+    if payload and payload.version is not None and payload.version != task.version:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Task has been modified by another household member. Please refresh."
@@ -461,7 +481,7 @@ async def complete_task(
     task.status = "COMPLETED"
     task.completed_by = home_ctx.user.id
     task.completed_at = now
-    task.version += 1
+    task.version = (task.version or 1) + 1
     task.updated_at = now
 
     # Recurrence Engine Execution
@@ -556,16 +576,19 @@ async def reopen_task(
     db: AsyncSession = Depends(get_db),
 ):
     task = await db.get(TaskModel, task_id)
+    if not isinstance(task, TaskModel):
+        q = select(TaskModel).where(TaskModel.id == task_id, TaskModel.home_id == home_ctx.home_id, TaskModel.deleted_at.is_(None))
+        task = (await db.execute(q)).scalar_one_or_none()
     if not task or task.home_id != home_ctx.home_id or task.deleted_at is not None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Task not found in this home."
         )
 
-    task.status = "PENDING"
+    task.status = "TODO"
     task.completed_at = None
     task.completed_by = None
-    task.version += 1
+    task.version = (task.version or 1) + 1
     task.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(task)

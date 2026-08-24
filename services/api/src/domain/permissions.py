@@ -34,7 +34,7 @@ ROLE_PERMISSIONS_MAP: Dict[str, Set[str]] = {
     },
     ROLE_ADMIN: {
         "home:view", "home:edit",
-        "members:view", "members:invite", "members:edit", "members:remove",
+        "members:view", "members:invite", "members:edit", "members:remove", "members:manage_roles",
         "dashboard:view",
         "inventory:view", "inventory:create", "inventory:edit", "inventory:delete",
         "shopping:view", "shopping:create", "shopping:edit", "shopping:check", "shopping:delete",
@@ -64,6 +64,7 @@ ROLE_PERMISSIONS_MAP: Dict[str, Set[str]] = {
     ROLE_GUEST: {
         "home:view",
         "dashboard:view",
+        "inventory:view",
         "shopping:view", "shopping:check",
         "tasks:view", "tasks:complete",
         "calendar:view"

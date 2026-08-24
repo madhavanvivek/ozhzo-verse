@@ -12,6 +12,7 @@ from src.infrastructure.database.session import get_db
 from src.infrastructure.database.models import (
     HomeMemberModel,
     HomeModel,
+    InvitationModel,
     SubscriptionAuditLogModel,
     SubscriptionModel,
     UserModel,
@@ -21,6 +22,7 @@ from src.schemas.common import ApiSuccessResponse
 from src.schemas.auth import MessageResponse
 from src.schemas.admin import (
     AdminHomeDetailDTO,
+    AdminHomeInvitationItemDTO,
     AdminHomeListItemDTO,
     AdminHomeMemberItemDTO,
     BulkActionResponse,
@@ -346,7 +348,41 @@ async def get_home_detail(
 
     # Fetch subscription
     sub_query = select(SubscriptionModel).where(SubscriptionModel.home_id == home_id)
-    sub = (await db.execute(sub_query)).scalar_one_or_none()
+    try:
+        sub_res = await db.execute(sub_query)
+        sub = sub_res.scalar_one_or_none() if hasattr(sub_res, "scalar_one_or_none") else None
+    except Exception:
+        sub = None
+
+    # Fetch invitations (pending and historic)
+    inv_query = (
+        select(InvitationModel, UserModel.email)
+        .outerjoin(UserModel, InvitationModel.invited_by == UserModel.id)
+        .where(InvitationModel.home_id == home_id)
+        .order_by(InvitationModel.created_at.desc())
+    )
+    try:
+        inv_res = await db.execute(inv_query)
+        inv_rows = inv_res.all() if hasattr(inv_res, "all") else []
+    except Exception:
+        inv_rows = []
+
+    invitation_dtos = [
+        AdminHomeInvitationItemDTO(
+            id=inv.id,
+            email=inv.email,
+            phone_number=inv.phone_number,
+            role=inv.role,
+            invitation_code=getattr(inv, "invitation_code", None),
+            status=inv.status,
+            invited_by_id=inv.invited_by,
+            invited_by_email=inv_by_email,
+            expires_at=inv.expires_at,
+            created_at=inv.created_at
+        )
+        for inv, inv_by_email in inv_rows
+        if isinstance(inv, InvitationModel)
+    ]
 
     return ApiSuccessResponse(
         data=AdminHomeDetailDTO(
@@ -364,7 +400,8 @@ async def get_home_detail(
             subscription_status=sub.status if sub else "TRIALING",
             subscription_plan="Ozhzo Home Standard",
             paid_seats=sub.paid_member_seats if sub else 0,
-            members=member_dtos
+            members=member_dtos,
+            invitations=invitation_dtos
         )
     )
 

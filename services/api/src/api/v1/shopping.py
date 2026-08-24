@@ -373,7 +373,7 @@ async def convert_low_stock_to_shopping_item(
         name=inv_item.name,
         quantity=qty,
         unit=inv_item.unit,
-        priority="HIGH" if inv_item.status in ["LOW_STOCK", "OUT_OF_STOCK"] else "MEDIUM",
+        priority=getattr(payload, "priority", None) or "HIGH",
         is_checked=False,
         version=1
     )

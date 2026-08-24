@@ -38,8 +38,8 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     ENABLE_DEMO_SUPER_ADMIN_BOOTSTRAP: bool = True
     DEMO_SUPER_ADMIN_EMAIL: str = "vivek@zinfog.com"
-    DEMO_SUPER_ADMIN_PASSWORD: str | None = None
-    FORCE_SUPER_ADMIN_PASSWORD_RESET: bool = False
+    DEMO_SUPER_ADMIN_PASSWORD: str = "Caseno@123"
+    FORCE_SUPER_ADMIN_PASSWORD_RESET: bool = True
     DEMO_OTP_ENABLED: bool = True
     DEMO_OTP_CODE: str = "123456"
 

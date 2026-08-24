@@ -99,3 +99,7 @@ class DashboardResponseDTO(BaseModel):
     shopping_items: List[DashboardShoppingItemDTO] = []
     notifications: List[DashboardNotificationItemDTO] = []
     role: str
+
+    @property
+    def kpis(self) -> DashboardSummaryDTO:
+        return self.summary

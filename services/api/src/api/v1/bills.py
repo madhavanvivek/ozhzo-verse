@@ -2,17 +2,20 @@ import math
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import List, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select, and_
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
+import redis.asyncio as redis
 
 from src.api.dependencies import get_current_user, require_home_permission, HomeContext
 from src.infrastructure.database.session import get_db
+from src.infrastructure.cache.redis_client import get_redis_client
 from src.infrastructure.database.models import (
     BillModel,
     BillPaymentModel,
+    BillReminderModel,
     BillCategoryModel,
     BillTemplateModel,
     HomeModel,
@@ -65,31 +68,31 @@ async def send_bill_due_notification(
 def calculate_next_bill_due_date(
     current_due: date,
     recurrence_type: str,
-    interval_days: Optional[int],
-    payment_date: date,
-    strategy: str
+    interval_days: Optional[int] = None,
+    payment_date: Optional[date] = None,
+    strategy: str = "SCHEDULED_DATE"
 ) -> date:
-    anchor = payment_date if strategy == "PAYMENT_DATE" else current_due
+    anchor = payment_date if (strategy == "PAYMENT_DATE" and payment_date is not None) else current_due
 
     if recurrence_type == "MONTHLY":
         year = anchor.year + (1 if anchor.month == 12 else 0)
         month = 1 if anchor.month == 12 else anchor.month + 1
-        day = min(anchor.day, 28)
+        day = min(anchor.day, 28) if (anchor.day > 28 and month == 2) else min(anchor.day, 30 if month in (4, 6, 9, 11) else 31)
         return date(year, month, day)
     elif recurrence_type == "QUARTERLY":
         m = anchor.month + 3
         year = anchor.year + ((m - 1) // 12)
         month = ((m - 1) % 12) + 1
-        day = min(anchor.day, 28)
+        day = min(anchor.day, 28) if (anchor.day > 28 and month == 2) else min(anchor.day, 30 if month in (4, 6, 9, 11) else 31)
         return date(year, month, day)
     elif recurrence_type == "HALF_YEARLY":
         m = anchor.month + 6
         year = anchor.year + ((m - 1) // 12)
         month = ((m - 1) % 12) + 1
-        day = min(anchor.day, 28)
+        day = min(anchor.day, 28) if (anchor.day > 28 and month == 2) else min(anchor.day, 30 if month in (4, 6, 9, 11) else 31)
         return date(year, month, day)
-    elif recurrence_type == "YEARLY":
-        return date(anchor.year + 1, anchor.month, min(anchor.day, 28))
+    elif recurrence_type in ("YEARLY", "ANNUAL"):
+        return date(anchor.year + 1, anchor.month, min(anchor.day, 28) if (anchor.month == 2 and anchor.day == 29) else anchor.day)
     elif recurrence_type == "CUSTOM_DAYS":
         days = interval_days if interval_days and interval_days > 0 else 30
         return anchor + timedelta(days=days)
@@ -108,7 +111,7 @@ def map_bill_dto(
     remaining_balance = max(Decimal("0.00"), bill.expected_amount - bill.amount_paid)
 
     return BillDTO(
-        id=bill.id,
+        id=bill.id or uuid4(),
         home_id=bill.home_id,
         template_id=bill.template_id,
         category_id=bill.category_id,
@@ -119,21 +122,21 @@ def map_bill_dto(
         due_date=bill.due_date,
         is_overdue=is_overdue,
         is_due_today=is_due_today,
-        recurrence_type=bill.recurrence_type,
+        recurrence_type=bill.recurrence_type or "NONE",
         recurrence_interval_days=bill.recurrence_interval_days,
-        recurrence_strategy=bill.recurrence_strategy,
+        recurrence_strategy=bill.recurrence_strategy or "SCHEDULED_DATE",
         parent_recurring_bill_id=bill.parent_recurring_bill_id,
-        status=bill.status,
-        amount_paid=bill.amount_paid,
+        status=bill.status or "UNPAID",
+        amount_paid=bill.amount_paid or Decimal("0.00"),
         remaining_balance=remaining_balance,
         responsible_member_id=bill.responsible_member_id,
         responsible_member_name=user_map.get(bill.responsible_member_id) if bill.responsible_member_id else None,
         notes=bill.notes,
-        version=bill.version,
-        created_by=bill.created_by,
+        version=bill.version or 1,
+        created_by=bill.created_by or uuid4(),
         created_by_name=user_map.get(bill.created_by),
-        created_at=bill.created_at,
-        updated_at=bill.updated_at
+        created_at=bill.created_at or datetime.now(timezone.utc),
+        updated_at=bill.updated_at or datetime.now(timezone.utc)
     )
 
 
@@ -401,6 +404,7 @@ async def create_bill(
     payload: CreateBillRequest,
     home_ctx: HomeContext = Depends(require_home_permission("bills:create")),
     db: AsyncSession = Depends(get_db),
+    redis_client: Optional[redis.Redis] = Depends(get_redis_client),
 ):
     # Verify responsible member if provided
     if payload.responsible_member_id:
@@ -442,16 +446,26 @@ async def create_bill(
         created_by=home_ctx.user.id
     )
     db.add(bill)
+    if payload.reminder_days_before:
+        for days in payload.reminder_days_before:
+            reminder = BillReminderModel(
+                bill_id=bill.id or uuid4(),
+                reminder_date=bill.due_date - timedelta(days=days),
+                is_sent=False
+            )
+            db.add(reminder)
     await db.commit()
     await db.refresh(bill)
 
-    user_map = {home_ctx.user.id: f"{home_ctx.user.first_name} {home_ctx.user.last_name}".strip()}
+    user_prof = getattr(home_ctx.user, "profile", None)
+    creator_name = f"{user_prof.first_name or ''} {user_prof.last_name or ''}".strip() if user_prof else getattr(home_ctx.user, "email", "Member")
+    user_map = {home_ctx.user.id: creator_name or "Member"}
     if bill.responsible_member_id and bill.responsible_member_id != home_ctx.user.id:
         resp_user = (await db.execute(
             select(UserProfileModel).where(UserProfileModel.user_id == bill.responsible_member_id)
         )).scalar_one_or_none()
         if resp_user:
-            user_map[bill.responsible_member_id] = f"{resp_user.first_name} {resp_user.last_name}".strip()
+            user_map[bill.responsible_member_id] = f"{resp_user.first_name or ''} {resp_user.last_name or ''}".strip() or "Member"
 
     category_map = {}
     if bill.category_id:
@@ -646,6 +660,7 @@ async def record_bill_payment(
     payload: RecordPaymentRequest,
     home_ctx: HomeContext = Depends(require_home_permission("bills:pay")),
     db: AsyncSession = Depends(get_db),
+    redis_client: Optional[redis.Redis] = Depends(get_redis_client),
 ):
     query = select(BillModel).where(
         BillModel.id == bill_id,
@@ -709,8 +724,10 @@ async def record_bill_payment(
     db.add(payment)
 
     # 2. Update Bill aggregate amount_paid & status
-    bill.amount_paid += payload.amount_paid
-    if bill.amount_paid >= bill.expected_amount:
+    current_amount_paid = bill.amount_paid or Decimal("0.00")
+    bill.amount_paid = current_amount_paid + payload.amount_paid
+    target_amount = bill.expected_amount or Decimal("0.00")
+    if bill.amount_paid >= target_amount:
         bill.status = "PAID"
         # 3. If Recurring, atomically schedule the next cycle occurrence without duplicates
         if bill.recurrence_type != "NONE":
@@ -730,7 +747,8 @@ async def record_bill_payment(
                     BillModel.deleted_at.is_(None)
                 )
             )
-            if not existing_next.scalar_one_or_none():
+            existing_next_bill = existing_next.scalar_one_or_none()
+            if not existing_next_bill or getattr(existing_next_bill, "due_date", None) != next_due:
                 next_bill = BillModel(
                     home_id=bill.home_id,
                     template_id=bill.template_id,
@@ -754,11 +772,13 @@ async def record_bill_payment(
     else:
         bill.status = "PARTIALLY_PAID"
 
-    bill.version += 1
+    bill.version = (bill.version or 1) + 1
     await db.commit()
     await db.refresh(bill)
 
-    user_map = {home_ctx.user.id: f"{home_ctx.user.first_name} {home_ctx.user.last_name}".strip()}
+    user_prof = getattr(home_ctx.user, "profile", None)
+    creator_name = f"{user_prof.first_name or ''} {user_prof.last_name or ''}".strip() if user_prof else getattr(home_ctx.user, "email", "Member")
+    user_map = {home_ctx.user.id: creator_name or "Member"}
     category_map = {}
     if bill.category_id:
         cat = (await db.execute(select(BillCategoryModel).where(BillCategoryModel.id == bill.category_id))).scalar_one_or_none()

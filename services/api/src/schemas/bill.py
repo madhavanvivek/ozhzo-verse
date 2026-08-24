@@ -2,7 +2,8 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Optional
 from uuid import UUID
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+from typing import Any
 
 
 class BillCategoryDTO(BaseModel):
@@ -97,6 +98,14 @@ class BillDTO(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    @property
+    def amount(self) -> Decimal:
+        return self.expected_amount
+
+    @property
+    def recurrence_interval(self) -> str:
+        return self.recurrence_type
+
 
 class BillDetailDTO(BillDTO):
     payments: List[BillPaymentDTO] = []
@@ -104,16 +113,30 @@ class BillDetailDTO(BillDTO):
 
 class CreateBillRequest(BaseModel):
     title: str = Field(..., min_length=2, max_length=160)
-    expected_amount: Decimal = Field(..., gt=0)
+    expected_amount: Optional[Decimal] = Field(None, gt=0)
+    amount: Optional[Decimal] = Field(None, gt=0)
     currency: Optional[str] = Field(default="INR", min_length=3, max_length=3)
     due_date: date
     recurrence_type: Optional[str] = Field(default="NONE", pattern="^(NONE|MONTHLY|QUARTERLY|HALF_YEARLY|YEARLY|CUSTOM_DAYS)$")
+    recurrence_interval: Optional[str] = None
     recurrence_interval_days: Optional[int] = None
     recurrence_strategy: Optional[str] = Field(default="SCHEDULED_DATE", pattern="^(SCHEDULED_DATE|PAYMENT_DATE)$")
     category_id: Optional[UUID] = None
+    category: Optional[str] = None
     template_id: Optional[UUID] = None
     responsible_member_id: Optional[UUID] = None
     notes: Optional[str] = Field(None, max_length=2000)
+    reminder_days_before: Optional[List[int]] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if ("expected_amount" not in data or data.get("expected_amount") is None) and "amount" in data:
+                data["expected_amount"] = data["amount"]
+            if ("recurrence_type" not in data or data.get("recurrence_type") is None) and "recurrence_interval" in data:
+                data["recurrence_type"] = data["recurrence_interval"]
+        return data
 
     @field_validator("title")
     @classmethod
@@ -146,7 +169,7 @@ class UpdateBillRequest(BaseModel):
 
 class RecordPaymentRequest(BaseModel):
     amount_paid: Decimal = Field(..., gt=0)
-    currency: Optional[str] = Field(default="INR", min_length=3, max_length=3)
+    currency: Optional[str] = Field(default=None, min_length=3, max_length=3)
     paid_date: Optional[date] = None
     paid_by: Optional[UUID] = None
     payment_method: Optional[str] = Field(default="UPI", pattern="^(CASH|BANK_TRANSFER|UPI|CARD|ONLINE|OTHER)$")
@@ -156,8 +179,8 @@ class RecordPaymentRequest(BaseModel):
 
     @field_validator("currency")
     @classmethod
-    def validate_currency(cls, v: Optional[str]) -> str:
-        return (v or "INR").strip().upper()
+    def validate_currency(cls, v: Optional[str]) -> Optional[str]:
+        return v.strip().upper() if v else None
 
 
 class BillSummaryDTO(BaseModel):

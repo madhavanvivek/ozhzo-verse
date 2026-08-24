@@ -248,7 +248,7 @@ export default function DashboardLayout({
               router.push('/dashboard?action=create_home');
             }}
             onJoinHome={() => {
-              router.push('/dashboard?action=join_home');
+              router.push('/join');
             }}
           />
         </div>
@@ -319,7 +319,7 @@ export default function DashboardLayout({
                     router.push('/dashboard?action=create_home');
                   }}
                   onJoinHome={() => {
-                    router.push('/dashboard?action=join_home');
+                    router.push('/join');
                   }}
                 />
               </div>

@@ -70,6 +70,10 @@ class ApiClient {
     return this.accessToken;
   }
 
+  hasToken(): boolean {
+    return !!this.getAccessToken();
+  }
+
   getRefreshToken(): string | null {
     if (!this.refreshToken && typeof window !== 'undefined') {
       this.refreshToken = localStorage.getItem('refresh_token');

@@ -259,7 +259,7 @@ async def login(
 
     # 2. Lookup by email
     elif payload.email:
-        normalized_email = payload.email.lower()
+        normalized_email = payload.email.lower().strip()
         await enforce_auth_rate_limit(redis_client, normalized_email, "login", max_requests=10, window_seconds=60)
         
         query = select(UserModel).where(

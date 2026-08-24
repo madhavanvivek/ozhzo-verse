@@ -88,6 +88,9 @@ export default function HomeSettingsPage() {
 
       setHomeDetail((prev) => (prev ? { ...prev, ...updated } : updated));
       setSavedSuccess(true);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('home-changed'));
+      }
       setTimeout(() => setSavedSuccess(false), 3000);
     } catch (err: any) {
       console.error('Failed to update home settings:', err);
@@ -105,6 +108,9 @@ export default function HomeSettingsPage() {
     try {
       await apiClient.delete(`/homes/${activeHomeId}`);
       localStorage.removeItem('active_home_id');
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('home-changed'));
+      }
       router.push('/dashboard');
     } catch (err: any) {
       console.error('Failed to delete home:', err);

@@ -149,14 +149,29 @@ class InvitationModel(Base):
     role = Column(String(32), default="MEMBER", nullable=False)  # HOME_ADMIN, MEMBER
     invitation_mode = Column(String(32), default="INVITE_ONLY", nullable=False)  # INVITE_ONLY, INVITE_WITH_SUBSCRIPTION
     token = Column(String(64), unique=True, nullable=False, index=True)
-    status = Column(String(32), default="PENDING", nullable=False)  # PENDING, ACCEPTED, REVOKED, EXPIRED
+    invitation_code = Column(String(32), unique=True, nullable=True, index=True)
+    status = Column(String(32), default="PENDING", nullable=False)  # PENDING, ACCEPTED, REVOKED, EXPIRED, DECLINED
     accepted_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     accepted_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
     home = relationship("HomeModel", back_populates="invitations")
+
+    def __init__(self, **kwargs):
+        if "invite_token" in kwargs and "token" not in kwargs:
+            kwargs["token"] = kwargs.pop("invite_token")
+        super().__init__(**kwargs)
+
+    @property
+    def invite_token(self) -> str:
+        return self.token
+
+    @invite_token.setter
+    def invite_token(self, val: str) -> None:
+        self.token = val
 
 
 class InventoryTemplateModel(Base):
@@ -332,6 +347,15 @@ class InventoryItemModel(Base):
     location_movements = relationship("LocationMovementModel", back_populates="item", cascade="all, delete-orphan")
     loans = relationship("AssetLoanModel", back_populates="item", cascade="all, delete-orphan")
 
+    def __init__(self, **kwargs):
+        if "category" in kwargs and isinstance(kwargs["category"], str):
+            kwargs.pop("category")
+        if "location" in kwargs and isinstance(kwargs["location"], str):
+            kwargs.pop("location")
+        if "status" in kwargs:
+            kwargs.pop("status")
+        super().__init__(**kwargs)
+
 
 class StockMovementModel(Base):
     __tablename__ = "stock_movements"
@@ -480,6 +504,23 @@ class TaskModel(Base):
     category = relationship("TaskCategoryModel", back_populates="tasks")
     template = relationship("TaskTemplateModel")
 
+    def __init__(self, **kwargs):
+        if "category" in kwargs and isinstance(kwargs["category"], str):
+            kwargs.pop("category")
+        if "template" in kwargs and isinstance(kwargs["template"], str):
+            kwargs.pop("template")
+        if "recurrence_rule" in kwargs and "recurrence_type" not in kwargs:
+            kwargs["recurrence_type"] = kwargs.pop("recurrence_rule")
+        super().__init__(**kwargs)
+
+    @property
+    def recurrence_rule(self) -> str:
+        return self.recurrence_type
+
+    @recurrence_rule.setter
+    def recurrence_rule(self, val: str) -> None:
+        self.recurrence_type = val
+
 
 class BillCategoryModel(Base):
     __tablename__ = "bill_categories"
@@ -554,6 +595,31 @@ class BillModel(Base):
     template = relationship("BillTemplateModel")
     reminders = relationship("BillReminderModel", back_populates="bill", cascade="all, delete-orphan")
     payments = relationship("BillPaymentModel", back_populates="bill", cascade="all, delete-orphan")
+
+    def __init__(self, **kwargs):
+        if "amount" in kwargs and "expected_amount" not in kwargs:
+            kwargs["expected_amount"] = kwargs.pop("amount")
+        if "recurrence_interval" in kwargs and "recurrence_type" not in kwargs:
+            kwargs["recurrence_type"] = kwargs.pop("recurrence_interval")
+        if "category" in kwargs and isinstance(kwargs["category"], str):
+            kwargs.pop("category")
+        super().__init__(**kwargs)
+
+    @property
+    def amount(self):
+        return self.expected_amount
+
+    @amount.setter
+    def amount(self, val):
+        self.expected_amount = val
+
+    @property
+    def recurrence_interval(self):
+        return self.recurrence_type
+
+    @recurrence_interval.setter
+    def recurrence_interval(self, val):
+        self.recurrence_type = val
 
 
 class BillReminderModel(Base):
@@ -776,6 +842,19 @@ class NotificationModel(Base):
     )
 
     user = relationship("UserModel", back_populates="notifications")
+
+    def __init__(self, **kwargs):
+        if "notification_type" in kwargs and "type" not in kwargs:
+            kwargs["type"] = kwargs.pop("notification_type")
+        super().__init__(**kwargs)
+
+    @property
+    def notification_type(self) -> str:
+        return self.type
+
+    @notification_type.setter
+    def notification_type(self, val: str) -> None:
+        self.type = val
 
 
 class UserNotificationPreferencesModel(Base):

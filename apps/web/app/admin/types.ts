@@ -87,6 +87,19 @@ export interface AdminHomeMemberItem {
   created_at?: string | null;
 }
 
+export interface AdminHomeInvitationItem {
+  id: string;
+  email?: string | null;
+  phone_number?: string | null;
+  role: string;
+  invitation_code?: string | null;
+  status: string;
+  invited_by_id: string;
+  invited_by_email?: string | null;
+  expires_at: string;
+  created_at?: string | null;
+}
+
 export interface AdminHomeDetail {
   id: string;
   name: string;
@@ -103,6 +116,7 @@ export interface AdminHomeDetail {
   subscription_plan: string;
   paid_seats: number;
   members: AdminHomeMemberItem[];
+  invitations?: AdminHomeInvitationItem[];
 }
 
 export interface AdminActivityItem {

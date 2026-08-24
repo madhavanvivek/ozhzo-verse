@@ -21,7 +21,7 @@ async def test_create_home_assigns_owner():
     mock_result.scalars.return_value.all.return_value = []
     mock_db.execute.return_value = mock_result
 
-    user = UserModel(id=uuid4(), email="owner@example.com")
+    user = UserModel(id=uuid4(), email="owner@example.com", mobile_verified=True)
     req = CreateHomeRequest(
         name="Sunnyvale Villa",
         currency="USD",
@@ -48,7 +48,7 @@ async def test_create_home_free_tier_limit():
     mock_result.scalars.return_value.all.return_value = [existing_home]
     mock_db.execute.return_value = mock_result
 
-    user = UserModel(id=uuid4(), email="owner@example.com")
+    user = UserModel(id=uuid4(), email="owner@example.com", mobile_verified=True)
     req = CreateHomeRequest(name="Second Home")
     mock_redis = AsyncMock()
 

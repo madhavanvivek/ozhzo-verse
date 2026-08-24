@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import {
@@ -251,11 +252,21 @@ export default function NotificationsPage() {
                 </div>
               </div>
 
-              {!item.is_read && (
-                <Button size="sm" variant="ghost" onClick={() => handleMarkRead(item.id)}>
-                  <span>Mark read</span>
-                </Button>
-              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                {item.type === 'HOME_INVITATION' && (
+                  <Link href="/join" style={{ textDecoration: 'none' }}>
+                    <Button size="sm" style={{ minHeight: '36px', padding: '0 10px', fontSize: '12px' }}>
+                      <span>Join Home</span>
+                    </Button>
+                  </Link>
+                )}
+
+                {!item.is_read && (
+                  <Button size="sm" variant="ghost" onClick={() => handleMarkRead(item.id)}>
+                    <span>Mark read</span>
+                  </Button>
+                )}
+              </div>
             </Card>
           ))
         )}

@@ -1,7 +1,8 @@
 from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+from typing import Any
 
 
 class TaskCategoryDTO(BaseModel):
@@ -75,18 +76,35 @@ class TaskDTO(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    @property
+    def recurrence_rule(self) -> str:
+        return self.recurrence_type
+
 
 class CreateTaskRequest(BaseModel):
     title: str = Field(..., min_length=2, max_length=200)
     description: Optional[str] = Field(None, max_length=2000)
-    priority: Optional[str] = Field(default="NORMAL", pattern="^(LOW|NORMAL|HIGH)$")
+    priority: Optional[str] = Field(default="NORMAL", pattern="^(LOW|NORMAL|MEDIUM|HIGH|URGENT)$")
     category_id: Optional[UUID] = None
+    category: Optional[str] = None
     template_id: Optional[UUID] = None
+    template: Optional[str] = None
     assigned_to: Optional[UUID] = None
     due_date: Optional[datetime] = None
     recurrence_type: Optional[str] = Field(default="NONE", pattern="^(NONE|DAILY|WEEKLY|MONTHLY|YEARLY|CUSTOM_DAYS)$")
+    recurrence_rule: Optional[str] = None
     recurrence_interval_days: Optional[int] = None
     recurrence_strategy: Optional[str] = Field(default="SCHEDULED_DATE", pattern="^(SCHEDULED_DATE|COMPLETION_DATE)$")
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if ("recurrence_type" not in data or data.get("recurrence_type") is None) and "recurrence_rule" in data:
+                data["recurrence_type"] = data["recurrence_rule"]
+            if data.get("priority") == "MEDIUM":
+                data["priority"] = "NORMAL"
+        return data
 
     @field_validator("title")
     @classmethod

@@ -1,4 +1,5 @@
 from typing import Any, Dict, Optional
+from fastapi import HTTPException
 
 
 class BaseDomainException(Exception):
@@ -46,13 +47,15 @@ class InvalidCredentialsException(BaseDomainException):
 
 
 class TierLimitExceededException(BaseDomainException):
-    def __init__(self, resource: str, limit: int):
+    def __init__(self, resource: str = "members", limit: int = 5, detail: Optional[str] = None):
+        msg = detail or f"Free tier limit of {limit} {resource} reached. Please upgrade to Premium."
         super().__init__(
-            message=f"Free tier limit of {limit} {resource} reached. Please upgrade to Premium.",
+            message=msg,
             code=f"TIER_LIMIT_{resource.upper()}_EXCEEDED",
-            status_code=402,
+            status_code=400 if detail else 402,
             details={"resource": resource, "limit": limit},
         )
+        self.detail = msg
 
 
 class MobileVerificationRequiredException(BaseDomainException):

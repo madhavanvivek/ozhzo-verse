@@ -49,12 +49,14 @@ from src.schemas.inventory import (
 router = APIRouter(prefix="/homes/{home_id}/inventory", tags=["Inventory & Assets"])
 
 
-def calculate_stock_status(quantity: Decimal, min_threshold: Optional[Decimal]) -> str:
+def calculate_stock_status(quantity: Decimal, min_threshold: Optional[Decimal] = None, expiry_date: Optional[date] = None) -> str:
+    if expiry_date and expiry_date < date.today():
+        return "EXPIRED"
     if quantity <= Decimal("0"):
         return "OUT_OF_STOCK"
     if min_threshold is not None and quantity <= min_threshold:
-        return "LOW"
-    return "GOOD"
+        return "LOW_STOCK"
+    return "IN_STOCK"
 
 
 def calculate_expiry_status(expiry_date: Optional[date]) -> str:
@@ -107,7 +109,7 @@ def to_inventory_item_dto(item: InventoryItemModel, path_map: Optional[dict] = N
         last_seen_by=item.last_seen_by,
         last_seen_location_id=item.last_seen_location_id,
         expiry_date=item.expiry_date,
-        status=item.status or "GOOD",
+        status=item.status if (item.status and item.status not in ("GOOD", "ACTIVE")) else (calculate_stock_status(item.quantity if item.quantity is not None else Decimal("0"), item.min_threshold, item.expiry_date) if item.item_type == "CONSUMABLE" else (item.status or "GOOD")),
         expiry_status=item.expiry_status or "NORMAL",
         notes=item.notes,
         brand=item.brand,
@@ -317,6 +319,7 @@ async def create_inventory_item(
     payload: CreateInventoryItemRequest,
     home_ctx: HomeContext = Depends(require_home_permission("inventory:create")),
     db: AsyncSession = Depends(get_db),
+    redis_client: Optional[redis.Redis] = Depends(get_redis_client),
 ):
     # Validate location belongs to same home
     loc_path = None
@@ -493,6 +496,7 @@ async def update_inventory_item(
     payload: UpdateInventoryItemRequest,
     home_ctx: HomeContext = Depends(require_home_permission("inventory:edit")),
     db: AsyncSession = Depends(get_db),
+    redis_client: Optional[redis.Redis] = Depends(get_redis_client),
 ):
     query = select(InventoryItemModel).where(
         InventoryItemModel.id == item_id,
@@ -599,6 +603,7 @@ async def delete_inventory_item(
     item_id: UUID,
     home_ctx: HomeContext = Depends(require_home_permission("inventory:delete")),
     db: AsyncSession = Depends(get_db),
+    redis_client: Optional[redis.Redis] = Depends(get_redis_client),
 ):
     query = select(InventoryItemModel).where(
         InventoryItemModel.id == item_id,

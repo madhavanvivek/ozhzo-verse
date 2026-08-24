@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Input } from '@/components/ui/Input';
-import { Users, UserPlus, Copy, Check, Trash2, Mail, AlertCircle, RefreshCw, X, Shield } from 'lucide-react';
+import { Users, UserPlus, Copy, Check, Trash2, Mail, AlertCircle, RefreshCw, X, Shield, KeyRound } from 'lucide-react';
 import { apiClient } from '@/lib/apiClient';
 
 interface MemberItem {
@@ -29,9 +29,11 @@ interface InvitationItem {
   role: string;
   invitation_mode: string;
   token: string;
+  invitation_code?: string | null;
   invite_url?: string;
   status: string;
   invited_by?: string;
+  invited_by_name?: string | null;
   expires_at: string;
   created_at?: string;
 }
@@ -82,6 +84,7 @@ export default function MembersPage() {
   const [inviteError, setInviteError] = useState<string | null>(null);
 
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [actionInProgressId, setActionInProgressId] = useState<string | null>(null);
 
   // Role Editing State
@@ -147,9 +150,15 @@ export default function MembersPage() {
 
   const handleCopyLink = (token: string) => {
     const origin = typeof window !== 'undefined' ? window.location.origin : 'https://ozhzo-web.onrender.com';
-    navigator.clipboard.writeText(`${origin}/join?token=${token}`);
+    navigator.clipboard.writeText(`${origin}/invite/${token}`);
     setCopiedToken(token);
     setTimeout(() => setCopiedToken(null), 2000);
+  };
+
+  const handleCopyCode = (code: string) => {
+    navigator.clipboard.writeText(code);
+    setCopiedCode(code);
+    setTimeout(() => setCopiedCode(null), 2000);
   };
 
   const handleCreateInvite = async (e: React.FormEvent) => {
@@ -176,8 +185,9 @@ export default function MembersPage() {
       setPendingInvites(prev => [newInvite, ...prev]);
       setInviteEmail('');
       setInvitePhone('');
-      setInviteSuccess('Invitation generated successfully. Copy the link below to share with your family member.');
-      setTimeout(() => setInviteSuccess(null), 5000);
+      const codeMsg = newInvite.invitation_code ? ` (Code: ${newInvite.invitation_code})` : '';
+      setInviteSuccess(`Invitation created successfully${codeMsg}. Share the link or code below with your family member.`);
+      setTimeout(() => setInviteSuccess(null), 6000);
       loadData(false);
     } catch (err: any) {
       console.error('Failed to create invitation:', err);
@@ -493,26 +503,69 @@ export default function MembersPage() {
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'space-between',
-                  padding: '12px 14px',
+                  padding: '14px 16px',
                   backgroundColor: 'var(--color-surface-subtle)',
                   borderRadius: 'var(--radius-md)',
                   flexWrap: 'wrap',
                   gap: '12px'
                 }}
               >
-                <div>
-                  <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
-                    {inv.email || inv.phone_number || 'General Link Invite'}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
+                    {inv.email || inv.phone_number || 'Family Member Invitation'}
                   </div>
-                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
-                    Role: <strong>{getRoleDisplayName(inv.role)}</strong> • Status: {inv.status} • Expires: {new Date(inv.expires_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <Badge variant={getRoleBadgeVariant(inv.role)}>
+                      {getRoleDisplayName(inv.role)}
+                    </Badge>
+                    <Badge variant="low-stock">
+                      {inv.status}
+                    </Badge>
+                    {inv.invitation_code && (
+                      <span
+                        style={{
+                          fontSize: '12px',
+                          fontWeight: 700,
+                          backgroundColor: 'var(--color-surface-card)',
+                          padding: '2px 8px',
+                          borderRadius: '4px',
+                          border: '1px solid var(--color-border-subtle)',
+                          fontFamily: 'monospace',
+                          color: 'var(--color-primary-900)'
+                        }}
+                      >
+                        Code: {inv.invitation_code}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>
+                    Expires: {new Date(inv.expires_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Button size="sm" variant="secondary" onClick={() => handleCopyLink(inv.token)} style={{ minHeight: '44px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  {inv.invitation_code && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => handleCopyCode(inv.invitation_code!)}
+                      style={{ minHeight: '40px', padding: '0 10px', fontSize: '12px' }}
+                      title="Copy Invitation Code"
+                    >
+                      {copiedCode === inv.invitation_code ? <Check size={14} color="var(--status-in-stock)" /> : <KeyRound size={14} />}
+                      <span>{copiedCode === inv.invitation_code ? 'Code Copied' : 'Copy Code'}</span>
+                    </Button>
+                  )}
+
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => handleCopyLink(inv.token)}
+                    style={{ minHeight: '40px', padding: '0 10px', fontSize: '12px' }}
+                    title="Copy Invitation Link"
+                  >
                     {copiedToken === inv.token ? <Check size={14} color="var(--status-in-stock)" /> : <Copy size={14} />}
-                    <span>{copiedToken === inv.token ? 'Copied' : 'Copy Link'}</span>
+                    <span>{copiedToken === inv.token ? 'Link Copied' : 'Copy Link'}</span>
                   </Button>
 
                   <Button
@@ -520,7 +573,7 @@ export default function MembersPage() {
                     variant="ghost"
                     onClick={() => handleResendInvite(inv.id)}
                     disabled={actionInProgressId === inv.id}
-                    style={{ minHeight: '44px', padding: '0 8px' }}
+                    style={{ minHeight: '40px', padding: '0 8px' }}
                     title="Resend / Extend Invitation"
                   >
                     <RefreshCw size={14} className={actionInProgressId === inv.id ? 'animate-spin' : ''} />
@@ -529,9 +582,9 @@ export default function MembersPage() {
                   <button
                     onClick={() => handleCancelInvite(inv.id)}
                     disabled={actionInProgressId === inv.id}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--status-overdue)', padding: '10px', minWidth: '44px', minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                    aria-label="Cancel invitation"
-                    title="Cancel Invitation"
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--status-overdue)', padding: '8px', minWidth: '40px', minHeight: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    aria-label="Revoke invitation"
+                    title="Revoke Invitation"
                   >
                     <X size={16} />
                   </button>

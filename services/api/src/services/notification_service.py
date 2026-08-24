@@ -139,7 +139,8 @@ class NotificationService:
             "HOME_INVITATION": pref.home_invitation_enabled,
             "SYSTEM": pref.system_enabled,
         }
-        return type_map.get(notification_type, True)
+        val = type_map.get(notification_type, True)
+        return True if val is None else bool(val)
 
     async def dispatch(
         self,

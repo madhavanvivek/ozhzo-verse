@@ -20,7 +20,7 @@ async def build_location_path_map(db: AsyncSession, home_id: UUID) -> Dict[UUID,
     result = await db.execute(query)
     locations = result.scalars().all()
 
-    loc_dict = {loc.id: loc for loc in locations}
+    loc_dict = {loc.id: loc for loc in locations if hasattr(loc, "id")}
     path_map: Dict[UUID, str] = {}
 
     def get_path(loc_id: UUID, visited: set) -> str:
@@ -44,7 +44,8 @@ async def build_location_path_map(db: AsyncSession, home_id: UUID) -> Dict[UUID,
         return full_path
 
     for loc in locations:
-        get_path(loc.id, set())
+        if hasattr(loc, "id"):
+            get_path(loc.id, set())
 
     return path_map
 

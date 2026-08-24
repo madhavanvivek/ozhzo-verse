@@ -67,6 +67,19 @@ class AdminHomeMemberItemDTO(BaseModel):
     created_at: Optional[datetime] = None
 
 
+class AdminHomeInvitationItemDTO(BaseModel):
+    id: UUID
+    email: Optional[str] = None
+    phone_number: Optional[str] = None
+    role: str
+    invitation_code: Optional[str] = None
+    status: str
+    invited_by_id: UUID
+    invited_by_email: Optional[str] = None
+    expires_at: datetime
+    created_at: Optional[datetime] = None
+
+
 class AdminHomeDetailDTO(BaseModel):
     id: UUID
     name: str
@@ -83,6 +96,7 @@ class AdminHomeDetailDTO(BaseModel):
     subscription_plan: str
     paid_seats: int
     members: List[AdminHomeMemberItemDTO] = []
+    invitations: List[AdminHomeInvitationItemDTO] = []
 
 
 class AdminHomeListItemDTO(BaseModel):

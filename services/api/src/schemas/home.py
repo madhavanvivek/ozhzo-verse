@@ -122,11 +122,43 @@ class InvitationDTO(BaseModel):
     role: str
     invitation_mode: str = "INVITE_ONLY"
     token: str
+    invitation_code: Optional[str] = None
     invite_url: str
     status: str
     invited_by: Optional[UUID] = None
+    invited_by_name: Optional[str] = None
     expires_at: datetime
     created_at: Optional[datetime] = None
+
+    @property
+    def invite_token(self) -> str:
+        return self.token
+
+    @property
+    def invitation_link(self) -> str:
+        return self.invite_url
+
+
+class InvitationDetailDTO(BaseModel):
+    id: UUID
+    home_id: UUID
+    home_name: str
+    role: str
+    token: str
+    invitation_code: Optional[str] = None
+    status: str
+    invited_by_name: Optional[str] = None
+    invited_by_email: Optional[str] = None
+    email: Optional[str] = None
+    phone_number: Optional[str] = None
+    expires_at: datetime
+    created_at: Optional[datetime] = None
+    is_expired: bool = False
+    is_already_member: bool = False
+
+
+class RedeemInvitationRequest(BaseModel):
+    invitation_code: str = Field(..., min_length=3, max_length=64, description="Human-readable invitation code or token")
 
 
 class AcceptInvitationResponse(BaseModel):
@@ -138,3 +170,4 @@ class AcceptInvitationResponse(BaseModel):
 
 class MessageResponse(BaseModel):
     message: str
+

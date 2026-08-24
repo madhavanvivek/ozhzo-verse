@@ -234,11 +234,13 @@ async def login(
             UserModel.deleted_at == None
         ).order_by(UserModel.is_super_admin.desc(), UserModel.created_at.asc())
         result = await db.execute(query)
-        user = None
-        if hasattr(result, "scalars") and hasattr(result.scalars(), "first") and not isinstance(result.scalars().first(), MagicMock):
-            user = result.scalars().first()
-        elif hasattr(result, "scalar_one_or_none") and not isinstance(result.scalar_one_or_none(), MagicMock):
+        try:
             user = result.scalar_one_or_none()
+        except Exception:
+            try:
+                user = result.scalars().first()
+            except Exception:
+                user = None
 
     # 2. Lookup by email
     elif payload.email:
@@ -251,11 +253,13 @@ async def login(
             UserModel.deleted_at == None
         ).order_by(UserModel.is_super_admin.desc(), UserModel.created_at.asc())
         result = await db.execute(query)
-        user = None
-        if hasattr(result, "scalars") and hasattr(result.scalars(), "first") and not isinstance(result.scalars().first(), MagicMock):
-            user = result.scalars().first()
-        elif hasattr(result, "scalar_one_or_none") and not isinstance(result.scalar_one_or_none(), MagicMock):
+        try:
             user = result.scalar_one_or_none()
+        except Exception:
+            try:
+                user = result.scalars().first()
+            except Exception:
+                user = None
 
     else:
         raise HTTPException(
@@ -394,7 +398,13 @@ async def forgot_password(
         UserModel.deleted_at == None
     ).order_by(UserModel.is_super_admin.desc(), UserModel.created_at.asc())
     result = await db.execute(query)
-    user = result.scalars().first()
+    try:
+        user = result.scalar_one_or_none()
+    except Exception:
+        try:
+            user = result.scalars().first()
+        except Exception:
+            user = None
 
     reset_token = None
     if user:

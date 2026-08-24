@@ -36,13 +36,14 @@ async def seed_demo_super_admin(db: AsyncSession) -> UserModel | None:
     try:
         query = select(UserModel).where(UserModel.email == email).order_by(UserModel.is_super_admin.desc(), UserModel.created_at.asc())
         result = await db.execute(query)
-        if hasattr(result, "scalars") and hasattr(result.scalars(), "all") and not isinstance(result.scalars().all(), MagicMock):
-            matching_users = result.scalars().all()
-        elif hasattr(result, "scalar_one_or_none") and not isinstance(result.scalar_one_or_none(), MagicMock):
+        try:
             single = result.scalar_one_or_none()
             matching_users = [single] if single else []
-        else:
-            matching_users = []
+        except Exception:
+            try:
+                matching_users = result.scalars().all()
+            except Exception:
+                matching_users = []
 
         if not matching_users:
             default_pwd = (initial_password or "Caseno@123").strip()

@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     ENABLE_DEMO_SUPER_ADMIN_BOOTSTRAP: bool = True
     DEMO_SUPER_ADMIN_EMAIL: str = "vivek@zinfog.com"
     DEMO_SUPER_ADMIN_PASSWORD: str | None = None
-    DEMO_OTP_ENABLED: bool = False
+    DEMO_OTP_ENABLED: bool = True
     DEMO_OTP_CODE: str = "123456"
 
     # Transactional Email (SMTP / Resend)

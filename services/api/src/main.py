@@ -169,3 +169,10 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 # Mount API v1
 app.include_router(api_v1_router, prefix="/api/v1")
+
+
+@app.get("/health", tags=["Health"])
+@app.get("/", tags=["Health"])
+async def health_check():
+    return {"status": "ok", "service": "ozhzo-verse-api", "version": "1.0.0"}
+

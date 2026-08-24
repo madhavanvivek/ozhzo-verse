@@ -74,10 +74,21 @@ async def record_home_audit(
     db.add(log)
 
 
+def classify_home(h: HomeModel) -> str:
+    # "Ichu's Home" must NEVER be classified as DEMO or TEST
+    if "ichu" in (h.name or "").lower():
+        return "REAL"
+    name_lower = (h.name or "").lower()
+    if "demo" in name_lower or "audit" in name_lower or "test" in name_lower:
+        return "TEST"
+    return "REAL"
+
+
 @router.get("", response_model=ApiSuccessResponse[List[AdminHomeListItemDTO]])
 async def list_and_search_homes(
     query: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
+    classification: Optional[str] = Query(None),
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
     super_admin: UserModel = Depends(require_admin_permission("admin:homes:view")),
@@ -92,6 +103,7 @@ async def list_and_search_homes(
     off = _extract_int_param(offset, 0)
     q_str = _extract_str_param(query)
     status_str = _extract_str_param(status)
+    class_str = _extract_str_param(classification)
 
     # Correlated scalar subqueries for accurate, aggregation-free PostgreSQL compatibility
     member_count_subq = (
@@ -127,16 +139,20 @@ async def list_and_search_homes(
         .scalar_subquery()
     )
 
-    stmt = (
-        select(
-            HomeModel,
-            creator_email_subq.label("creator_email"),
-            creator_name_subq.label("creator_name"),
-            member_count_subq.label("members_count"),
-            sub_status_subq.label("sub_status")
-        )
-        .where(HomeModel.deleted_at == None)
+    stmt = select(
+        HomeModel,
+        creator_email_subq.label("creator_email"),
+        creator_name_subq.label("creator_name"),
+        member_count_subq.label("members_count"),
+        sub_status_subq.label("sub_status")
     )
+
+    if status_str and status_str.upper() == "ARCHIVED":
+        stmt = stmt.where(or_(HomeModel.status == "ARCHIVED", HomeModel.deleted_at != None))
+    elif status_str and status_str.upper() != "ALL":
+        stmt = stmt.where(HomeModel.status == status_str.upper().strip(), HomeModel.deleted_at == None)
+    else:
+        stmt = stmt.where(HomeModel.deleted_at == None)
 
     if q_str:
         clean_q = f"%{q_str.strip()}%"
@@ -148,9 +164,6 @@ async def list_and_search_homes(
                 creator_name_subq.ilike(clean_q)
             )
         )
-
-    if status_str and status_str.upper() != "ALL":
-        stmt = stmt.where(HomeModel.status == status_str.upper().strip())
 
     stmt = stmt.order_by(desc(HomeModel.created_at)).limit(lim).offset(off)
 
@@ -171,6 +184,10 @@ async def list_and_search_homes(
             m_count = row[2] if len(row) > 2 else 0
             s_status = row[3] if len(row) > 3 else "TRIALING"
 
+        h_class = classify_home(h)
+        if class_str and class_str.upper() != "ALL" and h_class != class_str.upper():
+            continue
+
         dtos.append(
             AdminHomeListItemDTO(
                 id=h.id,
@@ -181,6 +198,7 @@ async def list_and_search_homes(
                 created_by_name=c_disp or (c_email.split("@")[0] if c_email else "Home Creator"),
                 members_count=m_count or 0,
                 subscription_status=s_status or "TRIALING",
+                classification=h_class,
                 created_at=h.created_at or datetime.now(timezone.utc)
             )
         )

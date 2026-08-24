@@ -138,11 +138,8 @@ export default function AdminSubscriptionsPage() {
         </div>
 
         <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-          <button
-            onClick={() => {
-              setPromoModalError(null);
-              setIsPromoModalOpen(true);
-            }}
+          <Link
+            href="/admin/coupons"
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -154,13 +151,14 @@ export default function AdminSubscriptionsPage() {
               fontSize: '13px',
               fontWeight: 600,
               border: 'none',
+              textDecoration: 'none',
               cursor: 'pointer',
               minHeight: '44px'
             }}
           >
-            <Plus size={16} />
-            <span>New Promotion</span>
-          </button>
+            <Tag size={16} />
+            <span>Manage Coupons & Grants</span>
+          </Link>
 
           <button
             onClick={fetchData}

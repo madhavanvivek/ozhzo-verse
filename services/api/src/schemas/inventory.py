@@ -117,6 +117,24 @@ class LocationTreeDTO(LocationDTO):
     children: List["LocationTreeDTO"] = []
 
 
+class LocationTypeDTO(BaseModel):
+    id: Optional[UUID] = None
+    home_id: Optional[UUID] = None
+    name: str
+    code: str
+    description: Optional[str] = None
+    icon: Optional[str] = None
+    is_system_default: bool = False
+    created_at: Optional[datetime] = None
+
+
+class CreateLocationTypeRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    code: Optional[str] = Field(None, max_length=64)
+    description: Optional[str] = Field(None, max_length=500)
+    icon: Optional[str] = Field(None, max_length=50)
+
+
 class CreateLocationRequest(BaseModel):
     parent_id: Optional[UUID] = None
     name: str = Field(..., min_length=1, max_length=120)
@@ -134,6 +152,16 @@ class UpdateLocationRequest(BaseModel):
     icon: Optional[str] = Field(None, max_length=50)
     sort_order: Optional[int] = Field(None, ge=0)
     is_active: Optional[bool] = None
+
+
+class ConsumeStockRequest(BaseModel):
+    quantity: Decimal = Field(..., gt=0)
+    notes: Optional[str] = Field(None, max_length=500)
+
+
+class RestockStockRequest(BaseModel):
+    quantity: Decimal = Field(..., gt=0)
+    notes: Optional[str] = Field(None, max_length=500)
 
 
 # ==============================================================================

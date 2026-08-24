@@ -31,6 +31,7 @@ class AdminUserDetailDTO(BaseModel):
     mobile_verified: bool = False
     is_super_admin: bool
     system_role: Optional[str] = "USER"  # USER, SUPER_ADMIN, PLATFORM_ADMIN, SUPPORT_ADMIN, ANALYST
+    classification: Optional[str] = "REAL"  # REAL, DEMO, TEST
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     memberships: List[AdminUserHomeMembershipDTO] = []
@@ -47,6 +48,7 @@ class AdminUserListItemDTO(BaseModel):
     mobile_verified: bool = False
     is_super_admin: bool
     system_role: Optional[str] = "USER"
+    classification: Optional[str] = "REAL"  # REAL, DEMO, TEST
     homes_count: int
     created_at: Optional[datetime] = None
 
@@ -92,6 +94,7 @@ class AdminHomeListItemDTO(BaseModel):
     created_by_name: Optional[str] = None
     members_count: int
     subscription_status: str
+    classification: Optional[str] = "REAL"  # REAL, DEMO, TEST
     created_at: Optional[datetime] = None
 
 
@@ -117,7 +120,7 @@ class DeleteEntityRequest(BaseModel):
 
 class BulkUserActionRequest(BaseModel):
     user_ids: List[UUID]
-    action: str  # ACTIVATE, SUSPEND, HOLD, DELETE
+    action: str  # ACTIVATE, SUSPEND, HOLD, DELETE, DEACTIVATE, DELETE_TEST_USERS
     reason: Optional[str] = Field(default="Bulk Administrative Action", max_length=255)
 
 
@@ -154,9 +157,11 @@ class AdminAnalyticsSummaryDTO(BaseModel):
     total_users: int
     active_users: int
     suspended_users: int
+    deactivated_users: int = 0
     total_homes: int
     active_homes: int
     suspended_homes: int
+    archived_homes: int = 0
     average_members_per_home: float
     total_active_subscriptions: int
     total_paid_member_seats: int

@@ -81,11 +81,34 @@ async def record_user_audit(
     db.add(log)
 
 
+def classify_user(u: UserModel, display_name: Optional[str] = None) -> str:
+    # vivek@zinfog.com must NEVER be classified as DEMO or TEST
+    if u.email and u.email.lower() == "vivek@zinfog.com":
+        return "REAL"
+    email_lower = (u.email or "").lower()
+    disp_lower = (display_name or "").lower()
+    if (
+        "example.com" in email_lower
+        or "demo_" in email_lower
+        or "audit_user" in email_lower
+        or "bulk" in email_lower
+        or "prodtest" in email_lower
+        or "test_" in email_lower
+        or "tester" in disp_lower
+        or "auditor" in disp_lower
+        or "demo" in disp_lower
+    ):
+        return "TEST"
+    return "REAL"
+
+
 @router.get("", response_model=ApiSuccessResponse[List[AdminUserListItemDTO]])
 async def list_and_search_users(
     query: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
     system_role: Optional[str] = Query(None),
+    classification: Optional[str] = Query(None),
     sort_by: str = Query("created_at"),
     sort_order: str = Query("desc"),
     limit: int = Query(default=50, ge=1, le=100),
@@ -101,6 +124,8 @@ async def list_and_search_users(
     off = _extract_int_param(offset, 0)
     q_str = _extract_str_param(query)
     role_str = _extract_str_param(system_role)
+    status_str = _extract_str_param(status)
+    class_str = _extract_str_param(classification)
     active_bool = _extract_bool_param(is_active)
     sort_by_str = _extract_str_param(sort_by, "created_at") or "created_at"
     sort_order_str = _extract_str_param(sort_order, "desc") or "desc"
@@ -123,14 +148,27 @@ async def list_and_search_users(
         .scalar_subquery()
     )
 
-    stmt = (
-        select(
-            UserModel,
-            display_name_subq.label("display_name"),
-            homes_count_subq.label("homes_count")
-        )
-        .where(UserModel.deleted_at == None)
+    stmt = select(
+        UserModel,
+        display_name_subq.label("display_name"),
+        homes_count_subq.label("homes_count")
     )
+
+    # Status handling
+    if status_str:
+        norm_status = status_str.upper().strip()
+        if norm_status == "ACTIVE":
+            stmt = stmt.where(UserModel.is_active == True, UserModel.deleted_at == None)
+        elif norm_status == "SUSPENDED":
+            stmt = stmt.where(UserModel.is_active == False, UserModel.deleted_at == None)
+        elif norm_status == "DEACTIVATED":
+            stmt = stmt.where(UserModel.deleted_at != None)
+        elif norm_status != "ALL":
+            stmt = stmt.where(UserModel.deleted_at == None)
+    elif active_bool is not None:
+        stmt = stmt.where(UserModel.is_active == active_bool, UserModel.deleted_at == None)
+    else:
+        stmt = stmt.where(UserModel.deleted_at == None)
 
     if q_str:
         clean_q = f"%{q_str.strip()}%"
@@ -141,9 +179,6 @@ async def list_and_search_users(
                 display_name_subq.ilike(clean_q)
             )
         )
-
-    if active_bool is not None:
-        stmt = stmt.where(UserModel.is_active == active_bool)
 
     if role_str:
         norm_role = role_str.upper().strip()
@@ -171,23 +206,28 @@ async def list_and_search_users(
     res = await db.execute(stmt)
     rows = res.all()
 
-    dtos = [
-        AdminUserListItemDTO(
-            id=u.id,
-            email=u.email,
-            phone_number=u.phone_number,
-            country_code=u.country_code,
-            display_name=disp or (u.email.split("@")[0] if u.email else "User"),
-            is_active=bool(u.is_active) if u.is_active is not None else True,
-            is_verified=bool(u.is_verified) if u.is_verified is not None else False,
-            mobile_verified=bool(u.mobile_verified) if u.mobile_verified is not None else False,
-            is_super_admin=bool(u.is_super_admin),
-            system_role=getattr(u, "system_role", None) or ("SUPER_ADMIN" if u.is_super_admin else "USER"),
-            homes_count=h_count or 0,
-            created_at=u.created_at or datetime.now(timezone.utc)
+    dtos = []
+    for u, disp, h_count in rows:
+        user_class = classify_user(u, disp)
+        if class_str and class_str.upper() != "ALL" and user_class != class_str.upper():
+            continue
+        dtos.append(
+            AdminUserListItemDTO(
+                id=u.id,
+                email=u.email,
+                phone_number=u.phone_number,
+                country_code=u.country_code,
+                display_name=disp or (u.email.split("@")[0] if u.email else "User"),
+                is_active=bool(u.is_active) if u.is_active is not None else True,
+                is_verified=bool(u.is_verified) if u.is_verified is not None else False,
+                mobile_verified=bool(u.mobile_verified) if u.mobile_verified is not None else False,
+                is_super_admin=bool(u.is_super_admin),
+                system_role=getattr(u, "system_role", None) or ("SUPER_ADMIN" if u.is_super_admin else "USER"),
+                classification=user_class,
+                homes_count=h_count or 0,
+                created_at=u.created_at or datetime.now(timezone.utc)
+            )
         )
-        for u, disp, h_count in rows
-    ]
     return ApiSuccessResponse(data=dtos)
 
 
@@ -202,7 +242,7 @@ async def bulk_user_action(
     Protects Super Admin self-account from destructive actions.
     """
     action_norm = payload.action.upper().strip()
-    valid_actions = {"ACTIVATE", "SUSPEND", "HOLD", "DELETE"}
+    valid_actions = {"ACTIVATE", "SUSPEND", "HOLD", "DELETE", "DEACTIVATE", "DELETE_TEST_USERS"}
     if action_norm not in valid_actions:
         raise HTTPException(status_code=400, detail=f"Invalid action '{payload.action}'. Must be one of {valid_actions}")
 
@@ -210,19 +250,25 @@ async def bulk_user_action(
     failed: List[dict] = []
 
     for uid in payload.user_ids:
-        if uid == super_admin.id and action_norm in {"SUSPEND", "HOLD", "DELETE"}:
+        if uid == super_admin.id and action_norm in {"SUSPEND", "HOLD", "DELETE", "DEACTIVATE", "DELETE_TEST_USERS"}:
             failed.append({"user_id": str(uid), "reason": "Super Admin cannot modify or suspend their own account."})
             continue
 
         user = await db.get(UserModel, uid)
-        if not user or user.deleted_at is not None:
-            failed.append({"user_id": str(uid), "reason": "User not found or already deleted."})
+        if not user or (user.deleted_at is not None and action_norm != "ACTIVATE"):
+            failed.append({"user_id": str(uid), "reason": "User not found or already deactivated."})
+            continue
+
+        # Critical Guardrail: vivek@zinfog.com must NEVER be deleted via bulk test action
+        if action_norm == "DELETE_TEST_USERS" and (user.email and user.email.lower() == "vivek@zinfog.com"):
+            failed.append({"user_id": str(uid), "reason": "Protected master account cannot be removed."})
             continue
 
         old_state = {"is_active": user.is_active, "deleted_at": user.deleted_at}
 
         if action_norm == "ACTIVATE":
             user.is_active = True
+            user.deleted_at = None
             user.updated_at = datetime.now(timezone.utc)
             await record_user_audit(
                 db=db,
@@ -230,7 +276,7 @@ async def bulk_user_action(
                 action="BULK_ACTIVATE_USER",
                 performed_by=super_admin.id,
                 old_values=old_state,
-                new_values={"is_active": True},
+                new_values={"is_active": True, "deleted_at": None},
                 reason=payload.reason
             )
             succeeded.append(user.id)
@@ -263,11 +309,11 @@ async def bulk_user_action(
             )
             succeeded.append(user.id)
 
-        elif action_norm == "DELETE":
+        elif action_norm in {"DELETE", "DEACTIVATE", "DELETE_TEST_USERS"}:
             # Check if user owns active homes
             owner_query = select(HomeModel).where(HomeModel.created_by == user.id, HomeModel.deleted_at == None)
             owned_homes = (await db.execute(owner_query)).scalars().all()
-            if owned_homes:
+            if owned_homes and action_norm != "DELETE_TEST_USERS":
                 failed.append({
                     "user_id": str(uid),
                     "reason": f"Cannot delete user who is primary creator of {len(owned_homes)} active home(s). Deactivate or transfer ownership first."
@@ -280,7 +326,7 @@ async def bulk_user_action(
             await record_user_audit(
                 db=db,
                 user_id=user.id,
-                action="BULK_DELETE_USER",
+                action=f"BULK_{action_norm}_USER",
                 performed_by=super_admin.id,
                 old_values=old_state,
                 new_values={"is_active": False, "deleted_at": str(user.deleted_at)},

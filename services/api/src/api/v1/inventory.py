@@ -27,6 +27,7 @@ from src.schemas.common import ApiSuccessResponse
 from src.schemas.inventory import (
     AssetLoanDTO,
     BorrowItemRequest,
+    ConsumeStockRequest,
     CreateCategoryRequest,
     CreateInventoryItemRequest,
     InventoryCategoryDTO,
@@ -36,6 +37,7 @@ from src.schemas.inventory import (
     MessageResponse,
     MoveItemRequest,
     PaginatedInventoryResponse,
+    RestockStockRequest,
     ReturnItemRequest,
     StockMovementDTO,
     StockMovementRequest,
@@ -615,6 +617,159 @@ async def delete_inventory_item(
 
     return ApiSuccessResponse(
         data=MessageResponse(message=f"Item '{item.name}' has been archived and deleted.")
+    )
+
+
+@router.post("/items/{item_id}/consume", response_model=ApiSuccessResponse[InventoryItemDTO])
+async def consume_inventory_item(
+    item_id: UUID,
+    payload: ConsumeStockRequest,
+    home_ctx: HomeContext = Depends(require_home_permission("inventory:edit")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Quick usage / stock reduction. Decreases quantity by used amount and logs stock movement.
+    """
+    query = select(InventoryItemModel).where(
+        InventoryItemModel.id == item_id,
+        InventoryItemModel.home_id == home_ctx.home_id,
+        InventoryItemModel.deleted_at == None
+    )
+    item = (await db.execute(query)).scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="Inventory item not found.")
+
+    prev_qty = item.quantity
+    used_qty = payload.quantity
+    new_qty = max(Decimal("0.000"), prev_qty - used_qty)
+    now = datetime.now(timezone.utc)
+
+    movement = StockMovementModel(
+        home_id=home_ctx.home_id,
+        item_id=item.id,
+        movement_type="CONSUME",
+        quantity_delta=-used_qty,
+        previous_quantity=prev_qty,
+        resulting_quantity=new_qty,
+        reason=payload.notes or "Quick stock consumption",
+        performed_by=home_ctx.user.id,
+        created_at=now
+    )
+    db.add(movement)
+
+    item.quantity = new_qty
+    item.status = calculate_stock_status(new_qty, item.min_threshold)
+    item.updated_at = now
+
+    await db.commit()
+    path_map = await build_location_path_map(db, home_ctx.home_id)
+    cat_name = (await db.get(InventoryCategoryModel, item.category_id)).name if item.category_id else None
+    return ApiSuccessResponse(data=to_inventory_item_dto(item, path_map, cat_name))
+
+
+@router.post("/items/{item_id}/restock", response_model=ApiSuccessResponse[InventoryItemDTO])
+async def restock_inventory_item(
+    item_id: UUID,
+    payload: RestockStockRequest,
+    home_ctx: HomeContext = Depends(require_home_permission("inventory:edit")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Quick restocking. Increases quantity and logs stock movement.
+    """
+    query = select(InventoryItemModel).where(
+        InventoryItemModel.id == item_id,
+        InventoryItemModel.home_id == home_ctx.home_id,
+        InventoryItemModel.deleted_at == None
+    )
+    item = (await db.execute(query)).scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="Inventory item not found.")
+
+    prev_qty = item.quantity
+    add_qty = payload.quantity
+    new_qty = prev_qty + add_qty
+    now = datetime.now(timezone.utc)
+
+    movement = StockMovementModel(
+        home_id=home_ctx.home_id,
+        item_id=item.id,
+        movement_type="RESTOCK",
+        quantity_delta=add_qty,
+        previous_quantity=prev_qty,
+        resulting_quantity=new_qty,
+        reason=payload.notes or "Quick stock restock",
+        performed_by=home_ctx.user.id,
+        created_at=now
+    )
+    db.add(movement)
+
+    item.quantity = new_qty
+    item.status = calculate_stock_status(new_qty, item.min_threshold)
+    item.updated_at = now
+
+    await db.commit()
+    path_map = await build_location_path_map(db, home_ctx.home_id)
+    cat_name = (await db.get(InventoryCategoryModel, item.category_id)).name if item.category_id else None
+    return ApiSuccessResponse(data=to_inventory_item_dto(item, path_map, cat_name))
+
+
+@router.post("/items/{item_id}/add-to-shopping", response_model=ApiSuccessResponse[MessageResponse])
+async def add_inventory_item_to_shopping(
+    item_id: UUID,
+    home_ctx: HomeContext = Depends(require_home_permission("inventory:edit")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Suggests / Adds a low-stock inventory item directly onto the Home's Purchase List.
+    """
+    from src.infrastructure.database.models import PurchaseItemModel
+
+    query = select(InventoryItemModel).where(
+        InventoryItemModel.id == item_id,
+        InventoryItemModel.home_id == home_ctx.home_id,
+        InventoryItemModel.deleted_at == None
+    )
+    item = (await db.execute(query)).scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="Inventory item not found.")
+
+    # Check if active item on purchase list already exists
+    exist_q = select(PurchaseItemModel).where(
+        PurchaseItemModel.home_id == home_ctx.home_id,
+        PurchaseItemModel.inventory_item_id == item.id,
+        PurchaseItemModel.status == "PENDING"
+    )
+    existing_p = (await db.execute(exist_q)).scalar_one_or_none()
+    if existing_p:
+        return ApiSuccessResponse(
+            data=MessageResponse(message=f"'{item.name}' is already on your shopping list.")
+        )
+
+    needed_qty = max(Decimal("1.000"), (item.preferred_quantity or item.min_threshold or Decimal("1.000")) - item.quantity)
+    if needed_qty <= 0:
+        needed_qty = Decimal("1.000")
+
+    now = datetime.now(timezone.utc)
+    new_purchase_item = PurchaseItemModel(
+        id=uuid4(),
+        home_id=home_ctx.home_id,
+        inventory_item_id=item.id,
+        name=item.name,
+        quantity=needed_qty,
+        unit=item.unit or "pcs",
+        notes=f"Low stock restock request (current: {item.quantity} {item.unit})",
+        status="PENDING",
+        added_by=home_ctx.user.id,
+        version=1,
+        created_at=now,
+        updated_at=now
+    )
+    db.add(new_purchase_item)
+    await db.commit()
+
+    return ApiSuccessResponse(
+        data=MessageResponse(message=f"Added '{item.name}' ({needed_qty} {item.unit}) to the shopping list.")
     )
 
 

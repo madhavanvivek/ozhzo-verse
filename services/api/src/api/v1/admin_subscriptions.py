@@ -203,6 +203,75 @@ async def update_subscription_plan(
     )
 
 
+@router.get("/plans", response_model=ApiSuccessResponse[List[SubscriptionPlanDetailDTO]])
+async def list_subscription_plans(
+    super_admin: UserModel = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get list of all subscription plans with prices and features for Super Admin.
+    """
+    query = (
+        select(SubscriptionPlanModel)
+        .options(
+            selectinload(SubscriptionPlanModel.prices),
+            selectinload(SubscriptionPlanModel.plan_features).selectinload(SubscriptionPlanFeatureModel.feature)
+        )
+        .order_by(SubscriptionPlanModel.created_at.asc())
+    )
+    plans = (await db.execute(query)).scalars().all()
+    dtos = []
+    for p in plans:
+        price_dtos = [
+            SubscriptionPriceDTO(
+                id=pr.id,
+                plan_id=pr.plan_id,
+                country=pr.country,
+                region=pr.region,
+                currency=pr.currency,
+                billing_period=pr.billing_period,
+                list_price=pr.list_price,
+                additional_member_list_price=pr.additional_member_list_price,
+                base_price=pr.base_price,
+                additional_member_price=pr.additional_member_price,
+                version=pr.version,
+                is_active=pr.is_active,
+                effective_from=pr.effective_from,
+                effective_until=pr.effective_until
+            )
+            for pr in getattr(p, "prices", [])
+        ]
+        feat_dtos = [
+            SubscriptionFeatureDTO(
+                id=pf.feature.id,
+                code=pf.feature.code,
+                name=pf.feature.name,
+                description=pf.feature.description,
+                is_enabled=pf.is_included
+            )
+            for pf in getattr(p, "plan_features", []) if getattr(pf, "feature", None)
+        ]
+        dtos.append(
+            SubscriptionPlanDetailDTO(
+                id=p.id,
+                name=p.name,
+                code=p.code,
+                description=p.description,
+                plan_type=p.plan_type,
+                status=p.status,
+                included_members=p.included_members,
+                maximum_members=p.maximum_members,
+                additional_member_allowed=p.additional_member_allowed,
+                introductory_enabled=p.introductory_enabled,
+                introductory_duration_days=p.introductory_duration_days,
+                introductory_price=p.introductory_price,
+                prices=price_dtos,
+                features=feat_dtos
+            )
+        )
+    return ApiSuccessResponse(data=dtos)
+
+
 # ------------------------------------------------------------------------------
 # 2. Standard / List Price Management & Versioning (Super Admin)
 # ------------------------------------------------------------------------------
@@ -569,6 +638,61 @@ async def create_subscription_feature(
     )
 
 
+@router.get("/features", response_model=ApiSuccessResponse[List[SubscriptionFeatureDTO]])
+async def list_subscription_features(
+    super_admin: UserModel = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    List all subscription feature flags and definitions.
+    """
+    query = select(SubscriptionFeatureModel).order_by(SubscriptionFeatureModel.code.asc())
+    features = (await db.execute(query)).scalars().all()
+    dtos = [
+        SubscriptionFeatureDTO(
+            id=f.id,
+            code=f.code,
+            name=f.name,
+            description=f.description,
+            is_enabled=f.is_active
+        )
+        for f in features
+    ]
+    return ApiSuccessResponse(data=dtos)
+
+
+@router.get("/prices", response_model=ApiSuccessResponse[List[SubscriptionPriceDTO]])
+async def list_subscription_prices(
+    super_admin: UserModel = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    List all standard and regional prices.
+    """
+    query = select(SubscriptionPriceModel).order_by(SubscriptionPriceModel.country.asc(), SubscriptionPriceModel.billing_period.asc())
+    prices = (await db.execute(query)).scalars().all()
+    dtos = [
+        SubscriptionPriceDTO(
+            id=pr.id,
+            plan_id=pr.plan_id,
+            country=pr.country,
+            region=pr.region,
+            currency=pr.currency,
+            billing_period=pr.billing_period,
+            list_price=pr.list_price,
+            additional_member_list_price=pr.additional_member_list_price,
+            base_price=pr.base_price,
+            additional_member_price=pr.additional_member_price,
+            version=pr.version,
+            is_active=pr.is_active,
+            effective_from=pr.effective_from,
+            effective_until=pr.effective_until
+        )
+        for pr in prices
+    ]
+    return ApiSuccessResponse(data=dtos)
+
+
 # ------------------------------------------------------------------------------
 # 5. Audit Log Review (Super Admin)
 # ------------------------------------------------------------------------------
@@ -604,6 +728,7 @@ async def get_subscription_audit_logs(
 
 @router.get("/subscribers", response_model=ApiSuccessResponse[List[AdminSubscriberListItemDTO]])
 async def list_subscribers(
+    status_filter: Optional[str] = None,
     super_admin: UserModel = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -627,8 +752,12 @@ async def list_subscribers(
         .outerjoin(SubscriptionPlanModel, SubscriptionModel.plan_id == SubscriptionPlanModel.id)
         .outerjoin(CouponModel, SubscriptionModel.active_coupon_id == CouponModel.id)
         .where(HomeModel.deleted_at == None)
-        .order_by(desc(SubscriptionModel.created_at))
     )
+
+    if status_filter and status_filter.upper() != "ALL":
+        query = query.where(SubscriptionModel.status == status_filter.upper())
+
+    query = query.order_by(desc(SubscriptionModel.created_at))
 
     rows = (await db.execute(query)).all()
 

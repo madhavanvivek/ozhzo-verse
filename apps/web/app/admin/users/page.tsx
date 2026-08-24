@@ -48,7 +48,8 @@ export default function AdminUsersPage() {
 
   // Filter & Search States
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'SUSPENDED'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'SUSPENDED' | 'DEACTIVATED'>('ALL');
+  const [classificationFilter, setClassificationFilter] = useState<'ALL' | 'REAL' | 'TEST' | 'DEMO'>('ALL');
   const [roleFilter, setRoleFilter] = useState<string>('ALL');
   const [sortBy, setSortBy] = useState<string>('created_at');
   const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
@@ -63,8 +64,8 @@ export default function AdminUsersPage() {
     try {
       const params = new URLSearchParams();
       if (searchQuery.trim()) params.set('query', searchQuery.trim());
-      if (statusFilter === 'ACTIVE') params.set('is_active', 'true');
-      if (statusFilter === 'SUSPENDED') params.set('is_active', 'false');
+      if (statusFilter !== 'ALL') params.set('status', statusFilter);
+      if (classificationFilter !== 'ALL') params.set('classification', classificationFilter);
       if (roleFilter !== 'ALL') params.set('system_role', roleFilter);
       params.set('sort_by', sortBy);
       params.set('sort_order', sortOrder);
@@ -83,7 +84,7 @@ export default function AdminUsersPage() {
 
   useEffect(() => {
     fetchUsers();
-  }, [page, statusFilter, roleFilter, sortBy, sortOrder]);
+  }, [page, statusFilter, classificationFilter, roleFilter, sortBy, sortOrder]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -494,6 +495,34 @@ export default function AdminUsersPage() {
             <option value="ALL">All Statuses</option>
             <option value="ACTIVE">Active Users</option>
             <option value="SUSPENDED">Suspended Users</option>
+            <option value="DEACTIVATED">Deactivated Users</option>
+          </select>
+
+          {/* Classification Filter */}
+          <select
+            value={classificationFilter}
+            onChange={(e) => {
+              setClassificationFilter(e.target.value as any);
+              setPage(0);
+            }}
+            aria-label="Filter by data classification"
+            style={{
+              padding: '10px 14px',
+              borderRadius: 'var(--radius-md, 10px)',
+              border: '1px solid var(--color-border-subtle, #e2e8f0)',
+              backgroundColor: 'var(--color-surface-subtle, #f1f5f9)',
+              fontSize: '13px',
+              fontWeight: 500,
+              color: 'var(--color-text-primary, #0f172a)',
+              minHeight: '44px',
+              outline: 'none',
+              cursor: 'pointer'
+            }}
+          >
+            <option value="ALL">All Data</option>
+            <option value="REAL">Real Accounts</option>
+            <option value="TEST">Test / Synthetic Accounts</option>
+            <option value="DEMO">Demo Accounts</option>
           </select>
 
           {/* System Role Filter */}

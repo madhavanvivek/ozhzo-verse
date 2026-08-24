@@ -18,9 +18,11 @@ from src.infrastructure.database.models import (
 from src.schemas.common import ApiSuccessResponse
 from src.schemas.inventory import (
     CreateLocationRequest,
+    CreateLocationTypeRequest,
     InventoryItemDTO,
     LocationDTO,
     LocationTreeDTO,
+    LocationTypeDTO,
     MessageResponse,
     UpdateLocationRequest
 )
@@ -223,9 +225,26 @@ async def update_location(
     )
 
 
+DEFAULT_LOCATION_TYPES = [
+    {"name": "Room / Area", "code": "ROOM", "description": "Living Room, Kitchen, Master Bedroom, Hallway", "icon": "door"},
+    {"name": "Cupboard / Cabinet", "code": "CUPBOARD", "description": "Kitchen cabinet, Wardrobe, Bathroom cabinet", "icon": "cabinet"},
+    {"name": "Furniture", "code": "FURNITURE", "description": "Bed, Desk, Dining table, Side table", "icon": "bed"},
+    {"name": "Shelf / Rack", "code": "SHELF", "description": "Bookshelf, Storage rack, Shoe rack", "icon": "layers"},
+    {"name": "Box / Container / Bin", "code": "CONTAINER", "description": "Plastic tote, Tool box, Storage bin", "icon": "box"},
+    {"name": "Kitchen Pantry", "code": "PANTRY", "description": "Food and ingredient storage area", "icon": "shopping-bag"},
+    {"name": "Storage Zone", "code": "ZONE", "description": "Garage, Attic, Basement, Shed", "icon": "archive"},
+    {"name": "Freezer Section", "code": "FREEZER", "description": "Freezer drawer, Deep freezer", "icon": "thermometer"},
+    {"name": "Tool Rack", "code": "TOOL_RACK", "description": "Workshop wall, Tool holder", "icon": "wrench"},
+    {"name": "Medicine Cabinet", "code": "MEDICINE", "description": "First aid and pharmaceutical storage", "icon": "cross"},
+    {"name": "Travel Bag", "code": "BAG", "description": "Luggage, Backpack, Travel kit", "icon": "briefcase"},
+    {"name": "Document Folder", "code": "FOLDER", "description": "Important papers and documents file", "icon": "folder"},
+]
+
+
 @router.delete("/{location_id}", response_model=ApiSuccessResponse[MessageResponse])
 async def delete_location(
     location_id: UUID,
+    force: bool = Query(False, description="Force delete even if items are inside"),
     home_ctx: HomeContext = Depends(require_home_permission("inventory:delete")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -240,9 +259,162 @@ async def delete_location(
     if not loc:
         raise HTTPException(status_code=404, detail="Location not found.")
 
+    # Safety check: active items attached
+    item_count_query = select(func.count(InventoryItemModel.id)).where(
+        InventoryItemModel.location_id == location_id,
+        InventoryItemModel.deleted_at == None
+    )
+    item_count = (await db.execute(item_count_query)).scalar() or 0
+    if item_count > 0 and not force:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Location '{loc.name}' contains {item_count} active item(s). Reassign them first or set force=true."
+        )
+
     loc.deleted_at = datetime.now(timezone.utc)
     await db.commit()
 
     return ApiSuccessResponse(
         data=MessageResponse(message=f"Location '{loc.name}' has been archived.")
+    )
+
+
+# ------------------------------------------------------------------------------
+# Custom Location Types Management
+# ------------------------------------------------------------------------------
+
+types_router = APIRouter(prefix="/homes/{home_id}/location-types", tags=["Location Types"])
+
+
+@types_router.get("", response_model=ApiSuccessResponse[List[LocationTypeDTO]])
+async def list_location_types(
+    home_ctx: HomeContext = Depends(require_home_permission("inventory:view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get all default location types + custom location types scoped to this Home workspace.
+    """
+    from src.infrastructure.database.models import CustomLocationTypeModel
+
+    # Query custom location types for this home
+    query = select(CustomLocationTypeModel).where(
+        CustomLocationTypeModel.home_id == home_ctx.home_id,
+        CustomLocationTypeModel.deleted_at == None,
+        CustomLocationTypeModel.is_active == True
+    ).order_by(CustomLocationTypeModel.name.asc())
+
+    custom_types = (await db.execute(query)).scalars().all()
+
+    dtos: List[LocationTypeDTO] = []
+
+    # 1. Add system defaults
+    for dt in DEFAULT_LOCATION_TYPES:
+        dtos.append(
+            LocationTypeDTO(
+                name=dt["name"],
+                code=dt["code"],
+                description=dt.get("description"),
+                icon=dt.get("icon"),
+                is_system_default=True
+            )
+        )
+
+    # 2. Add home's custom types
+    for ct in custom_types:
+        dtos.append(
+            LocationTypeDTO(
+                id=ct.id,
+                home_id=ct.home_id,
+                name=ct.name,
+                code=ct.code,
+                description=ct.description,
+                icon=ct.icon,
+                is_system_default=False,
+                created_at=ct.created_at
+            )
+        )
+
+    return ApiSuccessResponse(data=dtos)
+
+
+@types_router.post("", status_code=status.HTTP_201_CREATED, response_model=ApiSuccessResponse[LocationTypeDTO])
+async def create_custom_location_type(
+    payload: CreateLocationTypeRequest,
+    home_ctx: HomeContext = Depends(require_home_permission("inventory:create")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Create a new custom location type scoped specifically to this Home.
+    """
+    from src.infrastructure.database.models import CustomLocationTypeModel
+    import re
+
+    clean_name = payload.name.strip()
+    code = (payload.code.strip().upper() if payload.code else re.sub(r'[^A-Z0-9_]', '_', clean_name.upper()))
+
+    # Check duplicate code within the home
+    existing_query = select(CustomLocationTypeModel).where(
+        CustomLocationTypeModel.home_id == home_ctx.home_id,
+        CustomLocationTypeModel.code == code,
+        CustomLocationTypeModel.deleted_at == None
+    )
+    existing = (await db.execute(existing_query)).scalar_one_or_none()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Location type with code '{code}' already exists for this home."
+        )
+
+    new_type = CustomLocationTypeModel(
+        id=uuid4(),
+        home_id=home_ctx.home_id,
+        name=clean_name,
+        code=code,
+        description=payload.description,
+        icon=payload.icon or "tag",
+        is_active=True,
+        created_by=home_ctx.user.id
+    )
+    db.add(new_type)
+    await db.commit()
+
+    return ApiSuccessResponse(
+        data=LocationTypeDTO(
+            id=new_type.id,
+            home_id=new_type.home_id,
+            name=new_type.name,
+            code=new_type.code,
+            description=new_type.description,
+            icon=new_type.icon,
+            is_system_default=False,
+            created_at=new_type.created_at
+        )
+    )
+
+
+@types_router.delete("/{type_id}", response_model=ApiSuccessResponse[MessageResponse])
+async def delete_custom_location_type(
+    type_id: UUID,
+    home_ctx: HomeContext = Depends(require_home_permission("inventory:delete")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Archive / delete a custom location type belonging to this Home.
+    """
+    from src.infrastructure.database.models import CustomLocationTypeModel
+
+    query = select(CustomLocationTypeModel).where(
+        CustomLocationTypeModel.id == type_id,
+        CustomLocationTypeModel.home_id == home_ctx.home_id,
+        CustomLocationTypeModel.deleted_at == None
+    )
+    c_type = (await db.execute(query)).scalar_one_or_none()
+    if not c_type:
+        raise HTTPException(status_code=404, detail="Custom location type not found.")
+
+    c_type.deleted_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    return ApiSuccessResponse(
+        data=MessageResponse(message=f"Location type '{c_type.name}' has been archived.")
     )

@@ -49,6 +49,7 @@ export default function AdminHomesPage() {
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'SUSPENDED' | 'HELD' | 'ARCHIVED'>('ALL');
+  const [classificationFilter, setClassificationFilter] = useState<'ALL' | 'REAL' | 'TEST' | 'DEMO'>('ALL');
 
   // Pagination
   const [page, setPage] = useState(0);
@@ -61,6 +62,7 @@ export default function AdminHomesPage() {
       const params = new URLSearchParams();
       if (searchQuery.trim()) params.set('query', searchQuery.trim());
       if (statusFilter !== 'ALL') params.set('status', statusFilter);
+      if (classificationFilter !== 'ALL') params.set('classification', classificationFilter);
       params.set('limit', String(limit));
       params.set('offset', String(page * limit));
 
@@ -76,7 +78,7 @@ export default function AdminHomesPage() {
 
   useEffect(() => {
     fetchHomes();
-  }, [page, statusFilter]);
+  }, [page, statusFilter, classificationFilter]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -489,10 +491,37 @@ export default function AdminHomesPage() {
             }}
           >
             <option value="ALL">All Statuses</option>
-            <option value="ACTIVE">Active</option>
-            <option value="SUSPENDED">Suspended</option>
-            <option value="HELD">Held</option>
-            <option value="ARCHIVED">Archived</option>
+            <option value="ACTIVE">Active Workspaces</option>
+            <option value="SUSPENDED">Suspended Workspaces</option>
+            <option value="HELD">Held Workspaces</option>
+            <option value="ARCHIVED">Archived Workspaces</option>
+          </select>
+
+          {/* Classification Filter */}
+          <select
+            value={classificationFilter}
+            onChange={(e) => {
+              setClassificationFilter(e.target.value as any);
+              setPage(0);
+            }}
+            aria-label="Filter by data classification"
+            style={{
+              padding: '10px 14px',
+              borderRadius: 'var(--radius-md, 10px)',
+              border: '1px solid var(--color-border-subtle, #e2e8f0)',
+              backgroundColor: 'var(--color-surface-subtle, #f1f5f9)',
+              fontSize: '13px',
+              fontWeight: 500,
+              color: 'var(--color-text-primary, #0f172a)',
+              minHeight: '44px',
+              outline: 'none',
+              cursor: 'pointer'
+            }}
+          >
+            <option value="ALL">All Data</option>
+            <option value="REAL">Real Workspaces</option>
+            <option value="TEST">Test / Synthetic Workspaces</option>
+            <option value="DEMO">Demo Workspaces</option>
           </select>
 
           <button

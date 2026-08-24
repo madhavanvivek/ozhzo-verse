@@ -17,7 +17,8 @@ import {
   FolderPlus,
   X,
   Sparkles,
-  Edit2
+  Edit2,
+  ShoppingCart
 } from 'lucide-react';
 import { apiClient } from '@/lib/apiClient';
 
@@ -103,6 +104,23 @@ export default function InventoryPage() {
   const [borrowerName, setBorrowerName] = useState('');
   const [borrowerContact, setBorrowerContact] = useState('');
 
+  // Location Types State
+  const [locationTypes, setLocationTypes] = useState<Array<{ name: string; code: string; is_system_default?: boolean }>>([]);
+
+  // Quick Usage State
+  const [isQuickUseOpen, setIsQuickUseOpen] = useState(false);
+  const [quickUseItem, setQuickUseItem] = useState<Item | null>(null);
+  const [quickUseAmount, setQuickUseAmount] = useState('1');
+  const [quickUseNotes, setQuickUseNotes] = useState('');
+  const [isSubmittingUse, setIsSubmittingUse] = useState(false);
+
+  // Quick Restock State
+  const [isQuickRestockOpen, setIsQuickRestockOpen] = useState(false);
+  const [quickRestockItem, setQuickRestockItem] = useState<Item | null>(null);
+  const [quickRestockAmount, setQuickRestockAmount] = useState('1');
+  const [quickRestockNotes, setQuickRestockNotes] = useState('');
+  const [isSubmittingRestock, setIsSubmittingRestock] = useState(false);
+
   const nameInputRef = useRef<HTMLInputElement>(null);
   const locInputRef = useRef<HTMLInputElement>(null);
 
@@ -113,10 +131,15 @@ export default function InventoryPage() {
       setActiveHomeId(homeId);
 
       if (homeId) {
-        const [itemsRes, flatLocsRes] = await Promise.allSettled([
+        const [itemsRes, flatLocsRes, locTypesRes] = await Promise.allSettled([
           apiClient.get<any>(`/homes/${homeId}/inventory/items`),
-          apiClient.get<any>(`/homes/${homeId}/locations`)
+          apiClient.get<any>(`/homes/${homeId}/locations`),
+          apiClient.get<any>(`/homes/${homeId}/location-types`)
         ]);
+
+        if (locTypesRes.status === 'fulfilled' && Array.isArray(locTypesRes.value)) {
+          setLocationTypes(locTypesRes.value);
+        }
 
         if (itemsRes.status === 'fulfilled' && itemsRes.value) {
           const rawItems = itemsRes.value.items || itemsRes.value;
@@ -255,7 +278,7 @@ export default function InventoryPage() {
       await loadData();
     } catch (err: any) {
       console.error('Failed to add item:', err);
-      alert(err?.message || 'Failed to save item to Home Memory.');
+      alert(err?.message || 'Failed to save item to Home Inventory.');
     } finally {
       setIsSubmittingItem(false);
     }
@@ -267,9 +290,17 @@ export default function InventoryPage() {
 
     setIsSubmittingLocation(true);
     try {
-      const finalType = newLocationType === 'CUSTOM'
-        ? (newCustomLocationType.trim() || 'CUSTOM')
-        : newLocationType;
+      let finalType = newLocationType;
+      if (newLocationType === 'CUSTOM' && newCustomLocationType.trim()) {
+        try {
+          await apiClient.post(`/homes/${activeHomeId}/location-types`, {
+            name: newCustomLocationType.trim()
+          });
+        } catch {
+          // Ignore duplicate code error
+        }
+        finalType = newCustomLocationType.trim();
+      }
 
       const payload = {
         name: newLocationName.trim(),
@@ -278,7 +309,10 @@ export default function InventoryPage() {
         description: newLocationDescription.trim() || undefined
       };
 
-      await apiClient.post(`/homes/${activeHomeId}/locations`, payload);
+      const created: any = await apiClient.post(`/homes/${activeHomeId}/locations`, payload);
+      if (created && created.id) {
+        setNewItemLocationId(created.id);
+      }
       setNewLocationName('');
       setNewLocationDescription('');
       setNewCustomLocationType('');
@@ -289,6 +323,66 @@ export default function InventoryPage() {
       alert(err?.message || 'Failed to create location.');
     } finally {
       setIsSubmittingLocation(false);
+    }
+  };
+
+  const handleExecuteQuickUse = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quickUseItem || !activeHomeId) return;
+    const qty = parseFloat(quickUseAmount) || 0;
+    if (qty <= 0) {
+      alert('Please enter a valid positive quantity.');
+      return;
+    }
+    setIsSubmittingUse(true);
+    try {
+      await apiClient.post(`/homes/${activeHomeId}/inventory/items/${quickUseItem.id}/consume`, {
+        quantity: qty,
+        notes: quickUseNotes.trim() || undefined
+      });
+      setIsQuickUseOpen(false);
+      setQuickUseItem(null);
+      setQuickUseNotes('');
+      await loadData();
+    } catch (err: any) {
+      alert(err?.message || 'Failed to record stock usage.');
+    } finally {
+      setIsSubmittingUse(false);
+    }
+  };
+
+  const handleExecuteQuickRestock = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quickRestockItem || !activeHomeId) return;
+    const qty = parseFloat(quickRestockAmount) || 0;
+    if (qty <= 0) {
+      alert('Please enter a valid positive quantity.');
+      return;
+    }
+    setIsSubmittingRestock(true);
+    try {
+      await apiClient.post(`/homes/${activeHomeId}/inventory/items/${quickRestockItem.id}/restock`, {
+        quantity: qty,
+        notes: quickRestockNotes.trim() || undefined
+      });
+      setIsQuickRestockOpen(false);
+      setQuickRestockItem(null);
+      setQuickRestockNotes('');
+      await loadData();
+    } catch (err: any) {
+      alert(err?.message || 'Failed to restock item.');
+    } finally {
+      setIsSubmittingRestock(false);
+    }
+  };
+
+  const handleAddToShopping = async (item: Item) => {
+    if (!activeHomeId) return;
+    try {
+      const res: any = await apiClient.post(`/homes/${activeHomeId}/inventory/items/${item.id}/add-to-shopping`);
+      alert(res?.message || `Added "${item.name}" to the shopping list.`);
+    } catch (err: any) {
+      alert(err?.message || 'Failed to add item to shopping list.');
     }
   };
 
@@ -869,14 +963,14 @@ export default function InventoryPage() {
                         )}
                       </div>
                     ) : (
-                      <div style={{ display: 'flex', gap: '4px' }}>
+                      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' }}>
                         <Button
                           size="sm"
                           variant="secondary"
                           onClick={() => handleAdjustStock(item, -1)}
                           aria-label={`Reduce ${item.name} quantity by 1`}
                         >
-                          -1 {item.unit}
+                          -1
                         </Button>
                         <Button
                           size="sm"
@@ -884,8 +978,46 @@ export default function InventoryPage() {
                           onClick={() => handleAdjustStock(item, 1)}
                           aria-label={`Increase ${item.name} quantity by 1`}
                         >
-                          +1 {item.unit}
+                          +1
                         </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => {
+                            setQuickUseItem(item);
+                            setQuickUseAmount('1');
+                            setQuickUseNotes('');
+                            setIsQuickUseOpen(true);
+                          }}
+                          aria-label={`Use ${item.name}`}
+                        >
+                          Use
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => {
+                            setQuickRestockItem(item);
+                            setQuickRestockAmount('1');
+                            setQuickRestockNotes('');
+                            setIsQuickRestockOpen(true);
+                          }}
+                          aria-label={`Restock ${item.name}`}
+                        >
+                          + Restock
+                        </Button>
+                        {(item.quantity <= (item.min_threshold || 1) || item.status === 'LOW' || item.status === 'OUT_OF_STOCK') && (
+                          <Button
+                            size="sm"
+                            variant="primary"
+                            onClick={() => handleAddToShopping(item)}
+                            style={{ fontSize: '11px', padding: '0 8px' }}
+                            title="Add to Shopping List"
+                          >
+                            <ShoppingCart size={13} style={{ marginRight: '4px' }} />
+                            <span>Buy</span>
+                          </Button>
+                        )}
                       </div>
                     )}
 
@@ -1019,7 +1151,24 @@ export default function InventoryPage() {
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <label style={{ fontSize: '13px', fontWeight: 600 }}>Location</label>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <label style={{ fontSize: '13px', fontWeight: 600 }}>Location</label>
+                    <button
+                      type="button"
+                      onClick={() => openAddLocationModal()}
+                      style={{
+                        fontSize: '12px',
+                        color: 'var(--color-primary-700, #334155)',
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        fontWeight: 600,
+                        padding: 0
+                      }}
+                    >
+                      + Add New Location
+                    </button>
+                  </div>
                   <select
                     value={newItemLocationId}
                     onChange={(e) => setNewItemLocationId(e.target.value)}
@@ -1160,11 +1309,29 @@ export default function InventoryPage() {
                     onChange={(e) => setNewLocationType(e.target.value)}
                     style={{ height: '40px', padding: '0 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border-subtle)' }}
                   >
-                    <option value="ROOM">Room / Area</option>
-                    <option value="FURNITURE">Cupboard / Cabinet / Furniture</option>
-                    <option value="SHELF">Shelf / Rack</option>
-                    <option value="CONTAINER">Box / Container / Bin</option>
-                    <option value="CUSTOM">Custom Location Type...</option>
+                    {locationTypes.length > 0 ? (
+                      locationTypes.map((lt) => (
+                        <option key={lt.code} value={lt.code}>
+                          {lt.name}
+                        </option>
+                      ))
+                    ) : (
+                      <>
+                        <option value="ROOM">Room / Area</option>
+                        <option value="CUPBOARD">Cupboard / Cabinet</option>
+                        <option value="FURNITURE">Furniture</option>
+                        <option value="SHELF">Shelf / Rack</option>
+                        <option value="CONTAINER">Box / Container / Bin</option>
+                        <option value="PANTRY">Kitchen Pantry</option>
+                        <option value="ZONE">Storage Zone</option>
+                        <option value="FREEZER">Freezer Section</option>
+                        <option value="TOOL_RACK">Tool Rack</option>
+                        <option value="MEDICINE">Medicine Cabinet</option>
+                        <option value="BAG">Travel Bag</option>
+                        <option value="FOLDER">Document Folder</option>
+                      </>
+                    )}
+                    <option value="CUSTOM">+ Create Custom Location Type...</option>
                   </select>
                 </div>
 
@@ -1456,6 +1623,183 @@ export default function InventoryPage() {
               <Button variant="ghost" onClick={() => setIsReturnOpen(false)}>Cancel</Button>
               <Button onClick={handleReturnItem}>Confirm Return to {selectedItem.location_path}</Button>
             </div>
+          </Card>
+        </div>
+      )}
+      {/* Quick Use Modal */}
+      {isQuickUseOpen && quickUseItem && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            zIndex: 100,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '16px'
+          }}
+          onClick={() => setIsQuickUseOpen(false)}
+        >
+          <Card
+            style={{
+              width: '100%',
+              maxWidth: '420px',
+              border: '2px solid var(--color-primary-900)'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-3)' }}>
+              <div>
+                <h3 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--color-primary-900)' }}>
+                  Use / Consume {quickUseItem.name}
+                </h3>
+                <p style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                  Current stock: {quickUseItem.quantity} {quickUseItem.unit}
+                </p>
+              </div>
+              <button
+                onClick={() => setIsQuickUseOpen(false)}
+                className="touch-target"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}
+                aria-label="Close dialog"
+              >
+                <X size={20} color="var(--color-text-secondary)" />
+              </button>
+            </div>
+
+            <form onSubmit={handleExecuteQuickUse} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+              <Input
+                id="quickUseAmountInput"
+                autoFocus
+                label={`Amount Used (${quickUseItem.unit}) *`}
+                type="number"
+                step="0.01"
+                value={quickUseAmount}
+                onChange={(e) => setQuickUseAmount(e.target.value)}
+                required
+              />
+
+              <div style={{ display: 'flex', gap: '6px' }}>
+                {[0.5, 1, 2, 5].map((preset) => (
+                  <Button
+                    key={preset}
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => setQuickUseAmount(preset.toString())}
+                  >
+                    {preset} {quickUseItem.unit}
+                  </Button>
+                ))}
+              </div>
+
+              <Input
+                id="quickUseNotesInput"
+                label="Notes (optional)"
+                placeholder="e.g. Daily cooking, baking..."
+                value={quickUseNotes}
+                onChange={(e) => setQuickUseNotes(e.target.value)}
+              />
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: 'var(--space-2)' }}>
+                <Button type="button" variant="ghost" onClick={() => setIsQuickUseOpen(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isSubmittingUse}>
+                  {isSubmittingUse ? 'Recording...' : `Use ${quickUseAmount || 0} ${quickUseItem.unit}`}
+                </Button>
+              </div>
+            </form>
+          </Card>
+        </div>
+      )}
+
+      {/* Quick Restock Modal */}
+      {isQuickRestockOpen && quickRestockItem && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            zIndex: 100,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '16px'
+          }}
+          onClick={() => setIsQuickRestockOpen(false)}
+        >
+          <Card
+            style={{
+              width: '100%',
+              maxWidth: '420px',
+              border: '2px solid var(--color-primary-900)'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-3)' }}>
+              <div>
+                <h3 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--color-primary-900)' }}>
+                  Restock {quickRestockItem.name}
+                </h3>
+                <p style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+                  Current stock: {quickRestockItem.quantity} {quickRestockItem.unit}
+                </p>
+              </div>
+              <button
+                onClick={() => setIsQuickRestockOpen(false)}
+                className="touch-target"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}
+                aria-label="Close dialog"
+              >
+                <X size={20} color="var(--color-text-secondary)" />
+              </button>
+            </div>
+
+            <form onSubmit={handleExecuteQuickRestock} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+              <Input
+                id="quickRestockAmountInput"
+                autoFocus
+                label={`Amount Added (${quickRestockItem.unit}) *`}
+                type="number"
+                step="0.01"
+                value={quickRestockAmount}
+                onChange={(e) => setQuickRestockAmount(e.target.value)}
+                required
+              />
+
+              <div style={{ display: 'flex', gap: '6px' }}>
+                {[1, 2, 5, 10].map((preset) => (
+                  <Button
+                    key={preset}
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => setQuickRestockAmount(preset.toString())}
+                  >
+                    +{preset} {quickRestockItem.unit}
+                  </Button>
+                ))}
+              </div>
+
+              <Input
+                id="quickRestockNotesInput"
+                label="Notes (optional)"
+                placeholder="e.g. Grocery store, bulk purchase..."
+                value={quickRestockNotes}
+                onChange={(e) => setQuickRestockNotes(e.target.value)}
+              />
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: 'var(--space-2)' }}>
+                <Button type="button" variant="ghost" onClick={() => setIsQuickRestockOpen(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isSubmittingRestock}>
+                  {isSubmittingRestock ? 'Restocking...' : `Add +${quickRestockAmount || 0} ${quickRestockItem.unit}`}
+                </Button>
+              </div>
+            </form>
           </Card>
         </div>
       )}

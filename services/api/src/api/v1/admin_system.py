@@ -45,6 +45,7 @@ async def get_system_configuration(
     )
 
 
+@router.get("/summary", response_model=ApiSuccessResponse[AdminAnalyticsSummaryDTO])
 @router.get("/analytics-summary", response_model=ApiSuccessResponse[AdminAnalyticsSummaryDTO])
 @router.get("/analytics/summary", response_model=ApiSuccessResponse[AdminAnalyticsSummaryDTO])
 async def get_analytics_summary(
@@ -54,18 +55,18 @@ async def get_analytics_summary(
     """
     Analytics foundation metrics summary for Super Admin dashboard with real DB counts.
     """
-    # Total & active users
-    tot_users = (await db.execute(select(func.count(UserModel.id)))).scalar() or 0
-    act_users = (await db.execute(select(func.count(UserModel.id)).where(UserModel.is_active == True))).scalar() or 0
-    sus_users = tot_users - act_users
+    # Total & active users (non-deleted)
+    tot_users = (await db.execute(select(func.count(UserModel.id)).where(UserModel.deleted_at == None))).scalar() or 0
+    act_users = (await db.execute(select(func.count(UserModel.id)).where(UserModel.is_active == True, UserModel.deleted_at == None))).scalar() or 0
+    sus_users = max(0, tot_users - act_users)
 
-    # Total & active homes
-    tot_homes = (await db.execute(select(func.count(HomeModel.id)))).scalar() or 0
-    act_homes = (await db.execute(select(func.count(HomeModel.id)).where(HomeModel.status == "ACTIVE"))).scalar() or 0
-    sus_homes = tot_homes - act_homes
+    # Total & active homes (non-deleted)
+    tot_homes = (await db.execute(select(func.count(HomeModel.id)).where(HomeModel.deleted_at == None))).scalar() or 0
+    act_homes = (await db.execute(select(func.count(HomeModel.id)).where(HomeModel.status == "ACTIVE", HomeModel.deleted_at == None))).scalar() or 0
+    sus_homes = max(0, tot_homes - act_homes)
 
     # Members count & average
-    tot_memberships = (await db.execute(select(func.count(HomeMemberModel.id)))).scalar() or 0
+    tot_memberships = (await db.execute(select(func.count(HomeMemberModel.id)).join(HomeModel, HomeMemberModel.home_id == HomeModel.id).where(HomeModel.deleted_at == None))).scalar() or 0
     avg_members = float(tot_memberships / tot_homes) if tot_homes > 0 else 0.0
 
     # Subscriptions & paid seats
@@ -77,9 +78,11 @@ async def get_analytics_summary(
             total_users=tot_users,
             active_users=act_users,
             suspended_users=sus_users,
+            deactivated_users=0,
             total_homes=tot_homes,
             active_homes=act_homes,
             suspended_homes=sus_homes,
+            archived_homes=0,
             average_members_per_home=round(avg_members, 2),
             total_active_subscriptions=act_subs,
             total_paid_member_seats=int(paid_seats_val),

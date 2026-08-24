@@ -5,7 +5,7 @@ from src.api.v1.users import router as users_router
 from src.api.v1.homes import router as homes_router
 from src.api.v1.members import router as members_router
 from src.api.v1.inventory import router as inventory_router
-from src.api.v1.locations import router as locations_router
+from src.api.v1.locations import router as locations_router, types_router as location_types_router
 from src.api.v1.templates import router as templates_router
 from src.api.v1.units import router as units_router
 from src.api.v1.purchase_list import router as purchase_list_router
@@ -42,6 +42,7 @@ api_v1_router.include_router(templates_router)
 api_v1_router.include_router(units_router)
 api_v1_router.include_router(inventory_router)
 api_v1_router.include_router(locations_router)
+api_v1_router.include_router(location_types_router)
 api_v1_router.include_router(purchase_list_router)
 api_v1_router.include_router(shopping_router)
 api_v1_router.include_router(tasks_router)

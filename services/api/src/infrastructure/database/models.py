@@ -239,6 +239,28 @@ class LocationModel(Base):
     )
 
 
+class CustomLocationTypeModel(Base):
+    __tablename__ = "custom_location_types"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    home_id = Column(UUID(as_uuid=True), ForeignKey("homes.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(120), nullable=False)
+    code = Column(String(64), nullable=False)
+    description = Column(Text, nullable=True)
+    icon = Column(String(50), nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("home_id", "code", name="uq_custom_location_types_home_code"),
+    )
+
+    home = relationship("HomeModel", backref="custom_location_types")
+
+
 class InventoryItemModel(Base):
     __tablename__ = "inventory_items"
 

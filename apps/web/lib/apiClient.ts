@@ -19,10 +19,35 @@ export interface ApiResponse<T = any> {
   detail?: string;
 }
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL ||
-  process.env.NEXT_PUBLIC_API_BASE_URL ||
-  'https://ozhzo-api.onrender.com/api/v1';
+export function resolveApiBaseUrl(): string {
+  let base = (
+    process.env.NEXT_PUBLIC_API_URL ||
+    process.env.NEXT_PUBLIC_API_BASE_URL ||
+    'https://ozhzo-api.onrender.com/api/v1'
+  ).trim();
+
+  // Strip trailing slashes
+  while (base.endsWith('/')) {
+    base = base.slice(0, -1);
+  }
+
+  // Ensure /api/v1 is present
+  if (!base.endsWith('/api/v1') && !base.includes('/api/v1')) {
+    base = `${base}/api/v1`;
+  }
+  return base;
+}
+
+export function buildApiUrl(endpoint: string): string {
+  const base = resolveApiBaseUrl();
+  let cleanEndpoint = (endpoint || '').trim();
+  if (!cleanEndpoint.startsWith('/')) {
+    cleanEndpoint = `/${cleanEndpoint}`;
+  }
+  return `${base}${cleanEndpoint}`;
+}
+
+export const API_BASE_URL = resolveApiBaseUrl();
 
 class ApiClient {
   private accessToken: string | null = null;
@@ -194,7 +219,8 @@ class ApiClient {
     }
 
     try {
-      const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
+      const refreshUrl = buildApiUrl('/auth/refresh');
+      const res = await fetch(refreshUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -244,14 +270,15 @@ class ApiClient {
       headers.set('Authorization', `Bearer ${token}`);
     }
 
+    const url = buildApiUrl(endpoint);
     let response: Response;
     try {
-      response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      response = await fetch(url, {
         ...options,
         headers
       });
     } catch (networkErr: any) {
-      console.error(`Network fetch failed for ${endpoint}:`, networkErr);
+      console.error(`Network fetch failed for ${url}:`, networkErr);
       throw new Error(networkErr?.message || 'Failed to connect to API server. Please check your connection.');
     }
 
@@ -270,7 +297,7 @@ class ApiClient {
         retryHeaders.set('Content-Type', 'application/json');
         retryHeaders.set('Authorization', `Bearer ${newAccessToken}`);
 
-        response = await fetch(`${API_BASE_URL}${endpoint}`, {
+        response = await fetch(url, {
           ...options,
           headers: retryHeaders
         });

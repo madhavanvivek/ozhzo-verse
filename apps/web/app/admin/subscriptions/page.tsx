@@ -53,7 +53,7 @@ export default function AdminSubscriptionsPage() {
         apiClient.get<SubscriptionPlan[]>('/admin/subscriptions/plans'),
         apiClient.get<SubscriptionFeature[]>('/admin/subscriptions/features'),
         apiClient.get<Promotion[]>('/admin/subscriptions/promotions'),
-        apiClient.get<AdminSubscriberListItem[]>('/admin/subscriptions/subscribers').catch(() => [])
+        apiClient.get<AdminSubscriberListItem[]>('/admin/subscriptions/subscribers')
       ]);
       setPlans(plansData || []);
       setFeatures(featuresData || []);

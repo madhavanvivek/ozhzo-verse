@@ -139,16 +139,17 @@ function DashboardPageContent() {
         apiClient.get<Array<{ id: string; name: string; role: string }>>('/homes')
       ]);
 
-      let profileData = null;
-      if (profileRes.status === 'fulfilled' && profileRes.value) {
-        profileData = profileRes.value;
-        setUserProfile(profileData);
+      if (profileRes.status === 'rejected') {
+        throw new Error(profileRes.reason?.message || 'Failed to authenticate user profile.');
+      }
+      if (homesRes.status === 'rejected') {
+        throw new Error(homesRes.reason?.message || 'Failed to load user homes.');
       }
 
-      let accessibleHomes: Array<{ id: string; name: string; role: string }> = [];
-      if (homesRes.status === 'fulfilled' && Array.isArray(homesRes.value)) {
-        accessibleHomes = homesRes.value;
-      }
+      const profileData = profileRes.value;
+      setUserProfile(profileData);
+
+      const accessibleHomes: Array<{ id: string; name: string; role: string }> = Array.isArray(homesRes.value) ? homesRes.value : [];
       setUserHomes(accessibleHomes);
 
       // STATE A: User has zero homes -> Onboarding State

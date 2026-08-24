@@ -354,6 +354,7 @@ async def update_subscription_price(
 # ------------------------------------------------------------------------------
 
 @router.post("/promotions", status_code=status.HTTP_201_CREATED, response_model=ApiSuccessResponse[PromotionDTO])
+@router.post("/admin/promotions", status_code=status.HTTP_201_CREATED, response_model=ApiSuccessResponse[PromotionDTO], include_in_schema=False)
 async def create_promotion(
     payload: CreatePromotionRequest,
     super_admin: UserModel = Depends(require_super_admin),
@@ -491,6 +492,7 @@ async def update_promotion(
 
 
 @router.get("/promotions", response_model=ApiSuccessResponse[List[PromotionDTO]])
+@router.get("/admin/promotions", response_model=ApiSuccessResponse[List[PromotionDTO]], include_in_schema=False)
 async def list_promotions(
     super_admin: UserModel = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db),

@@ -89,20 +89,49 @@ async def list_and_search_homes(
     q_str = _extract_str_param(query)
     status_str = _extract_str_param(status)
 
+    # Correlated scalar subqueries for accurate, aggregation-free PostgreSQL compatibility
+    member_count_subq = (
+        select(func.count(HomeMemberModel.id))
+        .where(
+            HomeMemberModel.home_id == HomeModel.id,
+            HomeMemberModel.status == "ACTIVE"
+        )
+        .correlate(HomeModel)
+        .scalar_subquery()
+    )
+
+    creator_email_subq = (
+        select(UserModel.email)
+        .where(UserModel.id == HomeModel.created_by)
+        .correlate(HomeModel)
+        .scalar_subquery()
+    )
+
+    creator_name_subq = (
+        select(UserProfileModel.display_name)
+        .where(UserProfileModel.user_id == HomeModel.created_by)
+        .correlate(HomeModel)
+        .scalar_subquery()
+    )
+
+    sub_status_subq = (
+        select(SubscriptionModel.status)
+        .where(SubscriptionModel.home_id == HomeModel.id)
+        .order_by(desc(SubscriptionModel.created_at))
+        .limit(1)
+        .correlate(HomeModel)
+        .scalar_subquery()
+    )
+
     stmt = (
         select(
             HomeModel,
-            UserModel.email.label("creator_email"),
-            UserProfileModel.display_name.label("creator_name"),
-            func.count(func.distinct(HomeMemberModel.id)).label("members_count"),
-            SubscriptionModel.status.label("sub_status")
+            creator_email_subq.label("creator_email"),
+            creator_name_subq.label("creator_name"),
+            member_count_subq.label("members_count"),
+            sub_status_subq.label("sub_status")
         )
-        .outerjoin(UserModel, HomeModel.created_by == UserModel.id)
-        .outerjoin(UserProfileModel, UserModel.id == UserProfileModel.user_id)
-        .outerjoin(HomeMemberModel, (HomeModel.id == HomeMemberModel.home_id) & (HomeMemberModel.status == "ACTIVE"))
-        .outerjoin(SubscriptionModel, HomeModel.id == SubscriptionModel.home_id)
         .where(HomeModel.deleted_at == None)
-        .group_by(HomeModel.id, UserModel.email, UserProfileModel.display_name, SubscriptionModel.status)
     )
 
     if q_str:
@@ -110,9 +139,9 @@ async def list_and_search_homes(
         stmt = stmt.where(
             or_(
                 HomeModel.name.ilike(clean_q),
-                UserModel.email.ilike(clean_q),
-                UserProfileModel.display_name.ilike(clean_q),
-                cast(HomeModel.id, String).ilike(clean_q)
+                cast(HomeModel.id, String).ilike(clean_q),
+                creator_email_subq.ilike(clean_q),
+                creator_name_subq.ilike(clean_q)
             )
         )
 
@@ -126,12 +155,7 @@ async def list_and_search_homes(
 
     dtos = []
     for row in rows:
-        if len(row) >= 5:
-            h, c_email, c_disp, m_count, s_status = row[:5]
-        else:
-            h, c_email, m_count, s_status = row[:4]
-            c_disp = None
-
+        h, c_email, c_disp, m_count, s_status = row
         dtos.append(
             AdminHomeListItemDTO(
                 id=h.id,

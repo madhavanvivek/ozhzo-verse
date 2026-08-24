@@ -240,10 +240,16 @@ class ApiClient {
       headers.set('Authorization', `Bearer ${token}`);
     }
 
-    let response = await fetch(`${API_BASE_URL}${endpoint}`, {
-      ...options,
-      headers
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE_URL}${endpoint}`, {
+        ...options,
+        headers
+      });
+    } catch (networkErr: any) {
+      console.error(`Network fetch failed for ${endpoint}:`, networkErr);
+      throw new Error(networkErr?.message || 'Failed to connect to API server. Please check your connection.');
+    }
 
     // Handle 401 token refresh retry (avoid loop on auth endpoints)
     if (response.status === 401 && !endpoint.includes('/auth/')) {

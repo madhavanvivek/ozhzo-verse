@@ -22,6 +22,10 @@ from src.schemas.admin import (
     AdminUserDetailDTO,
     AdminUserHomeMembershipDTO,
     AdminUserListItemDTO,
+    BulkActionResponse,
+    BulkUserActionRequest,
+    DeleteEntityRequest,
+    HoldEntityRequest,
     ReactivateEntityRequest,
     SuspendEntityRequest
 )
@@ -91,7 +95,7 @@ async def list_and_search_users(
 ):
     """
     Search and list platform users for Super Admin.
-    Supports pagination, search, status/role filtering, and safe sorting.
+    Supports pagination, search, status/role filtering, and safe sorting without GROUP BY errors.
     """
     lim = _extract_int_param(limit, 50)
     off = _extract_int_param(offset, 0)
@@ -101,16 +105,31 @@ async def list_and_search_users(
     sort_by_str = _extract_str_param(sort_by, "created_at") or "created_at"
     sort_order_str = _extract_str_param(sort_order, "desc") or "desc"
 
+    # Correlated subqueries to avoid PostgreSQL GROUP BY issues
+    homes_count_subq = (
+        select(func.count(HomeMemberModel.id))
+        .where(
+            HomeMemberModel.user_id == UserModel.id,
+            HomeMemberModel.status == "ACTIVE"
+        )
+        .correlate(UserModel)
+        .scalar_subquery()
+    )
+
+    display_name_subq = (
+        select(UserProfileModel.display_name)
+        .where(UserProfileModel.user_id == UserModel.id)
+        .correlate(UserModel)
+        .scalar_subquery()
+    )
+
     stmt = (
         select(
             UserModel,
-            UserProfileModel.display_name,
-            func.count(HomeMemberModel.id).label("homes_count")
+            display_name_subq.label("display_name"),
+            homes_count_subq.label("homes_count")
         )
-        .outerjoin(UserProfileModel, UserModel.id == UserProfileModel.user_id)
-        .outerjoin(HomeMemberModel, UserModel.id == HomeMemberModel.user_id)
         .where(UserModel.deleted_at == None)
-        .group_by(UserModel.id, UserProfileModel.display_name)
     )
 
     if q_str:
@@ -119,7 +138,7 @@ async def list_and_search_users(
             or_(
                 UserModel.email.ilike(clean_q),
                 UserModel.phone_number.ilike(clean_q),
-                UserProfileModel.display_name.ilike(clean_q)
+                display_name_subq.ilike(clean_q)
             )
         )
 
@@ -170,6 +189,115 @@ async def list_and_search_users(
         for u, disp, h_count in rows
     ]
     return ApiSuccessResponse(data=dtos)
+
+
+@router.post("/bulk-action", response_model=ApiSuccessResponse[BulkActionResponse])
+async def bulk_user_action(
+    payload: BulkUserActionRequest,
+    super_admin: UserModel = Depends(require_admin_permission("admin:users:edit")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Execute bulk status actions (ACTIVATE, SUSPEND, HOLD, DELETE) across multiple platform users.
+    Protects Super Admin self-account from destructive actions.
+    """
+    action_norm = payload.action.upper().strip()
+    valid_actions = {"ACTIVATE", "SUSPEND", "HOLD", "DELETE"}
+    if action_norm not in valid_actions:
+        raise HTTPException(status_code=400, detail=f"Invalid action '{payload.action}'. Must be one of {valid_actions}")
+
+    succeeded: List[UUID] = []
+    failed: List[dict] = []
+
+    for uid in payload.user_ids:
+        if uid == super_admin.id and action_norm in {"SUSPEND", "HOLD", "DELETE"}:
+            failed.append({"user_id": str(uid), "reason": "Super Admin cannot modify or suspend their own account."})
+            continue
+
+        user = await db.get(UserModel, uid)
+        if not user or user.deleted_at is not None:
+            failed.append({"user_id": str(uid), "reason": "User not found or already deleted."})
+            continue
+
+        old_state = {"is_active": user.is_active, "deleted_at": user.deleted_at}
+
+        if action_norm == "ACTIVATE":
+            user.is_active = True
+            user.updated_at = datetime.now(timezone.utc)
+            await record_user_audit(
+                db=db,
+                user_id=user.id,
+                action="BULK_ACTIVATE_USER",
+                performed_by=super_admin.id,
+                old_values=old_state,
+                new_values={"is_active": True},
+                reason=payload.reason
+            )
+            succeeded.append(user.id)
+
+        elif action_norm == "SUSPEND":
+            user.is_active = False
+            user.updated_at = datetime.now(timezone.utc)
+            await record_user_audit(
+                db=db,
+                user_id=user.id,
+                action="BULK_SUSPEND_USER",
+                performed_by=super_admin.id,
+                old_values=old_state,
+                new_values={"is_active": False},
+                reason=payload.reason
+            )
+            succeeded.append(user.id)
+
+        elif action_norm == "HOLD":
+            user.is_active = False
+            user.updated_at = datetime.now(timezone.utc)
+            await record_user_audit(
+                db=db,
+                user_id=user.id,
+                action="BULK_HOLD_USER",
+                performed_by=super_admin.id,
+                old_values=old_state,
+                new_values={"is_active": False, "status_note": "HELD"},
+                reason=payload.reason
+            )
+            succeeded.append(user.id)
+
+        elif action_norm == "DELETE":
+            # Check if user owns active homes
+            owner_query = select(HomeModel).where(HomeModel.created_by == user.id, HomeModel.deleted_at == None)
+            owned_homes = (await db.execute(owner_query)).scalars().all()
+            if owned_homes:
+                failed.append({
+                    "user_id": str(uid),
+                    "reason": f"Cannot delete user who is primary creator of {len(owned_homes)} active home(s). Deactivate or transfer ownership first."
+                })
+                continue
+
+            user.is_active = False
+            user.deleted_at = datetime.now(timezone.utc)
+            user.updated_at = datetime.now(timezone.utc)
+            await record_user_audit(
+                db=db,
+                user_id=user.id,
+                action="BULK_DELETE_USER",
+                performed_by=super_admin.id,
+                old_values=old_state,
+                new_values={"is_active": False, "deleted_at": str(user.deleted_at)},
+                reason=payload.reason
+            )
+            succeeded.append(user.id)
+
+    await db.commit()
+
+    return ApiSuccessResponse(
+        data=BulkActionResponse(
+            total=len(payload.user_ids),
+            succeeded=succeeded,
+            failed=failed,
+            message=f"Executed {action_norm} for {len(succeeded)} of {len(payload.user_ids)} users."
+        )
+    )
 
 
 @router.get("/{user_id}", response_model=ApiSuccessResponse[AdminUserDetailDTO])
@@ -269,6 +397,7 @@ async def suspend_user(
 
 
 @router.post("/{user_id}/reactivate", response_model=ApiSuccessResponse[MessageResponse])
+@router.post("/{user_id}/activate", response_model=ApiSuccessResponse[MessageResponse])
 async def reactivate_user(
     user_id: UUID,
     payload: ReactivateEntityRequest,
@@ -298,3 +427,83 @@ async def reactivate_user(
     await db.commit()
 
     return ApiSuccessResponse(data=MessageResponse(message=f"User {user.email or user.phone_number or user.id} reactivated successfully."))
+
+
+@router.post("/{user_id}/hold", response_model=ApiSuccessResponse[MessageResponse])
+async def hold_user(
+    user_id: UUID,
+    payload: HoldEntityRequest,
+    super_admin: UserModel = Depends(require_admin_permission("admin:users:edit")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Place a user account on administrative hold.
+    """
+    if user_id == super_admin.id:
+        raise HTTPException(status_code=400, detail="Super Admin cannot place their own account on hold.")
+
+    user = await db.get(UserModel, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    old_state = {"is_active": user.is_active}
+    user.is_active = False
+    user.updated_at = datetime.now(timezone.utc)
+
+    await record_user_audit(
+        db=db,
+        user_id=user.id,
+        action="HOLD_USER",
+        performed_by=super_admin.id,
+        old_values=old_state,
+        new_values={"is_active": False, "hold_reason": payload.reason},
+        reason=payload.reason
+    )
+    await db.commit()
+
+    return ApiSuccessResponse(data=MessageResponse(message=f"User {user.email or user.phone_number or user.id} placed on administrative hold."))
+
+
+@router.post("/{user_id}/delete", response_model=ApiSuccessResponse[MessageResponse])
+async def delete_user(
+    user_id: UUID,
+    payload: DeleteEntityRequest,
+    super_admin: UserModel = Depends(require_admin_permission("admin:users:disable")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Safely soft-delete / deactivate a user account with ownership checks.
+    """
+    if user_id == super_admin.id:
+        raise HTTPException(status_code=400, detail="Super Admin cannot delete their own account.")
+
+    user = await db.get(UserModel, user_id)
+    if not user or user.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="User not found or already deleted.")
+
+    # Validate active home ownership
+    owner_query = select(HomeModel).where(HomeModel.created_by == user.id, HomeModel.deleted_at == None)
+    owned_homes = (await db.execute(owner_query)).scalars().all()
+    if owned_homes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot delete user who is primary creator of {len(owned_homes)} active home(s). Deactivate or transfer ownership first."
+        )
+
+    old_state = {"is_active": user.is_active, "deleted_at": user.deleted_at}
+    user.is_active = False
+    user.deleted_at = datetime.now(timezone.utc)
+    user.updated_at = datetime.now(timezone.utc)
+
+    await record_user_audit(
+        db=db,
+        user_id=user.id,
+        action="SAFE_DELETE_USER",
+        performed_by=super_admin.id,
+        old_values=old_state,
+        new_values={"is_active": False, "deleted_at": str(user.deleted_at)},
+        reason=payload.reason
+    )
+    await db.commit()
+
+    return ApiSuccessResponse(data=MessageResponse(message=f"User {user.email or user.phone_number or user.id} deactivated and soft-deleted safely."))

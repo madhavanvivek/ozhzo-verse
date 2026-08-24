@@ -10,16 +10,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.dependencies import get_current_user, require_admin_permission, require_super_admin
 from src.infrastructure.database.session import get_db
 from src.infrastructure.database.models import (
+    CouponModel,
+    HomeModel,
     PromotionModel,
     SubscriptionAuditLogModel,
     SubscriptionFeatureModel,
     SubscriptionPlanFeatureModel,
     SubscriptionPlanModel,
     SubscriptionPriceModel,
-    UserModel
+    SubscriptionModel,
+    UserModel,
+    UserProfileModel
 )
 from src.schemas.common import ApiSuccessResponse
 from src.schemas.auth import MessageResponse
+from src.schemas.admin import AdminSubscriberListItemDTO
 from src.schemas.subscription import (
     CreatePromotionRequest,
     CreateSubscriptionFeatureRequest,
@@ -36,7 +41,8 @@ from src.schemas.subscription import (
     UpdateSubscriptionPriceRequest
 )
 
-router = APIRouter(prefix="/admin/subscription", tags=["Super Admin - Subscriptions"])
+router = APIRouter(prefix="/admin/subscriptions", tags=["Super Admin - Subscriptions"])
+
 
 
 async def record_audit_log(
@@ -588,3 +594,63 @@ async def get_subscription_audit_logs(
         for l in logs
     ]
     return ApiSuccessResponse(data=dtos)
+
+
+# ------------------------------------------------------------------------------
+# 6. Subscribers Listing (Super Admin)
+# ------------------------------------------------------------------------------
+
+@router.get("/subscribers", response_model=ApiSuccessResponse[List[AdminSubscriberListItemDTO]])
+async def list_subscribers(
+    super_admin: UserModel = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    List all active subscribers across the platform with plan details, renewal dates, and paid seats.
+    """
+    query = (
+        select(
+            SubscriptionModel,
+            HomeModel.name.label("home_name"),
+            HomeModel.created_by.label("user_id"),
+            UserModel.email.label("user_email"),
+            UserProfileModel.display_name.label("user_name"),
+            SubscriptionPlanModel.name.label("plan_name"),
+            SubscriptionPlanModel.code.label("plan_code"),
+            CouponModel.code.label("coupon_code")
+        )
+        .join(HomeModel, SubscriptionModel.home_id == HomeModel.id)
+        .outerjoin(UserModel, HomeModel.created_by == UserModel.id)
+        .outerjoin(UserProfileModel, UserModel.id == UserProfileModel.user_id)
+        .outerjoin(SubscriptionPlanModel, SubscriptionModel.plan_id == SubscriptionPlanModel.id)
+        .outerjoin(CouponModel, SubscriptionModel.active_coupon_id == CouponModel.id)
+        .where(HomeModel.deleted_at == None)
+        .order_by(desc(SubscriptionModel.created_at))
+    )
+
+    rows = (await db.execute(query)).all()
+
+    dtos = [
+        AdminSubscriberListItemDTO(
+            id=sub.id,
+            user_id=uid or sub.home_id,
+            user_name=uname or (uemail.split("@")[0] if uemail else "Subscriber"),
+            user_email=uemail,
+            home_id=sub.home_id,
+            home_name=hname,
+            plan_name=pname or "Ozhzo Home Standard",
+            plan_code=pcode or "OZHZO_HOME",
+            status=sub.status,
+            start_date=sub.current_period_starts_at or sub.created_at,
+            renewal_date=sub.current_period_ends_at,
+            coupon_code=ccode or sub.promotion_code_snapshot,
+            discount_amount=sub.discount_amount_snapshot or Decimal("0.00"),
+            paid_seats=sub.paid_member_seats or 0,
+            currency=sub.currency_snapshot or sub.currency or "USD",
+            created_at=sub.created_at
+        )
+        for sub, hname, uid, uemail, uname, pname, pcode, ccode in rows
+    ]
+
+    return ApiSuccessResponse(data=dtos)
+

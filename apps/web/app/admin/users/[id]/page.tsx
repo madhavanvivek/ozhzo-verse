@@ -29,6 +29,8 @@ export default function AdminUserDetailPage() {
   // Modal State
   const [isSuspendModalOpen, setIsSuspendModalOpen] = useState(false);
   const [isReactivateModalOpen, setIsReactivateModalOpen] = useState(false);
+  const [isHoldModalOpen, setIsHoldModalOpen] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
 
@@ -82,6 +84,42 @@ export default function AdminUserDetailPage() {
       fetchUserDetail();
     } catch (err: any) {
       setModalError(err?.message || 'Failed to reactivate user.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleHold = async (reason: string) => {
+    setIsSubmitting(true);
+    setModalError(null);
+    setActionSuccess(null);
+    try {
+      await apiClient.post(`/admin/users/${userId}/hold`, {
+        reason: reason || 'Administrative compliance hold'
+      });
+      setIsHoldModalOpen(false);
+      setActionSuccess('User account placed on administrative hold.');
+      fetchUserDetail();
+    } catch (err: any) {
+      setModalError(err?.message || 'Failed to place user on hold.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDelete = async (reason: string) => {
+    setIsSubmitting(true);
+    setModalError(null);
+    setActionSuccess(null);
+    try {
+      await apiClient.post(`/admin/users/${userId}/delete`, {
+        reason: reason || 'GDPR / Administrative Deletion'
+      });
+      setIsDeleteModalOpen(false);
+      setActionSuccess('User account successfully deactivated and soft-deleted.');
+      fetchUserDetail();
+    } catch (err: any) {
+      setModalError(err?.message || 'Failed to delete user.');
     } finally {
       setIsSubmitting(false);
     }
@@ -311,6 +349,52 @@ export default function AdminUserDetailPage() {
               <span>Reactivate Account</span>
             </button>
           )}
+
+          <button
+            onClick={() => {
+              setModalError(null);
+              setIsHoldModalOpen(true);
+            }}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '10px 18px',
+              borderRadius: 'var(--radius-md, 10px)',
+              backgroundColor: 'var(--color-surface-subtle, #f1f5f9)',
+              color: 'var(--color-primary-900, #0f172a)',
+              border: '1px solid var(--color-border-subtle, #e2e8f0)',
+              fontSize: '14px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              minHeight: '44px'
+            }}
+          >
+            <span>Place on Hold</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setModalError(null);
+              setIsDeleteModalOpen(true);
+            }}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '10px 18px',
+              borderRadius: 'var(--radius-md, 10px)',
+              backgroundColor: '#fef2f2',
+              color: '#991b1b',
+              border: '1px solid #fecaca',
+              fontSize: '14px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              minHeight: '44px'
+            }}
+          >
+            <span>Safe Delete</span>
+          </button>
         </div>
       </div>
 
@@ -512,6 +596,35 @@ export default function AdminUserDetailPage() {
         isSubmitting={isSubmitting}
         error={modalError}
       />
+
+      <AdminConfirmModal
+        isOpen={isHoldModalOpen}
+        onClose={() => setIsHoldModalOpen(false)}
+        onConfirm={handleHold}
+        title="Place User on Administrative Hold"
+        description={`Are you sure you want to place user "${user.display_name}" on administrative hold? They will be unable to access or modify workspaces pending review.`}
+        confirmLabel="Place on Hold"
+        confirmVariant="primary"
+        requireReason={true}
+        placeholderReason="Specify compliance or investigation reason..."
+        isSubmitting={isSubmitting}
+        error={modalError}
+      />
+
+      <AdminConfirmModal
+        isOpen={isDeleteModalOpen}
+        onClose={() => setIsDeleteModalOpen(false)}
+        onConfirm={handleDelete}
+        title="Safe Delete User Account"
+        description={`Are you sure you want to soft-delete and deactivate user "${user.display_name}"? Note: Primary creators of active homes cannot be deleted until workspace ownership is transferred.`}
+        confirmLabel="Safe Delete User"
+        confirmVariant="danger"
+        requireReason={true}
+        placeholderReason="Provide deletion audit rationale (e.g. GDPR Request, Account termination)..."
+        isSubmitting={isSubmitting}
+        error={modalError}
+      />
     </div>
   );
 }
+

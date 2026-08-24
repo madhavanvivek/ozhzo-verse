@@ -41,6 +41,8 @@ export default function AdminCouponsPage() {
     eligibility_type: 'ANY_USER',
     maximum_total_redemptions: '',
     maximum_redemptions_per_user: 1,
+    start_date: '',
+    end_date: '',
     country: '',
     state: ''
   });
@@ -97,6 +99,8 @@ export default function AdminCouponsPage() {
         free_period_value: Number(couponForm.free_period_value) || 0,
         free_period_unit: couponForm.free_period_unit,
         eligibility_type: couponForm.eligibility_type,
+        start_date: couponForm.start_date ? new Date(couponForm.start_date).toISOString() : undefined,
+        end_date: couponForm.end_date ? new Date(couponForm.end_date).toISOString() : undefined,
         maximum_total_redemptions: couponForm.maximum_total_redemptions
           ? parseInt(couponForm.maximum_total_redemptions)
           : undefined,
@@ -751,6 +755,32 @@ export default function AdminCouponsPage() {
                   />
                 </div>
               )}
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                    Redemption Valid From
+                  </label>
+                  <input
+                    type="date"
+                    value={couponForm.start_date}
+                    onChange={(e) => setCouponForm({ ...couponForm, start_date: e.target.value })}
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                    Redemption Valid Until
+                  </label>
+                  <input
+                    type="date"
+                    value={couponForm.end_date}
+                    onChange={(e) => setCouponForm({ ...couponForm, end_date: e.target.value })}
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
+                  />
+                </div>
+              </div>
 
               <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '12px' }}>
                 <button

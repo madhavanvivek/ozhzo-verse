@@ -10,7 +10,7 @@ from src.core.security import decode_token
 from src.core.exceptions import PermissionDeniedException
 from src.domain.permissions import has_permission, has_platform_permission
 from src.infrastructure.database.session import get_db
-from src.infrastructure.database.models import HomeMemberModel, UserModel
+from src.infrastructure.database.models import HomeMemberModel, HomeModel, UserModel
 from src.infrastructure.cache.redis_client import get_redis_client
 
 security_scheme = HTTPBearer(auto_error=False)
@@ -113,16 +113,26 @@ def require_home_permission(required_permission: str):
         db: AsyncSession = Depends(get_db),
         redis_client: redis.Redis = Depends(get_redis_client),
     ) -> HomeContext:
-        query = select(HomeMemberModel).where(
-            HomeMemberModel.home_id == home_id,
-            HomeMemberModel.user_id == current_user.id,
-            HomeMemberModel.status == "ACTIVE"
+        query = (
+            select(HomeMemberModel)
+            .options(selectinload(HomeMemberModel.home))
+            .where(
+                HomeMemberModel.home_id == home_id,
+                HomeMemberModel.user_id == current_user.id,
+                HomeMemberModel.status == "ACTIVE"
+            )
         )
         result = await db.execute(query)
         membership = result.scalar_one_or_none()
 
         if not membership:
             raise HTTPException(status_code=403, detail="You are not an active member of this home.")
+
+        if hasattr(membership, "home") and membership.home and getattr(membership.home, "status", "ACTIVE") == "SUSPENDED":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This home workspace has been suspended by platform administration."
+            )
 
         if not has_permission(membership.role, required_permission):
             raise PermissionDeniedException(required_permission)

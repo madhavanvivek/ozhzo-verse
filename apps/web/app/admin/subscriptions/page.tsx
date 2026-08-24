@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import Link from 'next/link';
 import {
   Plus,
   RefreshCw,
@@ -8,22 +9,25 @@ import {
   Layers,
   CheckCircle,
   Percent,
-  X
+  X,
+  Users,
+  ExternalLink
 } from 'lucide-react';
 import { apiClient } from '@/lib/apiClient';
 import { AdminBadge } from '../components/AdminBadge';
-import { SubscriptionPlan, SubscriptionFeature, Promotion } from '../types';
+import { SubscriptionPlan, SubscriptionFeature, Promotion, AdminSubscriberListItem } from '../types';
 
 export default function AdminSubscriptionsPage() {
   const [plans, setPlans] = useState<SubscriptionPlan[]>([]);
   const [features, setFeatures] = useState<SubscriptionFeature[]>([]);
   const [promotions, setPromotions] = useState<Promotion[]>([]);
+  const [subscribers, setSubscribers] = useState<AdminSubscriberListItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   // Tab State
-  const [activeTab, setActiveTab] = useState<'plans' | 'promotions' | 'features'>('plans');
+  const [activeTab, setActiveTab] = useState<'plans' | 'subscribers' | 'promotions' | 'features'>('plans');
 
   // Promotion Creation Modal
   const [isPromoModalOpen, setIsPromoModalOpen] = useState(false);
@@ -45,14 +49,16 @@ export default function AdminSubscriptionsPage() {
     setIsLoading(true);
     setError(null);
     try {
-      const [plansData, featuresData, promotionsData] = await Promise.all([
+      const [plansData, featuresData, promotionsData, subscribersData] = await Promise.all([
         apiClient.get<SubscriptionPlan[]>('/admin/subscriptions/plans'),
         apiClient.get<SubscriptionFeature[]>('/admin/subscriptions/features'),
-        apiClient.get<Promotion[]>('/admin/subscriptions/promotions')
+        apiClient.get<Promotion[]>('/admin/subscriptions/promotions'),
+        apiClient.get<AdminSubscriberListItem[]>('/admin/subscriptions/subscribers').catch(() => [])
       ]);
       setPlans(plansData || []);
       setFeatures(featuresData || []);
       setPromotions(promotionsData || []);
+      setSubscribers(subscribersData || []);
     } catch (err: any) {
       setError(err?.message || 'Failed to fetch subscription configuration.');
     } finally {
@@ -217,7 +223,8 @@ export default function AdminSubscriptionsPage() {
           display: 'flex',
           gap: '8px',
           borderBottom: '1px solid var(--color-border-subtle, #e2e8f0)',
-          paddingBottom: '8px'
+          paddingBottom: '8px',
+          flexWrap: 'wrap'
         }}
       >
         <button
@@ -239,6 +246,27 @@ export default function AdminSubscriptionsPage() {
         >
           <Layers size={16} />
           <span>Subscription Plans & Regional Prices ({plans.length})</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('subscribers')}
+          style={{
+            padding: '10px 16px',
+            borderRadius: 'var(--radius-md, 10px)',
+            border: 'none',
+            backgroundColor: activeTab === 'subscribers' ? 'var(--color-primary-900, #0f172a)' : 'transparent',
+            color: activeTab === 'subscribers' ? 'var(--color-text-inverse, #ffffff)' : 'var(--color-text-secondary, #64748b)',
+            fontSize: '13px',
+            fontWeight: 600,
+            cursor: 'pointer',
+            minHeight: '44px',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px'
+          }}
+        >
+          <Users size={16} />
+          <span>Active Subscribers ({subscribers.length})</span>
         </button>
 
         <button
@@ -283,6 +311,134 @@ export default function AdminSubscriptionsPage() {
           <span>Feature Flags ({features.length})</span>
         </button>
       </div>
+
+      {/* Tab: Subscribers */}
+      {activeTab === 'subscribers' && (
+        <div
+          style={{
+            backgroundColor: 'var(--color-surface-card, #ffffff)',
+            borderRadius: 'var(--radius-lg, 16px)',
+            border: '1px solid var(--color-border-subtle, #e2e8f0)',
+            overflow: 'hidden',
+            boxShadow: 'var(--shadow-subtle)'
+          }}
+        >
+          {subscribers.length === 0 ? (
+            <div style={{ padding: '48px 24px', textAlign: 'center', color: 'var(--color-text-secondary, #64748b)', fontSize: '14px' }}>
+              No active subscriber records found in the authoritative database.
+            </div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                <thead>
+                  <tr
+                    style={{
+                      borderBottom: '1px solid var(--color-border-subtle, #e2e8f0)',
+                      backgroundColor: 'var(--color-surface-subtle, #f1f5f9)',
+                      color: 'var(--color-text-secondary, #64748b)',
+                      fontWeight: 600
+                    }}
+                  >
+                    <th style={{ padding: '12px 16px' }}>Subscriber / Owner</th>
+                    <th style={{ padding: '12px 16px' }}>Household Workspace</th>
+                    <th style={{ padding: '12px 16px' }}>Plan</th>
+                    <th style={{ padding: '12px 16px' }}>Status</th>
+                    <th style={{ padding: '12px 16px' }}>Coupon Applied</th>
+                    <th style={{ padding: '12px 16px' }}>Paid Extra Seats</th>
+                    <th style={{ padding: '12px 16px' }}>Renewal Date</th>
+                    <th style={{ padding: '12px 16px', textAlign: 'right' }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {subscribers.map((s) => (
+                    <tr
+                      key={s.id}
+                      style={{
+                        borderBottom: '1px solid var(--color-border-subtle, #e2e8f0)',
+                        transition: 'background-color 0.15s ease'
+                      }}
+                    >
+                      <td style={{ padding: '12px 16px' }}>
+                        <div style={{ fontWeight: 600, color: 'var(--color-text-primary, #0f172a)' }}>
+                          {s.user_name}
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'var(--color-text-secondary, #64748b)' }}>
+                          {s.user_email || '—'}
+                        </div>
+                      </td>
+
+                      <td style={{ padding: '12px 16px' }}>
+                        <div style={{ fontWeight: 600, color: 'var(--color-text-primary, #0f172a)' }}>
+                          {s.home_name}
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--color-text-secondary, #64748b)' }}>
+                          ID: {s.home_id.slice(0, 8)}...
+                        </div>
+                      </td>
+
+                      <td style={{ padding: '12px 16px' }}>
+                        <AdminBadge variant="purple">{s.plan_name}</AdminBadge>
+                      </td>
+
+                      <td style={{ padding: '12px 16px' }}>
+                        <AdminBadge
+                          variant={
+                            s.status === 'ACTIVE'
+                              ? 'success'
+                              : s.status === 'TRIALING'
+                              ? 'info'
+                              : 'danger'
+                          }
+                        >
+                          {s.status}
+                        </AdminBadge>
+                      </td>
+
+                      <td style={{ padding: '12px 16px' }}>
+                        {s.coupon_code ? (
+                          <AdminBadge variant="warning">{s.coupon_code}</AdminBadge>
+                        ) : (
+                          <span style={{ color: 'var(--color-text-tertiary, #94a3b8)' }}>Standard Pricing</span>
+                        )}
+                      </td>
+
+                      <td style={{ padding: '12px 16px', color: 'var(--color-text-primary, #0f172a)' }}>
+                        <strong>{s.paid_seats}</strong> seats
+                      </td>
+
+                      <td style={{ padding: '12px 16px', color: 'var(--color-text-secondary, #64748b)' }}>
+                        {s.renewal_date ? new Date(s.renewal_date).toLocaleDateString() : '—'}
+                      </td>
+
+                      <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                        <Link
+                          href={`/admin/homes/${s.home_id}`}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            padding: '6px 10px',
+                            borderRadius: 'var(--radius-md, 8px)',
+                            border: '1px solid var(--color-border-subtle, #e2e8f0)',
+                            backgroundColor: 'var(--color-surface-subtle, #f1f5f9)',
+                            fontSize: '12px',
+                            fontWeight: 600,
+                            color: 'var(--color-text-primary, #0f172a)',
+                            minHeight: '32px'
+                          }}
+                        >
+                          <span>Inspect Workspace</span>
+                          <ExternalLink size={12} />
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Tab 1: Plans & Regional Prices */}
       {activeTab === 'plans' && (

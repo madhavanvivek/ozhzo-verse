@@ -1,10 +1,12 @@
 import logging
+from datetime import datetime, timezone, timedelta
+from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import settings
 from src.core.security import hash_password
-from src.infrastructure.database.models import UserModel, UserProfileModel
+from src.infrastructure.database.models import CouponModel, UserModel, UserProfileModel
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +89,72 @@ async def seed_demo_super_admin(db: AsyncSession) -> UserModel | None:
                 logger.info("Initialized profile for Super Admin: %s", email)
 
         await db.commit()
+        await seed_demo_coupons(db)
         return user
     except Exception as e:
         await db.rollback()
         logger.error("Failed to ensure Super Admin bootstrap for %s: %s", email, e)
         return None
+
+
+async def seed_demo_coupons(db: AsyncSession) -> None:
+    """
+    Safely and idempotently seeds standard platform coupons:
+    - TRIAL: 1 month free membership subscription (1 use per user)
+    - MOSTWANTED: 100% discount, 1 year entitlement duration
+    """
+    from decimal import Decimal
+    from datetime import timedelta
+    from uuid import uuid4
+    from src.infrastructure.database.models import CouponModel
+
+    try:
+        trial_query = select(CouponModel).where(CouponModel.code == "TRIAL")
+        trial_res = await db.execute(trial_query)
+        if not trial_res.scalar_one_or_none():
+            trial_coupon = CouponModel(
+                id=uuid4(),
+                name="1 Month Free Trial Membership",
+                code="TRIAL",
+                description="1 month free membership subscription",
+                coupon_type="FREE_PERIOD",
+                discount_value=Decimal("100.00"),
+                free_period_value=1,
+                free_period_unit="MONTHS",
+                eligibility_type="ANY_USER",
+                maximum_redemptions_per_user=1,
+                maximum_redemptions_per_home=1,
+                status="ACTIVE",
+                start_date=datetime.now(timezone.utc),
+                end_date=datetime.now(timezone.utc) + timedelta(days=3650)
+            )
+            db.add(trial_coupon)
+            logger.info("Seeded standard coupon: TRIAL")
+
+        mw_query = select(CouponModel).where(CouponModel.code == "MOSTWANTED")
+        mw_res = await db.execute(mw_query)
+        if not mw_res.scalar_one_or_none():
+            mw_coupon = CouponModel(
+                id=uuid4(),
+                name="VIP 1 Year 100% Free Entitlement",
+                code="MOSTWANTED",
+                description="100% discount on subscription for 1 full year",
+                coupon_type="PERCENTAGE_DISCOUNT",
+                discount_value=Decimal("100.00"),
+                free_period_value=12,
+                free_period_unit="MONTHS",
+                eligibility_type="ANY_USER",
+                maximum_redemptions_per_user=1,
+                maximum_redemptions_per_home=1,
+                status="ACTIVE",
+                start_date=datetime.now(timezone.utc),
+                end_date=datetime.now(timezone.utc) + timedelta(days=3650)
+            )
+            db.add(mw_coupon)
+            logger.info("Seeded standard coupon: MOSTWANTED")
+
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        logger.error("Failed to seed standard demo coupons: %s", e)
+

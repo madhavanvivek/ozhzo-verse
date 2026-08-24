@@ -46,6 +46,7 @@ async def get_system_configuration(
 
 
 @router.get("/analytics-summary", response_model=ApiSuccessResponse[AdminAnalyticsSummaryDTO])
+@router.get("/analytics/summary", response_model=ApiSuccessResponse[AdminAnalyticsSummaryDTO])
 async def get_analytics_summary(
     super_admin: UserModel = Depends(require_admin_permission("admin:dashboard:view")),
     db: AsyncSession = Depends(get_db),

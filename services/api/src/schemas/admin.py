@@ -107,6 +107,33 @@ class ReactivateEntityRequest(BaseModel):
     reason: Optional[str] = Field(default="Administrative reactivation", max_length=255)
 
 
+class HoldEntityRequest(BaseModel):
+    reason: Optional[str] = Field(default="Administrative hold", max_length=255)
+
+
+class DeleteEntityRequest(BaseModel):
+    reason: Optional[str] = Field(default="Administrative deactivation", max_length=255)
+
+
+class BulkUserActionRequest(BaseModel):
+    user_ids: List[UUID]
+    action: str  # ACTIVATE, SUSPEND, HOLD, DELETE
+    reason: Optional[str] = Field(default="Bulk Administrative Action", max_length=255)
+
+
+class BulkHomeActionRequest(BaseModel):
+    home_ids: List[UUID]
+    action: str  # ACTIVATE, SUSPEND, HOLD, ARCHIVE, DELETE
+    reason: Optional[str] = Field(default="Bulk Administrative Action", max_length=255)
+
+
+class BulkActionResponse(BaseModel):
+    total: int
+    succeeded: List[UUID]
+    failed: List[Dict[str, Any]]
+    message: str
+
+
 # ------------------------------------------------------------------------------
 # 4. System Configuration & Analytics Foundation DTOs
 # ------------------------------------------------------------------------------
@@ -151,3 +178,27 @@ class AdminActivityItemDTO(BaseModel):
     new_values: Optional[str] = None
     reason: Optional[str] = None
     created_at: Optional[datetime] = None
+
+
+# ------------------------------------------------------------------------------
+# 6. Super Admin Subscribers Listing DTO
+# ------------------------------------------------------------------------------
+
+class AdminSubscriberListItemDTO(BaseModel):
+    id: UUID
+    user_id: UUID
+    user_name: str
+    user_email: Optional[str] = None
+    home_id: UUID
+    home_name: str
+    plan_name: str
+    plan_code: str
+    status: str
+    start_date: Optional[datetime] = None
+    renewal_date: Optional[datetime] = None
+    coupon_code: Optional[str] = None
+    discount_amount: Decimal = Decimal("0.00")
+    paid_seats: int = 0
+    currency: str = "USD"
+    created_at: Optional[datetime] = None
+

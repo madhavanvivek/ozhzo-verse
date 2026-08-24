@@ -29,6 +29,8 @@ export default function AdminHomeDetailPage() {
   // Modals
   const [isSuspendModalOpen, setIsSuspendModalOpen] = useState(false);
   const [isReactivateModalOpen, setIsReactivateModalOpen] = useState(false);
+  const [isHoldModalOpen, setIsHoldModalOpen] = useState(false);
+  const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
 
@@ -82,6 +84,42 @@ export default function AdminHomeDetailPage() {
       fetchHomeDetail();
     } catch (err: any) {
       setModalError(err?.message || 'Failed to reactivate household workspace.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleHold = async (reason: string) => {
+    setIsSubmitting(true);
+    setModalError(null);
+    setActionSuccess(null);
+    try {
+      await apiClient.post(`/admin/homes/${homeId}/hold`, {
+        reason: reason || 'Administrative compliance hold'
+      });
+      setIsHoldModalOpen(false);
+      setActionSuccess('Household workspace placed on administrative hold.');
+      fetchHomeDetail();
+    } catch (err: any) {
+      setModalError(err?.message || 'Failed to place workspace on hold.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleArchive = async (reason: string) => {
+    setIsSubmitting(true);
+    setModalError(null);
+    setActionSuccess(null);
+    try {
+      await apiClient.post(`/admin/homes/${homeId}/archive`, {
+        reason: reason || 'Administrative archival'
+      });
+      setIsArchiveModalOpen(false);
+      setActionSuccess('Household workspace was archived.');
+      fetchHomeDetail();
+    } catch (err: any) {
+      setModalError(err?.message || 'Failed to archive workspace.');
     } finally {
       setIsSubmitting(false);
     }
@@ -334,6 +372,52 @@ export default function AdminHomeDetailPage() {
               <span>Reactivate Workspace</span>
             </button>
           )}
+
+          <button
+            onClick={() => {
+              setModalError(null);
+              setIsHoldModalOpen(true);
+            }}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '10px 18px',
+              borderRadius: 'var(--radius-md, 10px)',
+              backgroundColor: 'var(--color-surface-subtle, #f1f5f9)',
+              color: 'var(--color-primary-900, #0f172a)',
+              border: '1px solid var(--color-border-subtle, #e2e8f0)',
+              fontSize: '14px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              minHeight: '44px'
+            }}
+          >
+            <span>Place on Hold</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setModalError(null);
+              setIsArchiveModalOpen(true);
+            }}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '10px 18px',
+              borderRadius: 'var(--radius-md, 10px)',
+              backgroundColor: '#fef2f2',
+              color: '#991b1b',
+              border: '1px solid #fecaca',
+              fontSize: '14px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              minHeight: '44px'
+            }}
+          >
+            <span>Archive Workspace</span>
+          </button>
         </div>
       </div>
 
@@ -538,6 +622,35 @@ export default function AdminHomeDetailPage() {
         isSubmitting={isSubmitting}
         error={modalError}
       />
+
+      <AdminConfirmModal
+        isOpen={isHoldModalOpen}
+        onClose={() => setIsHoldModalOpen(false)}
+        onConfirm={handleHold}
+        title="Place Household on Administrative Hold"
+        description={`Are you sure you want to place workspace "${home.name}" on administrative hold? Members will be temporarily restricted from making changes.`}
+        confirmLabel="Place on Hold"
+        confirmVariant="primary"
+        requireReason={true}
+        placeholderReason="Specify compliance or investigation reason..."
+        isSubmitting={isSubmitting}
+        error={modalError}
+      />
+
+      <AdminConfirmModal
+        isOpen={isArchiveModalOpen}
+        onClose={() => setIsArchiveModalOpen(false)}
+        onConfirm={handleArchive}
+        title="Archive Household Workspace"
+        description={`Are you sure you want to archive workspace "${home.name}"? This soft-deletes and retires the workspace.`}
+        confirmLabel="Archive Workspace"
+        confirmVariant="danger"
+        requireReason={true}
+        placeholderReason="Provide archival audit reason..."
+        isSubmitting={isSubmitting}
+        error={modalError}
+      />
     </div>
   );
 }
+

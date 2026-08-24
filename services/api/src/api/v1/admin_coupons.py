@@ -402,6 +402,7 @@ async def create_campaign(
 
 
 @router.get("/campaigns", response_model=ApiSuccessResponse[List[CampaignDTO]])
+@router.get("/coupons/campaigns", response_model=ApiSuccessResponse[List[CampaignDTO]])
 async def list_campaigns(
     super_admin: UserModel = Depends(require_super_admin),
     db: AsyncSession = Depends(get_db),
@@ -436,6 +437,7 @@ async def list_campaigns(
 # ------------------------------------------------------------------------------
 
 @router.post("/grants", status_code=status.HTTP_201_CREATED, response_model=ApiSuccessResponse[SubscriptionGrantDTO])
+@router.post("/coupons/grants", status_code=status.HTTP_201_CREATED, response_model=ApiSuccessResponse[SubscriptionGrantDTO])
 async def create_direct_grant(
     payload: CreateSubscriptionGrantRequest,
     super_admin: UserModel = Depends(require_super_admin),
@@ -445,40 +447,37 @@ async def create_direct_grant(
     if not home:
         raise HTTPException(status_code=404, detail="Home workspace not found.")
 
-    # Lookup plan
-    plan = None
-    if payload.plan_id:
-        plan = await db.get(SubscriptionPlanModel, payload.plan_id)
-    if not plan:
-        plan = (await db.execute(select(SubscriptionPlanModel).where(SubscriptionPlanModel.code == "OZHZO_HOME"))).scalar_one_or_none()
-
-    if not plan:
-        raise HTTPException(status_code=404, detail="Subscription plan not found.")
-
+    # Calculate expiry
     now = datetime.now(timezone.utc)
-    unit_upper = payload.duration_unit.upper()
-    if unit_upper == "DAYS":
-        days_to_add = payload.duration_value
-    elif unit_upper == "MONTHS":
-        days_to_add = payload.duration_value * 30
-    elif unit_upper == "YEARS":
-        days_to_add = payload.duration_value * 365
-    else:
-        days_to_add = payload.duration_value * 30
+    duration_val = payload.duration_value or 6
+    duration_unit = payload.duration_unit.upper()
 
-    expiry_date = now + timedelta(days=days_to_add)
+    if duration_unit == "DAYS":
+        expiry = now + timedelta(days=duration_val)
+    elif duration_unit == "YEARS":
+        expiry = now + timedelta(days=duration_val * 365)
+    else:  # MONTHS
+        expiry = now + timedelta(days=duration_val * 30)
+
+    # Get default plan if not supplied
+    plan_id = payload.plan_id
+    if not plan_id:
+        default_plan = (await db.execute(select(SubscriptionPlanModel).where(SubscriptionPlanModel.code == "OZHZO_HOME"))).scalar_one_or_none()
+        if not default_plan:
+            raise HTTPException(status_code=500, detail="Default subscription plan not found.")
+        plan_id = default_plan.id
 
     grant = SubscriptionGrantModel(
         id=uuid4(),
         user_id=payload.user_id,
         home_id=payload.home_id,
-        plan_id=plan.id,
+        plan_id=plan_id,
         grant_type=payload.grant_type.upper(),
-        duration_value=payload.duration_value,
-        duration_unit=unit_upper,
+        duration_value=duration_val,
+        duration_unit=duration_unit,
         discount_value=payload.discount_value,
         start_date=now,
-        expiry_date=expiry_date,
+        expiry_date=expiry,
         status="ACTIVE",
         reason=payload.reason,
         granted_by=super_admin.id
@@ -486,19 +485,18 @@ async def create_direct_grant(
     db.add(grant)
     await db.flush()
 
-    # Update Home Subscription Entitlement directly
-    sub_query = select(SubscriptionModel).where(SubscriptionModel.home_id == payload.home_id)
-    sub = (await db.execute(sub_query)).scalar_one_or_none()
+    # Link to home subscription
+    sub = (await db.execute(select(SubscriptionModel).where(SubscriptionModel.home_id == payload.home_id))).scalar_one_or_none()
     if sub:
         sub.active_grant_id = grant.id
-        sub.status = "ACTIVE"
-        sub.is_free_period_active = (payload.grant_type == "FREE_PERIOD")
-        sub.free_period_ends_at = expiry_date
+        if payload.grant_type.upper() == "FREE_PERIOD":
+            sub.is_free_period_active = True
+            sub.free_period_ends_at = expiry
         sub.updated_at = now
 
     await record_coupon_audit(
         db=db,
-        entity_type="DIRECT_GRANT",
+        entity_type="GRANT",
         entity_id=grant.id,
         action="CREATE_DIRECT_GRANT",
         performed_by=super_admin.id,
@@ -521,13 +519,14 @@ async def create_direct_grant(
             status=grant.status,
             reason=grant.reason,
             granted_by=grant.granted_by,
-            created_at=grant.created_at or datetime.now(timezone.utc),
+            created_at=grant.created_at,
             updated_at=grant.updated_at or datetime.now(timezone.utc)
         )
     )
 
 
 @router.get("/grants", response_model=ApiSuccessResponse[List[SubscriptionGrantDTO]])
+@router.get("/coupons/grants", response_model=ApiSuccessResponse[List[SubscriptionGrantDTO]])
 async def list_direct_grants(
     home_id: Optional[UUID] = Query(None),
     super_admin: UserModel = Depends(require_super_admin),

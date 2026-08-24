@@ -9,16 +9,42 @@ import {
   ChevronRight,
   RefreshCw,
   ExternalLink,
-  Home
+  Home,
+  UserCheck,
+  UserX,
+  PauseCircle,
+  Trash2
 } from 'lucide-react';
 import { apiClient } from '@/lib/apiClient';
 import { AdminBadge } from '../components/AdminBadge';
+import { AdminConfirmModal } from '../components/AdminConfirmModal';
 import { AdminUserListItem } from '../types';
 
 export default function AdminUsersPage() {
   const [users, setUsers] = useState<AdminUserListItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+
+  // Selection & Bulk Actions
+  const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set());
+  const [modalConfig, setModalConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    description: string;
+    action: 'ACTIVATE' | 'SUSPEND' | 'HOLD' | 'DELETE';
+    targetUserIds: string[];
+    confirmVariant: 'danger' | 'primary' | 'success';
+  }>({
+    isOpen: false,
+    title: '',
+    description: '',
+    action: 'SUSPEND',
+    targetUserIds: [],
+    confirmVariant: 'danger'
+  });
+  const [isSubmittingAction, setIsSubmittingAction] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // Filter & Search States
   const [searchQuery, setSearchQuery] = useState('');
@@ -47,6 +73,7 @@ export default function AdminUsersPage() {
 
       const res = await apiClient.get<AdminUserListItem[]>(`/admin/users?${params.toString()}`);
       setUsers(res || []);
+      setSelectedUserIds(new Set()); // Reset selection on reload
     } catch (err: any) {
       setError(err?.message || 'Failed to fetch platform users.');
     } finally {
@@ -76,6 +103,109 @@ export default function AdminUsersPage() {
       return dateStr;
     }
   };
+
+  // Selection Handlers
+  const toggleSelectAll = () => {
+    if (selectedUserIds.size === users.length && users.length > 0) {
+      setSelectedUserIds(new Set());
+    } else {
+      setSelectedUserIds(new Set(users.map((u) => u.id)));
+    }
+  };
+
+  const toggleSelectUser = (userId: string) => {
+    setSelectedUserIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(userId)) {
+        next.delete(userId);
+      } else {
+        next.add(userId);
+      }
+      return next;
+    });
+  };
+
+  // Bulk / Row Action Triggers
+  const openActionModal = (
+    action: 'ACTIVATE' | 'SUSPEND' | 'HOLD' | 'DELETE',
+    targetIds: string[]
+  ) => {
+    if (targetIds.length === 0) return;
+    setActionError(null);
+
+    const isBulk = targetIds.length > 1;
+    const countLabel = isBulk ? `${targetIds.length} user accounts` : 'this user account';
+
+    const configs = {
+      ACTIVATE: {
+        title: `Activate ${isBulk ? 'Selected Users' : 'User Account'}`,
+        description: `Are you sure you want to restore full application access for ${countLabel}?`,
+        confirmVariant: 'success' as const
+      },
+      SUSPEND: {
+        title: `Suspend ${isBulk ? 'Selected Users' : 'User Account'}`,
+        description: `This will immediately revoke authentication access and block all active sessions for ${countLabel}.`,
+        confirmVariant: 'danger' as const
+      },
+      HOLD: {
+        title: `Place on Administrative Hold`,
+        description: `This will temporarily pause login and operations for ${countLabel} pending audit or review.`,
+        confirmVariant: 'primary' as const
+      },
+      DELETE: {
+        title: `Safely Deactivate & Delete`,
+        description: `This will soft-delete and permanently deactivate ${countLabel}. Users who are active primary creators of Homes cannot be deleted until workspace ownership is transferred.`,
+        confirmVariant: 'danger' as const
+      }
+    };
+
+    const cfg = configs[action];
+    setModalConfig({
+      isOpen: true,
+      title: cfg.title,
+      description: cfg.description,
+      action,
+      targetUserIds: targetIds,
+      confirmVariant: cfg.confirmVariant
+    });
+  };
+
+  const handleConfirmAction = async (reason: string) => {
+    setIsSubmittingAction(true);
+    setActionError(null);
+    try {
+      if (modalConfig.targetUserIds.length > 1) {
+        // Bulk API
+        const res = await apiClient.post<any>('/admin/users/bulk-action', {
+          user_ids: modalConfig.targetUserIds,
+          action: modalConfig.action,
+          reason: reason || undefined
+        });
+        setFeedbackMessage(res?.message || `Bulk ${modalConfig.action} executed successfully.`);
+      } else {
+        // Single user API
+        const targetId = modalConfig.targetUserIds[0];
+        let endpoint = `/admin/users/${targetId}/suspend`;
+        if (modalConfig.action === 'ACTIVATE') endpoint = `/admin/users/${targetId}/reactivate`;
+        if (modalConfig.action === 'HOLD') endpoint = `/admin/users/${targetId}/hold`;
+        if (modalConfig.action === 'DELETE') endpoint = `/admin/users/${targetId}/delete`;
+
+        const res = await apiClient.post<any>(endpoint, { reason: reason || undefined });
+        setFeedbackMessage(res?.message || `User account updated successfully.`);
+      }
+
+      setModalConfig((prev) => ({ ...prev, isOpen: false }));
+      setSelectedUserIds(new Set());
+      fetchUsers();
+    } catch (err: any) {
+      setActionError(err?.message || `Failed to execute ${modalConfig.action}.`);
+    } finally {
+      setIsSubmittingAction(false);
+    }
+  };
+
+  const isAllSelected = users.length > 0 && selectedUserIds.size === users.length;
+  const isSomeSelected = selectedUserIds.size > 0 && selectedUserIds.size < users.length;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -107,7 +237,7 @@ export default function AdminUsersPage() {
               marginTop: '4px'
             }}
           >
-            Search, inspect, and manage platform user credentials, roles, and status.
+            Search, inspect, and manage platform user credentials, roles, and status across all tenants.
           </p>
         </div>
 
@@ -133,6 +263,159 @@ export default function AdminUsersPage() {
           <span>Refresh</span>
         </button>
       </div>
+
+      {/* Floating Bulk Action Bar */}
+      {selectedUserIds.size > 0 && (
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
+            backgroundColor: 'var(--color-primary-900, #0f172a)',
+            color: '#ffffff',
+            padding: '12px 20px',
+            borderRadius: 'var(--radius-lg, 16px)',
+            boxShadow: '0 10px 25px -5px rgba(15, 23, 42, 0.3)',
+            animation: 'fadeIn 0.2s ease-in-out'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '14px', fontWeight: 600 }}>
+            <Users size={18} />
+            <span>Selected {selectedUserIds.size} {selectedUserIds.size === 1 ? 'user' : 'users'}</span>
+          </div>
+
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' }}>
+            <button
+              onClick={() => openActionModal('ACTIVATE', Array.from(selectedUserIds))}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '8px 14px',
+                borderRadius: 'var(--radius-md, 8px)',
+                backgroundColor: 'var(--status-in-stock, #10b981)',
+                color: '#ffffff',
+                border: 'none',
+                fontSize: '13px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                minHeight: '38px'
+              }}
+            >
+              <UserCheck size={16} />
+              <span>Activate</span>
+            </button>
+
+            <button
+              onClick={() => openActionModal('SUSPEND', Array.from(selectedUserIds))}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '8px 14px',
+                borderRadius: 'var(--radius-md, 8px)',
+                backgroundColor: 'var(--status-overdue, #ef4444)',
+                color: '#ffffff',
+                border: 'none',
+                fontSize: '13px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                minHeight: '38px'
+              }}
+            >
+              <UserX size={16} />
+              <span>Suspend</span>
+            </button>
+
+            <button
+              onClick={() => openActionModal('HOLD', Array.from(selectedUserIds))}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '8px 14px',
+                borderRadius: 'var(--radius-md, 8px)',
+                backgroundColor: 'var(--color-primary-700, #334155)',
+                color: '#ffffff',
+                border: 'none',
+                fontSize: '13px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                minHeight: '38px'
+              }}
+            >
+              <PauseCircle size={16} />
+              <span>Hold</span>
+            </button>
+
+            <button
+              onClick={() => openActionModal('DELETE', Array.from(selectedUserIds))}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '8px 14px',
+                borderRadius: 'var(--radius-md, 8px)',
+                backgroundColor: '#7f1d1d',
+                color: '#ffffff',
+                border: 'none',
+                fontSize: '13px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                minHeight: '38px'
+              }}
+            >
+              <Trash2 size={16} />
+              <span>Delete</span>
+            </button>
+
+            <button
+              onClick={() => setSelectedUserIds(new Set())}
+              style={{
+                padding: '8px 12px',
+                borderRadius: 'var(--radius-md, 8px)',
+                backgroundColor: 'transparent',
+                color: 'var(--color-text-tertiary, #94a3b8)',
+                border: '1px solid #475569',
+                fontSize: '13px',
+                fontWeight: 500,
+                cursor: 'pointer',
+                minHeight: '38px'
+              }}
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Feedback Toast */}
+      {feedbackMessage && (
+        <div
+          style={{
+            padding: '14px 16px',
+            backgroundColor: 'var(--status-in-stock-bg, #ecfdf5)',
+            border: '1px solid #a7f3d0',
+            borderRadius: 'var(--radius-md, 10px)',
+            color: 'var(--status-in-stock, #10b981)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            fontSize: '14px',
+            fontWeight: 500
+          }}
+        >
+          <span>{feedbackMessage}</span>
+          <button
+            onClick={() => setFeedbackMessage(null)}
+            style={{ background: 'none', border: 'none', color: '#047857', cursor: 'pointer', fontWeight: 700 }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Filter and Search Bar */}
       <div
@@ -371,158 +654,274 @@ export default function AdminUsersPage() {
                       fontWeight: 600
                     }}
                   >
+                    <th style={{ padding: '12px 16px', width: '40px' }}>
+                      <input
+                        type="checkbox"
+                        checked={isAllSelected}
+                        ref={(el) => {
+                          if (el) el.indeterminate = isSomeSelected;
+                        }}
+                        onChange={toggleSelectAll}
+                        aria-label="Select all users"
+                        style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                      />
+                    </th>
                     <th style={{ padding: '12px 16px' }}>User</th>
                     <th style={{ padding: '12px 16px' }}>Contact</th>
                     <th style={{ padding: '12px 16px' }}>Status</th>
                     <th style={{ padding: '12px 16px' }}>Platform Role</th>
                     <th style={{ padding: '12px 16px' }}>Workspaces</th>
                     <th style={{ padding: '12px 16px' }}>Joined Date</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'right' }}>Action</th>
+                    <th style={{ padding: '12px 16px', textAlign: 'right' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {users.map((u) => (
-                    <tr
-                      key={u.id}
-                      style={{
-                        borderBottom: '1px solid var(--color-border-subtle, #e2e8f0)',
-                        transition: 'background-color 0.15s ease'
-                      }}
-                    >
-                      <td style={{ padding: '12px 16px' }}>
-                        <div style={{ fontWeight: 600, color: 'var(--color-text-primary, #0f172a)' }}>
-                          {u.display_name}
-                        </div>
-                        <div style={{ fontSize: '12px', color: 'var(--color-text-secondary, #64748b)' }}>
-                          {u.email || 'No email'}
-                        </div>
-                      </td>
+                  {users.map((u) => {
+                    const isSelected = selectedUserIds.has(u.id);
+                    return (
+                      <tr
+                        key={u.id}
+                        style={{
+                          borderBottom: '1px solid var(--color-border-subtle, #e2e8f0)',
+                          backgroundColor: isSelected ? 'rgba(59, 130, 246, 0.05)' : undefined,
+                          transition: 'background-color 0.15s ease'
+                        }}
+                      >
+                        <td style={{ padding: '12px 16px' }}>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleSelectUser(u.id)}
+                            aria-label={`Select user ${u.display_name}`}
+                            style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                          />
+                        </td>
 
-                      <td style={{ padding: '12px 16px', color: 'var(--color-text-secondary, #64748b)' }}>
-                        <div>{u.phone_number || '—'}</div>
-                        <div style={{ fontSize: '11px', display: 'flex', gap: '4px', marginTop: '2px' }}>
-                          {u.is_verified && <AdminBadge variant="success">Email Verified</AdminBadge>}
-                          {u.mobile_verified && <AdminBadge variant="success">SMS Verified</AdminBadge>}
-                        </div>
-                      </td>
+                        <td style={{ padding: '12px 16px' }}>
+                          <div style={{ fontWeight: 600, color: 'var(--color-text-primary, #0f172a)' }}>
+                            {u.display_name}
+                          </div>
+                          <div style={{ fontSize: '12px', color: 'var(--color-text-secondary, #64748b)' }}>
+                            {u.email || 'No email'}
+                          </div>
+                        </td>
 
-                      <td style={{ padding: '12px 16px' }}>
-                        {u.is_active ? (
-                          <AdminBadge variant="success">Active</AdminBadge>
-                        ) : (
-                          <AdminBadge variant="danger">Suspended</AdminBadge>
-                        )}
-                      </td>
+                        <td style={{ padding: '12px 16px', color: 'var(--color-text-secondary, #64748b)' }}>
+                          <div>{u.phone_number || '—'}</div>
+                          <div style={{ fontSize: '11px', display: 'flex', gap: '4px', marginTop: '2px' }}>
+                            {u.is_verified && <AdminBadge variant="success">Email Verified</AdminBadge>}
+                            {u.mobile_verified && <AdminBadge variant="success">SMS Verified</AdminBadge>}
+                          </div>
+                        </td>
 
-                      <td style={{ padding: '12px 16px' }}>
-                        {u.is_super_admin || u.system_role === 'SUPER_ADMIN' ? (
-                          <AdminBadge variant="purple">SUPER ADMIN</AdminBadge>
-                        ) : (
-                          <AdminBadge variant="neutral">{u.system_role || 'USER'}</AdminBadge>
-                        )}
-                      </td>
+                        <td style={{ padding: '12px 16px' }}>
+                          {u.is_active ? (
+                            <AdminBadge variant="success">Active</AdminBadge>
+                          ) : (
+                            <AdminBadge variant="danger">Suspended</AdminBadge>
+                          )}
+                        </td>
 
-                      <td style={{ padding: '12px 16px', color: 'var(--color-text-primary, #0f172a)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <Home size={14} color="var(--color-text-secondary, #64748b)" />
-                          <span>{u.homes_count} {u.homes_count === 1 ? 'Home' : 'Homes'}</span>
-                        </div>
-                      </td>
+                        <td style={{ padding: '12px 16px' }}>
+                          {u.is_super_admin || u.system_role === 'SUPER_ADMIN' ? (
+                            <AdminBadge variant="purple">SUPER ADMIN</AdminBadge>
+                          ) : (
+                            <AdminBadge variant="neutral">{u.system_role || 'USER'}</AdminBadge>
+                          )}
+                        </td>
 
-                      <td style={{ padding: '12px 16px', color: 'var(--color-text-secondary, #64748b)' }}>
-                        {formatDate(u.created_at)}
-                      </td>
+                        <td style={{ padding: '12px 16px', color: 'var(--color-text-primary, #0f172a)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <Home size={14} color="var(--color-text-secondary, #64748b)" />
+                            <span>{u.homes_count} {u.homes_count === 1 ? 'Home' : 'Homes'}</span>
+                          </div>
+                        </td>
 
-                      <td style={{ padding: '12px 16px', textAlign: 'right' }}>
-                        <Link
-                          href={`/admin/users/${u.id}`}
-                          style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            padding: '8px 12px',
-                            borderRadius: 'var(--radius-md, 10px)',
-                            border: '1px solid var(--color-border-subtle, #e2e8f0)',
-                            backgroundColor: 'var(--color-surface-subtle, #f1f5f9)',
-                            fontSize: '12px',
-                            fontWeight: 600,
-                            color: 'var(--color-text-primary, #0f172a)',
-                            minHeight: '36px'
-                          }}
-                        >
-                          <span>Inspect</span>
-                          <ExternalLink size={12} />
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
+                        <td style={{ padding: '12px 16px', color: 'var(--color-text-secondary, #64748b)' }}>
+                          {formatDate(u.created_at)}
+                        </td>
+
+                        <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                            <Link
+                              href={`/admin/users/${u.id}`}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                padding: '6px 10px',
+                                borderRadius: 'var(--radius-md, 8px)',
+                                border: '1px solid var(--color-border-subtle, #e2e8f0)',
+                                backgroundColor: 'var(--color-surface-subtle, #f1f5f9)',
+                                fontSize: '12px',
+                                fontWeight: 600,
+                                color: 'var(--color-text-primary, #0f172a)',
+                                minHeight: '32px'
+                              }}
+                            >
+                              <span>Inspect</span>
+                              <ExternalLink size={12} />
+                            </Link>
+
+                            {u.is_active ? (
+                              <button
+                                onClick={() => openActionModal('SUSPEND', [u.id])}
+                                title="Suspend User"
+                                style={{
+                                  padding: '6px 10px',
+                                  borderRadius: 'var(--radius-md, 8px)',
+                                  backgroundColor: 'var(--status-overdue-bg, #fef2f2)',
+                                  color: 'var(--status-overdue, #ef4444)',
+                                  border: '1px solid #fecaca',
+                                  fontSize: '12px',
+                                  fontWeight: 600,
+                                  cursor: 'pointer',
+                                  minHeight: '32px'
+                                }}
+                              >
+                                Suspend
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => openActionModal('ACTIVATE', [u.id])}
+                                title="Activate User"
+                                style={{
+                                  padding: '6px 10px',
+                                  borderRadius: 'var(--radius-md, 8px)',
+                                  backgroundColor: 'var(--status-in-stock-bg, #ecfdf5)',
+                                  color: 'var(--status-in-stock, #10b981)',
+                                  border: '1px solid #a7f3d0',
+                                  fontSize: '12px',
+                                  fontWeight: 600,
+                                  cursor: 'pointer',
+                                  minHeight: '32px'
+                                }}
+                              >
+                                Activate
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
 
             {/* Mobile Cards (Rendered on screen widths < 768px) */}
             <div className="ozhzo-admin-cards-container" style={{ display: 'none', padding: '12px', flexDirection: 'column', gap: '12px' }}>
-              {users.map((u) => (
-                <div
-                  key={u.id}
-                  style={{
-                    padding: '16px',
-                    borderRadius: 'var(--radius-md, 10px)',
-                    border: '1px solid var(--color-border-subtle, #e2e8f0)',
-                    backgroundColor: 'var(--color-surface-card, #ffffff)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '10px'
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <div>
-                      <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--color-text-primary, #0f172a)' }}>
-                        {u.display_name}
-                      </div>
-                      <div style={{ fontSize: '13px', color: 'var(--color-text-secondary, #64748b)' }}>
-                        {u.email || 'No email'}
-                      </div>
-                    </div>
-                    {u.is_active ? (
-                      <AdminBadge variant="success">Active</AdminBadge>
-                    ) : (
-                      <AdminBadge variant="danger">Suspended</AdminBadge>
-                    )}
-                  </div>
-
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', fontSize: '12px' }}>
-                    {u.is_super_admin && <AdminBadge variant="purple">SUPER ADMIN</AdminBadge>}
-                    <AdminBadge variant="neutral">{u.system_role}</AdminBadge>
-                    <AdminBadge variant="info">{u.homes_count} Workspaces</AdminBadge>
-                  </div>
-
-                  <div style={{ fontSize: '12px', color: 'var(--color-text-secondary, #64748b)' }}>
-                    Joined: {formatDate(u.created_at)}
-                  </div>
-
-                  <Link
-                    href={`/admin/users/${u.id}`}
+              {users.map((u) => {
+                const isSelected = selectedUserIds.has(u.id);
+                return (
+                  <div
+                    key={u.id}
                     style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '8px',
-                      padding: '10px',
+                      padding: '16px',
                       borderRadius: 'var(--radius-md, 10px)',
-                      backgroundColor: 'var(--color-primary-900, #0f172a)',
-                      color: 'var(--color-text-inverse, #ffffff)',
-                      fontSize: '13px',
-                      fontWeight: 600,
-                      minHeight: '44px',
-                      marginTop: '4px'
+                      border: isSelected ? '2px solid var(--color-primary-900, #0f172a)' : '1px solid var(--color-border-subtle, #e2e8f0)',
+                      backgroundColor: 'var(--color-surface-card, #ffffff)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '10px'
                     }}
                   >
-                    <span>Inspect & Manage User</span>
-                    <ExternalLink size={14} />
-                  </Link>
-                </div>
-              ))}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleSelectUser(u.id)}
+                          aria-label={`Select user ${u.display_name}`}
+                          style={{ cursor: 'pointer', width: '18px', height: '18px' }}
+                        />
+                        <div>
+                          <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--color-text-primary, #0f172a)' }}>
+                            {u.display_name}
+                          </div>
+                          <div style={{ fontSize: '13px', color: 'var(--color-text-secondary, #64748b)' }}>
+                            {u.email || 'No email'}
+                          </div>
+                        </div>
+                      </div>
+                      {u.is_active ? (
+                        <AdminBadge variant="success">Active</AdminBadge>
+                      ) : (
+                        <AdminBadge variant="danger">Suspended</AdminBadge>
+                      )}
+                    </div>
+
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', fontSize: '12px' }}>
+                      {u.is_super_admin && <AdminBadge variant="purple">SUPER ADMIN</AdminBadge>}
+                      <AdminBadge variant="neutral">{u.system_role}</AdminBadge>
+                      <AdminBadge variant="info">{u.homes_count} Workspaces</AdminBadge>
+                    </div>
+
+                    <div style={{ fontSize: '12px', color: 'var(--color-text-secondary, #64748b)' }}>
+                      Joined: {formatDate(u.created_at)}
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                      <Link
+                        href={`/admin/users/${u.id}`}
+                        style={{
+                          flex: 1,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px',
+                          padding: '10px',
+                          borderRadius: 'var(--radius-md, 10px)',
+                          backgroundColor: 'var(--color-primary-900, #0f172a)',
+                          color: 'var(--color-text-inverse, #ffffff)',
+                          fontSize: '13px',
+                          fontWeight: 600,
+                          minHeight: '44px'
+                        }}
+                      >
+                        <span>Inspect User</span>
+                        <ExternalLink size={14} />
+                      </Link>
+
+                      {u.is_active ? (
+                        <button
+                          onClick={() => openActionModal('SUSPEND', [u.id])}
+                          style={{
+                            padding: '10px 14px',
+                            borderRadius: 'var(--radius-md, 10px)',
+                            backgroundColor: 'var(--status-overdue-bg, #fef2f2)',
+                            color: 'var(--status-overdue, #ef4444)',
+                            border: '1px solid #fecaca',
+                            fontSize: '13px',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            minHeight: '44px'
+                          }}
+                        >
+                          Suspend
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => openActionModal('ACTIVATE', [u.id])}
+                          style={{
+                            padding: '10px 14px',
+                            borderRadius: 'var(--radius-md, 10px)',
+                            backgroundColor: 'var(--status-in-stock-bg, #ecfdf5)',
+                            color: 'var(--status-in-stock, #10b981)',
+                            border: '1px solid #a7f3d0',
+                            fontSize: '13px',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            minHeight: '44px'
+                          }}
+                        >
+                          Activate
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </>
         )}
@@ -588,6 +987,19 @@ export default function AdminUsersPage() {
           </div>
         </div>
       </div>
+
+      {/* Confirmation Modal */}
+      <AdminConfirmModal
+        isOpen={modalConfig.isOpen}
+        onClose={() => setModalConfig((prev) => ({ ...prev, isOpen: false }))}
+        onConfirm={handleConfirmAction}
+        title={modalConfig.title}
+        description={modalConfig.description}
+        confirmLabel={`Confirm ${modalConfig.action}`}
+        confirmVariant={modalConfig.confirmVariant}
+        isSubmitting={isSubmittingAction}
+        error={actionError}
+      />
 
       <style jsx>{`
         @media (max-width: 767.98px) {

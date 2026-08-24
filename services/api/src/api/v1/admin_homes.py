@@ -23,6 +23,10 @@ from src.schemas.admin import (
     AdminHomeDetailDTO,
     AdminHomeListItemDTO,
     AdminHomeMemberItemDTO,
+    BulkActionResponse,
+    BulkHomeActionRequest,
+    DeleteEntityRequest,
+    HoldEntityRequest,
     ReactivateEntityRequest,
     SuspendEntityRequest
 )
@@ -155,7 +159,18 @@ async def list_and_search_homes(
 
     dtos = []
     for row in rows:
-        h, c_email, c_disp, m_count, s_status = row
+        if len(row) == 5:
+            h, c_email, c_disp, m_count, s_status = row
+        elif len(row) == 4:
+            h, c_email, m_count, s_status = row
+            c_disp = None
+        else:
+            h = row[0]
+            c_email = row[1] if len(row) > 1 else None
+            c_disp = None
+            m_count = row[2] if len(row) > 2 else 0
+            s_status = row[3] if len(row) > 3 else "TRIALING"
+
         dtos.append(
             AdminHomeListItemDTO(
                 id=h.id,
@@ -170,6 +185,100 @@ async def list_and_search_homes(
             )
         )
     return ApiSuccessResponse(data=dtos)
+
+
+@router.post("/bulk-action", response_model=ApiSuccessResponse[BulkActionResponse])
+async def bulk_home_action(
+    payload: BulkHomeActionRequest,
+    super_admin: UserModel = Depends(require_admin_permission("admin:homes:edit")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Execute bulk status actions (ACTIVATE, SUSPEND, HOLD, ARCHIVE, DELETE) across multiple Home workspaces.
+    """
+    action_norm = payload.action.upper().strip()
+    valid_actions = {"ACTIVATE", "SUSPEND", "HOLD", "ARCHIVE", "DELETE"}
+    if action_norm not in valid_actions:
+        raise HTTPException(status_code=400, detail=f"Invalid action '{payload.action}'. Must be one of {valid_actions}")
+
+    succeeded: List[UUID] = []
+    failed: List[dict] = []
+
+    for hid in payload.home_ids:
+        home = await db.get(HomeModel, hid)
+        if not home or home.deleted_at is not None:
+            failed.append({"home_id": str(hid), "reason": "Home not found or already deleted."})
+            continue
+
+        old_state = {"status": home.status, "deleted_at": home.deleted_at}
+
+        if action_norm == "ACTIVATE":
+            home.status = "ACTIVE"
+            home.updated_at = datetime.now(timezone.utc)
+            await record_home_audit(
+                db=db,
+                home_id=home.id,
+                action="BULK_ACTIVATE_HOME",
+                performed_by=super_admin.id,
+                old_values=old_state,
+                new_values={"status": "ACTIVE"},
+                reason=payload.reason
+            )
+            succeeded.append(home.id)
+
+        elif action_norm == "SUSPEND":
+            home.status = "SUSPENDED"
+            home.updated_at = datetime.now(timezone.utc)
+            await record_home_audit(
+                db=db,
+                home_id=home.id,
+                action="BULK_SUSPEND_HOME",
+                performed_by=super_admin.id,
+                old_values=old_state,
+                new_values={"status": "SUSPENDED"},
+                reason=payload.reason
+            )
+            succeeded.append(home.id)
+
+        elif action_norm == "HOLD":
+            home.status = "HELD"
+            home.updated_at = datetime.now(timezone.utc)
+            await record_home_audit(
+                db=db,
+                home_id=home.id,
+                action="BULK_HOLD_HOME",
+                performed_by=super_admin.id,
+                old_values=old_state,
+                new_values={"status": "HELD"},
+                reason=payload.reason
+            )
+            succeeded.append(home.id)
+
+        elif action_norm in {"ARCHIVE", "DELETE"}:
+            home.status = "ARCHIVED"
+            home.deleted_at = datetime.now(timezone.utc)
+            home.updated_at = datetime.now(timezone.utc)
+            await record_home_audit(
+                db=db,
+                home_id=home.id,
+                action=f"BULK_{action_norm}_HOME",
+                performed_by=super_admin.id,
+                old_values=old_state,
+                new_values={"status": "ARCHIVED", "deleted_at": str(home.deleted_at)},
+                reason=payload.reason
+            )
+            succeeded.append(home.id)
+
+    await db.commit()
+
+    return ApiSuccessResponse(
+        data=BulkActionResponse(
+            total=len(payload.home_ids),
+            succeeded=succeeded,
+            failed=failed,
+            message=f"Executed {action_norm} for {len(succeeded)} of {len(payload.home_ids)} homes."
+        )
+    )
 
 
 @router.get("/{home_id}", response_model=ApiSuccessResponse[AdminHomeDetailDTO])
@@ -275,6 +384,7 @@ async def suspend_home(
 
 
 @router.post("/{home_id}/reactivate", response_model=ApiSuccessResponse[MessageResponse])
+@router.post("/{home_id}/activate", response_model=ApiSuccessResponse[MessageResponse])
 async def reactivate_home(
     home_id: UUID,
     payload: ReactivateEntityRequest,
@@ -304,3 +414,69 @@ async def reactivate_home(
     await db.commit()
 
     return ApiSuccessResponse(data=MessageResponse(message=f"Home '{home.name}' reactivated successfully."))
+
+
+@router.post("/{home_id}/hold", response_model=ApiSuccessResponse[MessageResponse])
+async def hold_home(
+    home_id: UUID,
+    payload: HoldEntityRequest,
+    super_admin: UserModel = Depends(require_admin_permission("admin:homes:edit")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Place a Home workspace on administrative hold.
+    """
+    home = await db.get(HomeModel, home_id)
+    if not home:
+        raise HTTPException(status_code=404, detail="Home not found.")
+
+    old_status = getattr(home, "status", "ACTIVE")
+    home.status = "HELD"
+    home.updated_at = datetime.now(timezone.utc)
+
+    await record_home_audit(
+        db=db,
+        home_id=home.id,
+        action="HOLD_HOME",
+        performed_by=super_admin.id,
+        old_values={"status": old_status},
+        new_values={"status": "HELD"},
+        reason=payload.reason
+    )
+    await db.commit()
+
+    return ApiSuccessResponse(data=MessageResponse(message=f"Home '{home.name}' placed on administrative hold."))
+
+
+@router.post("/{home_id}/archive", response_model=ApiSuccessResponse[MessageResponse])
+async def archive_home(
+    home_id: UUID,
+    payload: DeleteEntityRequest,
+    super_admin: UserModel = Depends(require_admin_permission("admin:homes:edit")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Archive and soft-delete a Home workspace.
+    """
+    home = await db.get(HomeModel, home_id)
+    if not home or home.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Home not found or already archived.")
+
+    old_status = getattr(home, "status", "ACTIVE")
+    home.status = "ARCHIVED"
+    home.deleted_at = datetime.now(timezone.utc)
+    home.updated_at = datetime.now(timezone.utc)
+
+    await record_home_audit(
+        db=db,
+        home_id=home.id,
+        action="ARCHIVE_HOME",
+        performed_by=super_admin.id,
+        old_values={"status": old_status},
+        new_values={"status": "ARCHIVED", "deleted_at": str(home.deleted_at)},
+        reason=payload.reason
+    )
+    await db.commit()
+
+    return ApiSuccessResponse(data=MessageResponse(message=f"Home '{home.name}' archived successfully."))
+

@@ -259,3 +259,23 @@ export interface CouponAnalytics {
   active_direct_grants: number;
   generated_at: string;
 }
+
+export interface AdminSubscriberListItem {
+  id: string;
+  user_id: string;
+  user_name: string;
+  user_email?: string | null;
+  home_id: string;
+  home_name: string;
+  plan_name: string;
+  plan_code: string;
+  status: string;
+  start_date?: string | null;
+  renewal_date?: string | null;
+  coupon_code?: string | null;
+  discount_amount: string | number;
+  paid_seats: number;
+  currency: string;
+  created_at?: string | null;
+}
+

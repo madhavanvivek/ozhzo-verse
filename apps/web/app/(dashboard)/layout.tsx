@@ -241,11 +241,14 @@ export default function DashboardLayout({
             homes={homes}
             onSelectHome={(homeId) => {
               setActiveHomeId(homeId);
-              localStorage.setItem('active_home_id', homeId);
+              apiClient.setActiveHomeId(homeId);
               window.dispatchEvent(new Event('home-changed'));
             }}
             onCreateNewHome={() => {
               router.push('/dashboard?action=create_home');
+            }}
+            onJoinHome={() => {
+              router.push('/dashboard?action=join_home');
             }}
           />
         </div>
@@ -309,11 +312,14 @@ export default function DashboardLayout({
                   homes={homes}
                   onSelectHome={(homeId) => {
                     setActiveHomeId(homeId);
-                    localStorage.setItem('active_home_id', homeId);
+                    apiClient.setActiveHomeId(homeId);
                     window.dispatchEvent(new Event('home-changed'));
                   }}
                   onCreateNewHome={() => {
                     router.push('/dashboard?action=create_home');
+                  }}
+                  onJoinHome={() => {
+                    router.push('/dashboard?action=join_home');
                   }}
                 />
               </div>

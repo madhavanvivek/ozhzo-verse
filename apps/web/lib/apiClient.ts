@@ -53,8 +53,12 @@ class ApiClient {
   }
 
   getActiveHomeId(): string | null {
-    if (!this.activeHomeId && typeof window !== 'undefined') {
-      this.activeHomeId = localStorage.getItem('active_home_id');
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('active_home_id');
+      if (stored) {
+        this.activeHomeId = stored;
+        return stored;
+      }
     }
     return this.activeHomeId;
   }

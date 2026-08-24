@@ -98,6 +98,8 @@ function DashboardPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  const [userHomes, setUserHomes] = useState<Array<{ id: string; name: string; role: string }>>([]);
+  const [activeHomeId, setActiveHomeId] = useState<string | null>(null);
   const [data, setData] = useState<DashboardData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -127,75 +129,99 @@ function DashboardPageContent() {
   const [isJoiningHome, setIsJoiningHome] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
 
-  const loadUserProfile = async () => {
-    try {
-      const profile = await apiClient.get<any>('/users/me');
-      if (profile) {
-        setUserProfile(profile);
-      }
-    } catch (err) {
-      console.error('Failed to load user profile:', err);
-    }
-  };
-
-  const fetchDashboard = async () => {
+  const loadDashboard = async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const homeId = await apiClient.getValidActiveHome();
+      // 1. Fetch user profile and accessible homes from backend in parallel
+      const [profileRes, homesRes] = await Promise.allSettled([
+        apiClient.get<any>('/users/me'),
+        apiClient.get<Array<{ id: string; name: string; role: string }>>('/homes')
+      ]);
 
-      if (!homeId) {
+      let profileData = null;
+      if (profileRes.status === 'fulfilled' && profileRes.value) {
+        profileData = profileRes.value;
+        setUserProfile(profileData);
+      }
+
+      let accessibleHomes: Array<{ id: string; name: string; role: string }> = [];
+      if (homesRes.status === 'fulfilled' && Array.isArray(homesRes.value)) {
+        accessibleHomes = homesRes.value;
+      }
+      setUserHomes(accessibleHomes);
+
+      // STATE A: User has zero homes -> Onboarding State
+      if (accessibleHomes.length === 0) {
+        setActiveHomeId(null);
         setData(null);
         setIsLoading(false);
         return;
       }
 
-      const res = await apiClient.get<any>(`/homes/${homeId}/dashboard`);
-      if (res) {
-        const normalizedData: DashboardData = {
-          greeting: res.greeting || { greeting: 'Welcome', user_display_name: 'Home', date_formatted: '', time_period: '' },
-          summary: res.summary || {
-            home_id: homeId,
-            home_name: res.home_name || 'Home',
-            currency: 'USD',
-            timezone: 'UTC',
-            members_count: 1,
-            active_tasks_count: 0,
-            low_stock_count: 0,
-            unpaid_bills_count: 0,
-            unpaid_bills_sum: 0,
-            upcoming_events_count: 0,
-            unread_notifications_count: 0
-          },
-          pending_tasks: Array.isArray(res.pending_tasks) ? res.pending_tasks : [],
-          upcoming_bills: Array.isArray(res.upcoming_bills) ? res.upcoming_bills : [],
-          upcoming_events: Array.isArray(res.upcoming_events) ? res.upcoming_events : [],
-          low_stock_inventory: Array.isArray(res.low_stock_inventory) ? res.low_stock_inventory : [],
-          shopping_items: Array.isArray(res.shopping_items) ? res.shopping_items : [],
-          notifications: Array.isArray(res.notifications) ? res.notifications : [],
-          role: res.role || 'MEMBER'
-        };
-        setData(normalizedData);
-      } else {
+      // STATE B: User has 1 or more homes -> Resolve and load active home dashboard
+      const resolvedHomeId = apiClient.resolveActiveHome(accessibleHomes);
+      setActiveHomeId(resolvedHomeId);
+
+      if (!resolvedHomeId) {
         setData(null);
+        setIsLoading(false);
+        return;
+      }
+
+      // Fetch Home-scoped dashboard data
+      try {
+        const res = await apiClient.get<any>(`/homes/${resolvedHomeId}/dashboard`);
+        if (res) {
+          const currentHome = accessibleHomes.find((h) => h.id === resolvedHomeId);
+          const normalizedData: DashboardData = {
+            greeting: res.greeting || {
+              greeting: 'Welcome',
+              user_display_name: profileData?.display_name || 'Home',
+              date_formatted: '',
+              time_period: ''
+            },
+            summary: res.summary || {
+              home_id: resolvedHomeId,
+              home_name: currentHome?.name || res.home_name || 'Home',
+              currency: res.currency || 'USD',
+              timezone: res.timezone || 'UTC',
+              members_count: 1,
+              active_tasks_count: 0,
+              low_stock_count: 0,
+              unpaid_bills_count: 0,
+              unpaid_bills_sum: 0,
+              upcoming_events_count: 0,
+              unread_notifications_count: 0
+            },
+            pending_tasks: Array.isArray(res.pending_tasks) ? res.pending_tasks : [],
+            upcoming_bills: Array.isArray(res.upcoming_bills) ? res.upcoming_bills : [],
+            upcoming_events: Array.isArray(res.upcoming_events) ? res.upcoming_events : [],
+            low_stock_inventory: Array.isArray(res.low_stock_inventory) ? res.low_stock_inventory : [],
+            shopping_items: Array.isArray(res.shopping_items) ? res.shopping_items : [],
+            notifications: Array.isArray(res.notifications) ? res.notifications : [],
+            role: res.role || currentHome?.role || 'MEMBER'
+          };
+          setData(normalizedData);
+          setError(null);
+        }
+      } catch (dashErr: any) {
+        console.error('Failed to load active home dashboard:', dashErr);
+        setError(dashErr?.message || 'Unable to load dashboard for this home.');
       }
     } catch (err: any) {
-      console.error('Failed to load dashboard:', err);
-      // If permission or not found, keep data as null so user can create/switch
-      setError(err?.message || 'Unable to load dashboard data. Please verify your connection.');
-      setData(null);
+      console.error('Failed to initialize dashboard:', err);
+      setError(err?.message || 'Unable to load dashboard. Please check your connection.');
     } finally {
       setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchDashboard();
-    loadUserProfile();
+    loadDashboard();
 
     const handleHomeChanged = () => {
-      fetchDashboard();
-      loadUserProfile();
+      loadDashboard();
     };
 
     window.addEventListener('home-changed', handleHomeChanged);
@@ -203,7 +229,8 @@ function DashboardPageContent() {
   }, []);
 
   useEffect(() => {
-    if (searchParams.get('action') === 'create_home') {
+    const action = searchParams.get('action');
+    if (action === 'create_home') {
       setIsCreateHomeOpen(true);
       if (typeof window !== 'undefined') {
         const savedDraft = localStorage.getItem('draft_home_name');
@@ -212,6 +239,8 @@ function DashboardPageContent() {
           localStorage.removeItem('draft_home_name');
         }
       }
+    } else if (action === 'join_home') {
+      setIsJoinHomeOpen(true);
     }
   }, [searchParams]);
 
@@ -239,7 +268,7 @@ function DashboardPageContent() {
 
       setIsCreateHomeOpen(false);
       setNewHomeName('');
-      await fetchDashboard();
+      await loadDashboard();
     } catch (err: any) {
       console.error('Create home failed:', err);
       const msg = err?.message || '';
@@ -274,7 +303,7 @@ function DashboardPageContent() {
 
       setIsJoinHomeOpen(false);
       setInvitationToken('');
-      await fetchDashboard();
+      await loadDashboard();
     } catch (err: any) {
       console.error('Join home failed:', err);
       setJoinError(err?.message || 'Invalid or expired invitation token.');
@@ -614,15 +643,16 @@ function DashboardPageContent() {
   }
 
   // ===========================================================================
-  // STATE A — USER HAS NO HOME (Pre-Dashboard / Empty State)
+  // STATE A — USER HAS NO HOME (Pre-Dashboard / Empty State / Onboarding)
+  // Strictly applies ONLY when the backend confirms user belongs to ZERO homes
   // ===========================================================================
-  if (!data) {
+  if (userHomes.length === 0 && !activeHomeId) {
     return (
       <div style={{ maxWidth: '840px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 'var(--space-8)', padding: 'var(--space-6) var(--space-4)' }}>
         {error && (
           <div style={{ padding: '10px 14px', backgroundColor: 'var(--status-overdue-bg)', color: 'var(--status-overdue)', borderRadius: 'var(--radius-md)', fontSize: '13px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span>{error}</span>
-            <Button size="sm" variant="secondary" onClick={fetchDashboard}>
+            <Button size="sm" variant="secondary" onClick={loadDashboard}>
               <RefreshCw size={14} /> <span>Retry</span>
             </Button>
           </div>
@@ -719,6 +749,52 @@ function DashboardPageContent() {
     );
   }
 
+  // Error State for user WITH homes (e.g. temporary API failure)
+  if (error && !data) {
+    return (
+      <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <div
+          style={{
+            padding: '16px 20px',
+            backgroundColor: 'var(--status-overdue-bg, #fef2f2)',
+            border: '1px solid #fecaca',
+            borderRadius: 'var(--radius-lg, 16px)',
+            color: 'var(--status-overdue, #ef4444)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '16px'
+          }}
+        >
+          <div>
+            <div style={{ fontWeight: 700, fontSize: '15px' }}>Unable to load household dashboard</div>
+            <div style={{ fontSize: '13px', color: '#991b1b', marginTop: '4px' }}>{error}</div>
+          </div>
+          <Button variant="secondary" onClick={loadDashboard}>
+            <RefreshCw size={14} /> <span>Retry</span>
+          </Button>
+        </div>
+        {renderCreateHomeModal()}
+        {renderJoinHomeModal()}
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)', padding: 'var(--space-4)' }}>
+        <div style={{ height: '60px', backgroundColor: 'var(--color-surface-subtle)', borderRadius: 'var(--radius-md)', animation: 'pulse 1.5s infinite' }} />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 'var(--space-4)' }}>
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} style={{ height: '90px', backgroundColor: 'var(--color-surface-subtle)', borderRadius: 'var(--radius-lg)' }} />
+          ))}
+        </div>
+        {renderCreateHomeModal()}
+        {renderJoinHomeModal()}
+      </div>
+    );
+  }
+
   // ===========================================================================
   // STATE B — FULL APPROVED HOME DASHBOARD
   // ===========================================================================
@@ -737,7 +813,7 @@ function DashboardPageContent() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
-          <Button onClick={fetchDashboard} variant="secondary" size="sm">
+          <Button onClick={loadDashboard} variant="secondary" size="sm">
             <RefreshCw size={14} />
             <span>Refresh</span>
           </Button>

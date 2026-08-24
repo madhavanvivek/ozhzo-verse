@@ -14,13 +14,15 @@ interface HomeSwitcherProps {
   homes: HomeOption[];
   onSelectHome: (homeId: string) => void;
   onCreateNewHome?: () => void;
+  onJoinHome?: () => void;
 }
 
 export const HomeSwitcher: React.FC<HomeSwitcherProps> = ({
   currentHome,
   homes,
   onSelectHome,
-  onCreateNewHome
+  onCreateNewHome,
+  onJoinHome
 }) => {
   const [isOpen, setIsOpen] = useState(false);
 
@@ -28,6 +30,7 @@ export const HomeSwitcher: React.FC<HomeSwitcherProps> = ({
     <div style={{ position: 'relative', display: 'inline-block', maxWidth: '100%', minWidth: 0 }}>
       <button
         onClick={() => setIsOpen(!isOpen)}
+        id="home-switcher-dropdown-btn"
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -46,7 +49,7 @@ export const HomeSwitcher: React.FC<HomeSwitcherProps> = ({
         }}
       >
         <HomeIcon size={15} color="var(--color-primary-900)" style={{ flexShrink: 0 }} />
-        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flex: 1 }}>
+        <span id="current-active-home-name" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flex: 1 }}>
           {currentHome?.name || 'Select Home'}
         </span>
         <ChevronDown size={13} color="var(--color-text-secondary)" style={{ flexShrink: 0 }} />
@@ -54,6 +57,7 @@ export const HomeSwitcher: React.FC<HomeSwitcherProps> = ({
 
       {isOpen && (
         <div
+          id="home-switcher-menu"
           style={{
             position: 'absolute',
             top: '100%',
@@ -97,33 +101,62 @@ export const HomeSwitcher: React.FC<HomeSwitcherProps> = ({
               <span style={{ fontSize: '11px', color: 'var(--color-text-secondary)', textTransform: 'uppercase' }}>{h.role}</span>
             </button>
           ))}
-          {onCreateNewHome && (
-            <button
-              onClick={() => {
-                onCreateNewHome();
-                setIsOpen(false);
-              }}
-              style={{
-                width: '100%',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '8px 10px',
-                marginTop: '4px',
-                borderTop: '1px solid var(--color-border-subtle)',
-                borderLeft: 'none',
-                borderRight: 'none',
-                borderBottom: 'none',
-                backgroundColor: 'transparent',
-                cursor: 'pointer',
-                fontSize: '13px',
-                fontWeight: 600,
-                color: 'var(--color-accent-warm)'
-              }}
-            >
-              <Plus size={14} />
-              <span>Create New Home</span>
-            </button>
+
+          {(onCreateNewHome || onJoinHome) && (
+            <div style={{ borderTop: '1px solid var(--color-border-subtle)', marginTop: '4px', paddingTop: '4px' }}>
+              {onCreateNewHome && (
+                <button
+                  onClick={() => {
+                    onCreateNewHome();
+                    setIsOpen(false);
+                  }}
+                  id="switcher-create-home-btn"
+                  style={{
+                    width: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '8px 10px',
+                    border: 'none',
+                    backgroundColor: 'transparent',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    color: 'var(--color-accent-warm)',
+                    borderRadius: 'var(--radius-sm)'
+                  }}
+                >
+                  <Plus size={14} />
+                  <span>Create New Home</span>
+                </button>
+              )}
+              {onJoinHome && (
+                <button
+                  onClick={() => {
+                    onJoinHome();
+                    setIsOpen(false);
+                  }}
+                  id="switcher-join-home-btn"
+                  style={{
+                    width: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    padding: '8px 10px',
+                    border: 'none',
+                    backgroundColor: 'transparent',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    color: 'var(--color-text-secondary)',
+                    borderRadius: 'var(--radius-sm)'
+                  }}
+                >
+                  <HomeIcon size={14} />
+                  <span>Join a Home</span>
+                </button>
+              )}
+            </div>
           )}
         </div>
       )}

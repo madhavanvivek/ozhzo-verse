@@ -225,6 +225,7 @@ async def create_category(
 # Items & Assets API
 # ==============================================================================
 
+@router.get("", response_model=ApiSuccessResponse[PaginatedInventoryResponse])
 @router.get("/items", response_model=ApiSuccessResponse[PaginatedInventoryResponse])
 async def list_inventory_items(
     item_type: Optional[str] = Query(None, pattern="^(CONSUMABLE|ASSET)$"),

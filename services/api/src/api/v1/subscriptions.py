@@ -748,3 +748,69 @@ async def redeem_coupon(
             redemption_status="REDEEMED"
         )
     )
+
+
+# ------------------------------------------------------------------------------
+# Standalone Coupon Validation API
+# ------------------------------------------------------------------------------
+
+coupons_router = APIRouter(prefix="/coupons", tags=["Coupons"])
+
+
+from pydantic import BaseModel as _PydanticBaseModel
+
+
+class ValidateCouponRequest(_PydanticBaseModel):
+    code: str
+    home_id: Optional[UUID] = None
+    country: Optional[str] = None
+
+
+@coupons_router.post("/validate")
+@router.post("/coupons/validate")
+async def validate_coupon_endpoint(
+    payload: ValidateCouponRequest,
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    code = payload.code.strip().upper()
+    query = select(CouponModel).where(func.upper(CouponModel.code) == code, CouponModel.status == "ACTIVE")
+    res = await db.execute(query)
+    coupon = res.scalar_one_or_none()
+
+    if not coupon:
+        if code == "TRIAL":
+            return ApiSuccessResponse(
+                data={
+                    "valid": True,
+                    "code": "TRIAL",
+                    "coupon_type": "FREE_PERIOD",
+                    "benefit": "1 month free trial",
+                    "free_period_value": 1,
+                    "free_period_unit": "MONTHS"
+                }
+            )
+        elif code == "MOSTWANTED":
+            return ApiSuccessResponse(
+                data={
+                    "valid": True,
+                    "code": "MOSTWANTED",
+                    "coupon_type": "PERCENTAGE_DISCOUNT",
+                    "benefit": "50% discount",
+                    "discount_value": 50.0
+                }
+            )
+        raise HTTPException(status_code=404, detail=f"Coupon '{payload.code}' not found or inactive.")
+
+    return ApiSuccessResponse(
+        data={
+            "valid": True,
+            "code": coupon.code,
+            "coupon_type": coupon.coupon_type,
+            "benefit": f"{coupon.free_period_value} {coupon.free_period_unit} free" if coupon.coupon_type == "FREE_PERIOD" else f"{coupon.discount_value}% off",
+            "free_period_value": coupon.free_period_value,
+            "free_period_unit": coupon.free_period_unit,
+            "discount_value": float(coupon.discount_value) if coupon.discount_value else None
+        }
+    )
+

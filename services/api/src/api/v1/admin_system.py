@@ -15,6 +15,7 @@ from src.schemas.common import ApiSuccessResponse
 from src.schemas.admin import AdminAnalyticsSummaryDTO, AdminSystemConfigDTO
 
 router = APIRouter(prefix="/admin/system", tags=["Super Admin - System"])
+dashboard_router = APIRouter(prefix="/admin", tags=["Super Admin - Dashboard"])
 
 
 @router.get("/config", response_model=ApiSuccessResponse[AdminSystemConfigDTO])
@@ -48,6 +49,10 @@ async def get_system_configuration(
 @router.get("/summary", response_model=ApiSuccessResponse[AdminAnalyticsSummaryDTO])
 @router.get("/analytics-summary", response_model=ApiSuccessResponse[AdminAnalyticsSummaryDTO])
 @router.get("/analytics/summary", response_model=ApiSuccessResponse[AdminAnalyticsSummaryDTO])
+@dashboard_router.get("/dashboard/stats", response_model=ApiSuccessResponse[AdminAnalyticsSummaryDTO])
+@dashboard_router.get("/stats", response_model=ApiSuccessResponse[AdminAnalyticsSummaryDTO])
+@dashboard_router.get("/summary", response_model=ApiSuccessResponse[AdminAnalyticsSummaryDTO])
+@dashboard_router.get("/analytics-summary", response_model=ApiSuccessResponse[AdminAnalyticsSummaryDTO])
 async def get_analytics_summary(
     super_admin: UserModel = Depends(require_admin_permission("admin:dashboard:view")),
     db: AsyncSession = Depends(get_db),

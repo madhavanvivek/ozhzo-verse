@@ -16,12 +16,12 @@ from src.api.v1.bills import router as bills_router
 from src.api.v1.bill_templates import router as bill_templates_router
 from src.api.v1.calendar import router as calendar_router
 from src.api.v1.notifications import router as notifications_router
-from src.api.v1.subscriptions import router as subscriptions_router
+from src.api.v1.subscriptions import router as subscriptions_router, coupons_router
 from src.api.v1.admin_subscriptions import router as admin_subscriptions_router
 from src.api.v1.admin_coupons import router as admin_coupons_router
 from src.api.v1.admin_users import router as admin_users_router
 from src.api.v1.admin_homes import router as admin_homes_router
-from src.api.v1.admin_system import router as admin_system_router
+from src.api.v1.admin_system import router as admin_system_router, dashboard_router as admin_dashboard_router
 from src.api.v1.admin_activity import router as admin_activity_router
 from src.api.v1.admin_security import router as admin_security_router
 from src.api.v1.search import router as search_router
@@ -52,11 +52,13 @@ api_v1_router.include_router(bill_templates_router)
 api_v1_router.include_router(calendar_router)
 api_v1_router.include_router(notifications_router)
 api_v1_router.include_router(subscriptions_router)
+api_v1_router.include_router(coupons_router)
 api_v1_router.include_router(admin_subscriptions_router)
 api_v1_router.include_router(admin_coupons_router)
 api_v1_router.include_router(admin_users_router)
 api_v1_router.include_router(admin_homes_router)
 api_v1_router.include_router(admin_system_router)
+api_v1_router.include_router(admin_dashboard_router)
 api_v1_router.include_router(admin_activity_router)
 api_v1_router.include_router(admin_security_router)
 api_v1_router.include_router(search_router)

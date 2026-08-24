@@ -19,6 +19,47 @@ async def lifespan(app: FastAPI):
     if settings.ENVIRONMENT == "production" and "development" in settings.JWT_SECRET_KEY:
         logger.critical("FATAL SECURITY RISK: Default development JWT secret key detected in production environment!")
 
+    # Safe and idempotent database schema synchronization
+    try:
+        from src.infrastructure.database.models import Base
+        from src.infrastructure.database.session import engine
+        from sqlalchemy import text
+        async with engine.begin() as conn:
+            # 1. Create all registered tables if they do not exist
+            await conn.run_sync(Base.metadata.create_all)
+
+            # 2. Idempotently ensure domain columns exist on legacy tables
+            columns_to_ensure = [
+                ("inventory_items", "brand", "VARCHAR"),
+                ("inventory_items", "model_number", "VARCHAR"),
+                ("inventory_items", "serial_number", "VARCHAR"),
+                ("inventory_items", "barcode", "VARCHAR"),
+                ("inventory_items", "qr_code_identifier", "VARCHAR"),
+                ("inventory_items", "purchase_date", "DATE"),
+                ("inventory_items", "purchase_price", "NUMERIC(12, 2)"),
+                ("inventory_items", "purchase_store", "VARCHAR"),
+                ("inventory_items", "warranty_expiry_date", "DATE"),
+                ("inventory_items", "warranty_notes", "VARCHAR"),
+                ("inventory_items", "photo_url", "VARCHAR"),
+                ("inventory_items", "receipt_url", "VARCHAR"),
+                ("inventory_items", "manual_url", "VARCHAR"),
+                ("inventory_items", "last_serviced_at", "DATE"),
+                ("inventory_items", "next_service_due_at", "DATE"),
+                ("inventory_items", "service_notes", "VARCHAR"),
+                ("homes", "status", "VARCHAR DEFAULT 'ACTIVE'"),
+                ("users", "is_super_admin", "BOOLEAN DEFAULT FALSE"),
+                ("users", "system_role", "VARCHAR DEFAULT 'USER'"),
+                ("users", "mobile_verified", "BOOLEAN DEFAULT FALSE")
+            ]
+            for table, col, col_type in columns_to_ensure:
+                try:
+                    await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {col_type};"))
+                except Exception:
+                    pass
+        logger.info("Database schema synchronization completed successfully.")
+    except Exception as e:
+        logger.warning(f"Database schema sync warning: {e}")
+
     # Safe and idempotent Super Admin initialization
     if settings.ENABLE_DEMO_SUPER_ADMIN_BOOTSTRAP:
         try:

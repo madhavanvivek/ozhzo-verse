@@ -667,8 +667,15 @@ export default function AdminHomesPage() {
                         </td>
 
                         <td style={{ padding: '12px 16px' }}>
-                          <div style={{ fontWeight: 600, color: 'var(--color-text-primary, #0f172a)' }}>
-                            {h.name}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ fontWeight: 600, color: 'var(--color-text-primary, #0f172a)' }}>
+                              {h.name}
+                            </span>
+                            {(h.name?.toLowerCase().includes('demo') ||
+                              h.name?.toLowerCase().includes('audit') ||
+                              h.name?.toLowerCase().includes('test')) && (
+                              <AdminBadge variant="warning">DEMO / TEST</AdminBadge>
+                            )}
                           </div>
                           <div style={{ fontSize: '12px', color: 'var(--color-text-secondary, #64748b)' }}>
                             ID: {h.id.slice(0, 8)}... | Currency: {h.currency}

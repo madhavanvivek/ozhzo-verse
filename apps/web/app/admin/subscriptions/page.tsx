@@ -40,8 +40,11 @@ export default function AdminSubscriptionsPage() {
     discount_value: '20.00',
     currency: '',
     country: '',
+    start_date: '',
+    end_date: '',
     new_users_only: false,
-    maximum_redemptions: ''
+    maximum_redemptions: '',
+    maximum_redemptions_per_user: '1'
   });
   const [promoModalError, setPromoModalError] = useState<string | null>(null);
 
@@ -83,8 +86,11 @@ export default function AdminSubscriptionsPage() {
         discount_value: parseFloat(promoForm.discount_value) || 0,
         currency: promoForm.currency.trim() ? promoForm.currency.toUpperCase().trim() : undefined,
         country: promoForm.country.trim() ? promoForm.country.toUpperCase().trim() : undefined,
+        start_date: promoForm.start_date ? new Date(promoForm.start_date).toISOString() : undefined,
+        end_date: promoForm.end_date ? new Date(promoForm.end_date).toISOString() : undefined,
         new_users_only: promoForm.new_users_only,
         maximum_redemptions: promoForm.maximum_redemptions ? parseInt(promoForm.maximum_redemptions) : undefined,
+        maximum_redemptions_per_user: promoForm.maximum_redemptions_per_user ? parseInt(promoForm.maximum_redemptions_per_user) : undefined,
         status: 'ACTIVE'
       });
       setIsPromoModalOpen(false);
@@ -814,6 +820,89 @@ export default function AdminSubscriptionsPage() {
                     required
                     value={promoForm.discount_value}
                     onChange={(e) => setPromoForm({ ...promoForm, discount_value: e.target.value })}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      borderRadius: 'var(--radius-md, 10px)',
+                      border: '1px solid var(--color-border-subtle, #e2e8f0)',
+                      fontSize: '14px',
+                      minHeight: '44px'
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                    Start Date
+                  </label>
+                  <input
+                    type="date"
+                    value={promoForm.start_date}
+                    onChange={(e) => setPromoForm({ ...promoForm, start_date: e.target.value })}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      borderRadius: 'var(--radius-md, 10px)',
+                      border: '1px solid var(--color-border-subtle, #e2e8f0)',
+                      fontSize: '14px',
+                      minHeight: '44px'
+                    }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                    End Date
+                  </label>
+                  <input
+                    type="date"
+                    value={promoForm.end_date}
+                    onChange={(e) => setPromoForm({ ...promoForm, end_date: e.target.value })}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      borderRadius: 'var(--radius-md, 10px)',
+                      border: '1px solid var(--color-border-subtle, #e2e8f0)',
+                      fontSize: '14px',
+                      minHeight: '44px'
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                    Max Total Redemptions
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    placeholder="Unlimited"
+                    value={promoForm.maximum_redemptions}
+                    onChange={(e) => setPromoForm({ ...promoForm, maximum_redemptions: e.target.value })}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      borderRadius: 'var(--radius-md, 10px)',
+                      border: '1px solid var(--color-border-subtle, #e2e8f0)',
+                      fontSize: '14px',
+                      minHeight: '44px'
+                    }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                    Per-User Usage Limit
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={promoForm.maximum_redemptions_per_user}
+                    onChange={(e) => setPromoForm({ ...promoForm, maximum_redemptions_per_user: e.target.value })}
                     style={{
                       width: '100%',
                       padding: '10px 12px',

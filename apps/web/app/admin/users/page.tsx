@@ -698,8 +698,20 @@ export default function AdminUsersPage() {
                         </td>
 
                         <td style={{ padding: '12px 16px' }}>
-                          <div style={{ fontWeight: 600, color: 'var(--color-text-primary, #0f172a)' }}>
-                            {u.display_name}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ fontWeight: 600, color: 'var(--color-text-primary, #0f172a)' }}>
+                              {u.display_name}
+                            </span>
+                            {(u.email?.includes('example.com') ||
+                              u.email?.includes('demo_') ||
+                              u.email?.includes('audit_user') ||
+                              u.email?.includes('bulk') ||
+                              u.email?.includes('prodtest') ||
+                              u.display_name?.toLowerCase().includes('demo') ||
+                              u.display_name?.toLowerCase().includes('auditor') ||
+                              u.display_name?.toLowerCase().includes('tester')) && (
+                              <AdminBadge variant="warning">DEMO / TEST</AdminBadge>
+                            )}
                           </div>
                           <div style={{ fontSize: '12px', color: 'var(--color-text-secondary, #64748b)' }}>
                             {u.email || 'No email'}

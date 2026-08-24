@@ -35,6 +35,9 @@ export default function LoginPage() {
         throw new Error('Login succeeded but no access token was returned.');
       }
 
+      // Wipe previous session state before authenticating new user
+      apiClient.clearSession();
+
       apiClient.setTokens({
         access_token: res.access_token,
         refresh_token: res.refresh_token
@@ -63,6 +66,7 @@ export default function LoginPage() {
         {/* Tab Toggle */}
         <div style={{ display: 'flex', gap: '8px', marginBottom: 'var(--space-4)', backgroundColor: 'var(--color-surface-subtle)', padding: '4px', borderRadius: 'var(--radius-md)' }}>
           <button
+            id="phone-tab-btn"
             type="button"
             onClick={() => setAuthMode('phone')}
             style={{
@@ -81,6 +85,7 @@ export default function LoginPage() {
             Mobile Number
           </button>
           <button
+            id="email-tab-btn"
             type="button"
             onClick={() => setAuthMode('email')}
             style={{
@@ -167,7 +172,7 @@ export default function LoginPage() {
             required
           />
 
-          <Button type="submit" size="lg" isLoading={isLoading} style={{ width: '100%', marginTop: 'var(--space-2)' }}>
+          <Button id="login-submit-btn" type="submit" size="lg" isLoading={isLoading} style={{ width: '100%', marginTop: 'var(--space-2)' }}>
             Sign In
           </Button>
         </form>

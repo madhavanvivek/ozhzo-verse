@@ -225,79 +225,110 @@ export default function AdminHomesPage() {
         </form>
       </div>
 
-      {/* Error Alert */}
-      {error && (
+      {/* Error / Failure State with Retry Button */}
+      {error && !isLoading && (
         <div
           style={{
-            padding: '16px',
+            padding: '24px',
             backgroundColor: 'var(--status-overdue-bg, #fef2f2)',
             border: '1px solid #fecaca',
-            borderRadius: 'var(--radius-md, 10px)',
+            borderRadius: 'var(--radius-lg, 16px)',
             color: 'var(--status-overdue, #ef4444)',
-            fontSize: '14px'
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '12px'
           }}
         >
-          {error}
+          <div style={{ fontWeight: 700, fontSize: '15px' }}>
+            {error.includes('403') || error.toLowerCase().includes('permission') || error.toLowerCase().includes('admin')
+              ? 'Platform administrator access required'
+              : 'Unable to load household workspaces'}
+          </div>
+          <div style={{ fontSize: '13px', color: '#991b1b', lineHeight: '1.4' }}>
+            {error}
+          </div>
+          <div>
+            <button
+              onClick={fetchHomes}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '8px 14px',
+                borderRadius: 'var(--radius-md, 10px)',
+                backgroundColor: 'var(--color-primary-900, #0f172a)',
+                color: '#ffffff',
+                border: 'none',
+                fontSize: '13px',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+            >
+              <RefreshCw size={14} />
+              <span>Retry</span>
+            </button>
+          </div>
         </div>
       )}
 
       {/* Table & Mobile Cards Container */}
-      <div
-        style={{
-          backgroundColor: 'var(--color-surface-card, #ffffff)',
-          borderRadius: 'var(--radius-lg, 16px)',
-          border: '1px solid var(--color-border-subtle, #e2e8f0)',
-          overflow: 'hidden',
-          boxShadow: 'var(--shadow-subtle)'
-        }}
-      >
-        {isLoading ? (
-          <div
-            style={{
-              padding: '48px 24px',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '12px',
-              color: 'var(--color-text-secondary, #64748b)'
-            }}
-          >
-            <RefreshCw size={24} className="animate-spin" color="var(--status-in-stock, #10b981)" />
-            <span style={{ fontSize: '14px', fontWeight: 500 }}>Loading households...</span>
-          </div>
-        ) : homes.length === 0 ? (
-          <div
-            style={{
-              padding: '48px 24px',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              textAlign: 'center',
-              gap: '8px'
-            }}
-          >
-            <Home size={36} color="var(--color-text-tertiary, #94a3b8)" />
-            <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--color-text-primary, #0f172a)' }}>
-              No Workspaces Found
+      {!error && (
+        <div
+          style={{
+            backgroundColor: 'var(--color-surface-card, #ffffff)',
+            borderRadius: 'var(--radius-lg, 16px)',
+            border: '1px solid var(--color-border-subtle, #e2e8f0)',
+            overflow: 'hidden',
+            boxShadow: 'var(--shadow-subtle)'
+          }}
+        >
+          {isLoading ? (
+            <div
+              style={{
+                padding: '48px 24px',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '12px',
+                color: 'var(--color-text-secondary, #64748b)'
+              }}
+            >
+              <RefreshCw size={24} className="animate-spin" color="var(--status-in-stock, #10b981)" />
+              <span style={{ fontSize: '14px', fontWeight: 500 }}>Loading households...</span>
             </div>
-            <div style={{ fontSize: '14px', color: 'var(--color-text-secondary, #64748b)' }}>
-              No household workspaces matched your current query.
+          ) : homes.length === 0 ? (
+            <div
+              style={{
+                padding: '48px 24px',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                textAlign: 'center',
+                gap: '8px'
+              }}
+            >
+              <Home size={36} color="var(--color-text-tertiary, #94a3b8)" />
+              <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--color-text-primary, #0f172a)' }}>
+                No household workspaces found.
+              </div>
+              <div style={{ fontSize: '14px', color: 'var(--color-text-secondary, #64748b)' }}>
+                No household workspaces matched your current search or filter criteria.
+              </div>
             </div>
-          </div>
-        ) : (
-          <>
-            {/* Desktop / Tablet Table */}
-            <div className="ozhzo-admin-table-container">
-              <table
-                style={{
-                  width: '100%',
-                  borderCollapse: 'collapse',
-                  textAlign: 'left',
-                  fontSize: '13px'
-                }}
-              >
+          ) : (
+            <>
+              {/* Desktop / Tablet Table */}
+              <div className="ozhzo-admin-table-container">
+                <table
+                  style={{
+                    width: '100%',
+                    borderCollapse: 'collapse',
+                    textAlign: 'left',
+                    fontSize: '13px'
+                  }}
+                >
                 <thead>
                   <tr
                     style={{
@@ -335,7 +366,12 @@ export default function AdminHomesPage() {
                       </td>
 
                       <td style={{ padding: '12px 16px', color: 'var(--color-text-secondary, #64748b)' }}>
-                        {h.created_by_email || '—'}
+                        <div style={{ fontWeight: 600, color: 'var(--color-text-primary, #0f172a)' }}>
+                          {h.created_by_name || 'Home Creator'}
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--color-text-secondary, #64748b)' }}>
+                          {h.created_by_email || '—'}
+                        </div>
                       </td>
 
                       <td style={{ padding: '12px 16px' }}>
@@ -421,7 +457,7 @@ export default function AdminHomesPage() {
                         {h.name}
                       </div>
                       <div style={{ fontSize: '12px', color: 'var(--color-text-secondary, #64748b)' }}>
-                        Creator: {h.created_by_email || '—'}
+                        Creator: {h.created_by_name ? `${h.created_by_name} (${h.created_by_email || 'No email'})` : (h.created_by_email || '—')}
                       </div>
                     </div>
                     {h.status === 'ACTIVE' ? (
@@ -528,6 +564,7 @@ export default function AdminHomesPage() {
           </div>
         </div>
       </div>
+      )}
 
       <style jsx>{`
         @media (max-width: 767.98px) {

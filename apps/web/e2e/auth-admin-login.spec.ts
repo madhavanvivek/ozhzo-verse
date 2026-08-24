@@ -2,6 +2,11 @@ import { test, expect } from '@playwright/test';
 
 test.describe('Ozhzo Verse Authentication and Super Admin Access Flow', () => {
 
+  test.beforeEach(async ({ page, context }) => {
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+    await context.clearCookies();
+  });
+
   test('1. Normal household /login renders properly with Phone and Email tabs', async ({ page }) => {
     await page.goto('/login');
     await expect(page.locator('h1')).toContainText('Welcome Back');
@@ -184,7 +189,8 @@ test.describe('Ozhzo Verse Authentication and Super Admin Access Flow', () => {
 
   test('6. Super Admin Settings: Full Email-OTP verified password change flow', async ({ page }) => {
     // Setup authenticated state with mock tokens
-    await page.addInitScript(() => {
+    await page.goto('/admin/login');
+    await page.evaluate(() => {
       localStorage.setItem('access_token', 'mock-super-admin-jwt');
       localStorage.setItem('refresh_token', 'mock-super-admin-refresh');
     });
@@ -299,7 +305,8 @@ test.describe('Ozhzo Verse Authentication and Super Admin Access Flow', () => {
   });
 
   test('7. /admin/profile route renders Security & Settings console', async ({ page }) => {
-    await page.addInitScript(() => {
+    await page.goto('/admin/login');
+    await page.evaluate(() => {
       localStorage.setItem('access_token', 'mock-super-admin-jwt');
     });
 
@@ -326,7 +333,8 @@ test.describe('Ozhzo Verse Authentication and Super Admin Access Flow', () => {
   });
 
   test('8. /admin/users renders real users list, shows SUPER ADMIN badge for vivek@zinfog.com, and supports search', async ({ page }) => {
-    await page.addInitScript(() => {
+    await page.goto('/admin/login');
+    await page.evaluate(() => {
       localStorage.setItem('access_token', 'mock-super-admin-jwt');
     });
 
@@ -431,7 +439,8 @@ test.describe('Ozhzo Verse Authentication and Super Admin Access Flow', () => {
   test('9. /admin/users/[id] displays user inspection detail without exposing secret credentials', async ({ page }) => {
     const vivekId = '99999999-9999-9999-9999-999999999999';
 
-    await page.addInitScript(() => {
+    await page.goto('/admin/login');
+    await page.evaluate(() => {
       localStorage.setItem('access_token', 'mock-super-admin-jwt');
     });
 
@@ -499,4 +508,394 @@ test.describe('Ozhzo Verse Authentication and Super Admin Access Flow', () => {
     expect(bodyText).not.toContain('argon2id');
   });
 
+  test('10. Session Boundary: Account A -> Logout -> Account B isolates active home without 403 error', async ({ page }) => {
+    page.on('console', msg => console.log('BROWSER CONSOLE:', msg.text()));
+    page.on('pageerror', err => console.log('PAGE ERROR:', err.message));
+    const userA_HomeId = 'aaaa-1111-aaaa-1111';
+    const userB_HomeId = 'bbbb-2222-bbbb-2222';
+
+    // Register all routes before navigation
+    await page.route('**/api/v1/users/me', async (route) => {
+      const auth = route.request().headers()['authorization'] || '';
+      if (auth.includes('token-user-a')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              id: 'user-a-uuid',
+              email: 'userA@example.com',
+              display_name: 'User A',
+              is_super_admin: false,
+              system_role: 'USER',
+              is_verified: true,
+              mobile_verified: true,
+              homes: [{ home_id: userA_HomeId, name: 'Home A', role: 'OWNER', status: 'ACTIVE' }]
+            }
+          })
+        });
+      } else if (auth.includes('token-user-b')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              id: 'user-b-uuid',
+              email: 'userB@example.com',
+              display_name: 'User B',
+              is_super_admin: false,
+              system_role: 'USER',
+              is_verified: true,
+              mobile_verified: true,
+              homes: [{ home_id: userB_HomeId, name: 'Home B', role: 'OWNER', status: 'ACTIVE' }]
+            }
+          })
+        });
+      } else {
+        await route.continue();
+      }
+    });
+
+    await page.route('**/api/v1/homes', async (route) => {
+      const auth = route.request().headers()['authorization'] || '';
+      if (auth.includes('token-user-a')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: [{ id: userA_HomeId, name: 'Home A', role: 'OWNER' }]
+          })
+        });
+      } else if (auth.includes('token-user-b')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: [{ id: userB_HomeId, name: 'Home B', role: 'OWNER' }]
+          })
+        });
+      } else {
+        await route.continue();
+      }
+    });
+
+    // Mock Dashboard data for both homes
+    await page.route(`**/api/v1/homes/${userA_HomeId}/dashboard`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: {
+            home_id: userA_HomeId,
+            home_name: 'Home A',
+            summary: { total_members: 1, low_stock_count: 0, pending_tasks: 0, upcoming_bills: 0 },
+            quick_stats: { in_stock_pct: 100 },
+            recent_activities: []
+          }
+        })
+      });
+    });
+
+    await page.route(`**/api/v1/homes/${userB_HomeId}/dashboard`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: {
+            home_id: userB_HomeId,
+            home_name: 'Home B',
+            summary: { total_members: 1, low_stock_count: 0, pending_tasks: 0, upcoming_bills: 0 },
+            quick_stats: { in_stock_pct: 100 },
+            recent_activities: []
+          }
+        })
+      });
+    });
+
+    // If User B tries to access Home A, return 403
+    await page.route(`**/api/v1/homes/${userA_HomeId}/**`, async (route) => {
+      const auth = route.request().headers()['authorization'] || '';
+      if (auth.includes('token-user-b')) {
+        await route.fulfill({
+          status: 403,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: false,
+            detail: 'You are not an active member of this home.'
+          })
+        });
+      } else {
+        await route.continue();
+      }
+    });
+
+    // Step 2: Login as User B
+    await page.route('**/api/v1/auth/login', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: {
+            access_token: 'token-user-b',
+            refresh_token: 'refresh-user-b',
+            user_id: 'user-b-uuid',
+            email: 'userB@example.com'
+          }
+        })
+      });
+    });
+
+    // Step 1: User A was previously logged in with stale Home A state
+    await page.goto('/login');
+    await expect(page.locator('h1')).toContainText('Welcome Back');
+    await page.evaluate(({ homeId }) => {
+      localStorage.setItem('access_token', 'token-user-a');
+      localStorage.setItem('active_home_id', homeId);
+    }, { homeId: userA_HomeId });
+
+    await page.click('#email-tab-btn');
+    await expect(page.locator('#email')).toBeVisible();
+    await page.fill('#email', 'userB@example.com');
+    await page.fill('#password', 'ValidPass123!');
+    await page.click('#login-submit-btn');
+
+    // Step 3: Verify reaching /dashboard as Home B without 403 error
+    await page.waitForURL('**/dashboard');
+    await expect(page.getByText('Home B').first()).toBeVisible();
+    await expect(page.getByText('You are not an active member of this home')).not.toBeVisible();
+  });
+
+  test('11. /admin/homes displays real tenant workspaces including "ichu\'s home"', async ({ page }) => {
+    const homeId = '77777777-7777-7777-7777-777777777777';
+
+    await page.goto('/admin/login');
+    await page.evaluate(() => {
+      localStorage.setItem('access_token', 'mock-super-admin-jwt');
+    });
+
+    // Mock Super Admin profile
+    await page.route('**/api/v1/users/me', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: {
+            id: '99999999-9999-9999-9999-999999999999',
+            email: 'vivek@zinfog.com',
+            is_super_admin: true,
+            system_role: 'SUPER_ADMIN',
+            homes: []
+          }
+        })
+      });
+    });
+
+    // Mock /admin/homes list
+    await page.route('**/api/v1/admin/homes*', async (route) => {
+      const url = route.request().url();
+      if (url.includes('query=ichu') || url.includes('query=') || !url.includes('query')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: [
+              {
+                id: homeId,
+                name: "ichu's home",
+                status: 'ACTIVE',
+                currency: 'USD',
+                created_by_email: 'vivek@zinfog.com',
+                created_by_name: 'Vivek',
+                members_count: 4,
+                subscription_status: 'ACTIVE',
+                created_at: '2026-01-15T10:00:00Z'
+              }
+            ]
+          })
+        });
+      }
+    });
+
+    await page.goto('/admin/homes');
+    await expect(page.getByRole('heading', { name: 'Household Workspaces' })).toBeVisible();
+
+    // Verify "ichu's home" is in table
+    await expect(page.getByText("ichu's home").first()).toBeVisible();
+    await expect(page.getByText('vivek@zinfog.com').first()).toBeVisible();
+    await expect(page.getByText('Vivek').first()).toBeVisible();
+    await expect(page.getByText('4').first()).toBeVisible();
+    await expect(page.locator('table').getByText('Active').first()).toBeVisible();
+  });
+
+  test('12. /admin/homes search filters for "ichu" dynamically', async ({ page }) => {
+    const homeId = '77777777-7777-7777-7777-777777777777';
+
+    await page.goto('/admin/login');
+    await page.evaluate(() => {
+      localStorage.setItem('access_token', 'mock-super-admin-jwt');
+    });
+
+    await page.route('**/api/v1/users/me', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: { id: 'admin-id', email: 'vivek@zinfog.com', is_super_admin: true, system_role: 'SUPER_ADMIN', homes: [] }
+        })
+      });
+    });
+
+    await page.route('**/api/v1/admin/homes*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: [
+            {
+              id: homeId,
+              name: "ichu's home",
+              status: 'ACTIVE',
+              currency: 'USD',
+              created_by_email: 'vivek@zinfog.com',
+              created_by_name: 'Vivek',
+              members_count: 4,
+              subscription_status: 'ACTIVE',
+              created_at: '2026-01-15T10:00:00Z'
+            }
+          ]
+        })
+      });
+    });
+
+    await page.goto('/admin/homes');
+    const searchInput = page.getByPlaceholder('Search by workspace name...');
+    await searchInput.fill('ichu');
+    await page.keyboard.press('Enter');
+
+    await expect(page.getByText("ichu's home").first()).toBeVisible();
+  });
+
+  test('13. /admin/homes/[id] inspects details without leaking passwords or secrets', async ({ page }) => {
+    const homeId = '77777777-7777-7777-7777-777777777777';
+
+    await page.goto('/admin/login');
+    await page.evaluate(() => {
+      localStorage.setItem('access_token', 'mock-super-admin-jwt');
+    });
+
+    await page.route('**/api/v1/users/me', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: { id: 'admin-id', email: 'vivek@zinfog.com', is_super_admin: true, system_role: 'SUPER_ADMIN', homes: [] }
+        })
+      });
+    });
+
+    await page.route(`**/api/v1/admin/homes/${homeId}`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: {
+            id: homeId,
+            name: "ichu's home",
+            status: 'ACTIVE',
+            currency: 'USD',
+            timezone: 'UTC',
+            address: '123 Smart Home Lane',
+            created_by_id: '99999999-9999-9999-9999-999999999999',
+            created_by_email: 'vivek@zinfog.com',
+            created_by_name: 'Vivek',
+            created_at: '2026-01-15T10:00:00Z',
+            members_count: 2,
+            subscription_status: 'ACTIVE',
+            subscription_plan: 'Ozhzo Home Standard',
+            paid_seats: 1,
+            members: [
+              {
+                user_id: '99999999-9999-9999-9999-999999999999',
+                display_name: 'Vivek',
+                email: 'vivek@zinfog.com',
+                role: 'OWNER',
+                status: 'ACTIVE',
+                created_at: '2026-01-15T10:00:00Z'
+              },
+              {
+                user_id: '88888888-8888-8888-8888-888888888888',
+                display_name: 'Ichu Member',
+                email: 'ichu@example.com',
+                role: 'MEMBER',
+                status: 'ACTIVE',
+                created_at: '2026-01-16T10:00:00Z'
+              }
+            ]
+          }
+        })
+      });
+    });
+
+    await page.goto(`/admin/homes/${homeId}`);
+    await expect(page.getByText("ichu's home").first()).toBeVisible();
+    await expect(page.getByText('Vivek').first()).toBeVisible();
+    await expect(page.getByText('Ichu Member').first()).toBeVisible();
+    await expect(page.getByText('OWNER').first()).toBeVisible();
+    await expect(page.getByText('MEMBER').first()).toBeVisible();
+
+    // Verify secret integrity
+    const bodyContent = await page.textContent('body');
+    expect(bodyContent).not.toContain('password_hash');
+    expect(bodyContent).not.toContain('refresh_token');
+  });
+
+  test('14. /admin/homes API failure renders Retry button and does not claim "No Workspaces Found"', async ({ page }) => {
+    await page.goto('/admin/login');
+    await page.evaluate(() => {
+      localStorage.setItem('access_token', 'mock-super-admin-jwt');
+    });
+
+    await page.route('**/api/v1/users/me', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: { id: 'admin-id', email: 'vivek@zinfog.com', is_super_admin: true, system_role: 'SUPER_ADMIN', homes: [] }
+        })
+      });
+    });
+
+    // Mock API Failure
+    await page.route('**/api/v1/admin/homes*', async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: false,
+          error: { message: 'Database connection failed' }
+        })
+      });
+    });
+
+    await page.goto('/admin/homes');
+    await expect(page.getByText('Unable to load household workspaces')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
+    await expect(page.getByText('No household workspaces found.')).not.toBeVisible();
+  });
+
 });
+

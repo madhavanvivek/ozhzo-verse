@@ -73,14 +73,43 @@ class ApiClient {
     }
   }
 
-  clearTokens() {
+  /**
+   * Complete session wipe: clears tokens, active home, cached states, and local/session storage.
+   */
+  clearSession() {
     this.accessToken = null;
     this.refreshToken = null;
+    this.activeHomeId = null;
 
     if (typeof window !== 'undefined') {
-      localStorage.removeItem('access_token');
-      localStorage.removeItem('refresh_token');
+      try {
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('refresh_token');
+        localStorage.removeItem('active_home_id');
+        sessionStorage.clear();
+
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (
+            key &&
+            (key.startsWith('ozhzo_') ||
+              key.includes('active_home') ||
+              key.includes('user_profile') ||
+              key.includes('home_cache'))
+          ) {
+            keysToRemove.push(key);
+          }
+        }
+        keysToRemove.forEach((k) => localStorage.removeItem(k));
+      } catch (e) {
+        console.error('Error clearing session state:', e);
+      }
     }
+  }
+
+  clearTokens() {
+    this.clearSession();
   }
 
   setActiveHomeId(homeId: string | null) {
@@ -95,10 +124,58 @@ class ApiClient {
     }
   }
 
+  /**
+   * Deterministically validates active home against currently accessible homes.
+   */
+  resolveActiveHome(
+    homes: Array<{ id?: string; home_id?: string; name?: string; role?: string }>
+  ): string | null {
+    if (!Array.isArray(homes) || homes.length === 0) {
+      this.setActiveHomeId(null);
+      return null;
+    }
+
+    const normalizedHomes = homes.map((h) => ({
+      id: h.id || h.home_id || '',
+      name: h.name || 'Home',
+      role: h.role || 'MEMBER'
+    }));
+
+    const storedHomeId = this.getActiveHomeId();
+    if (storedHomeId && normalizedHomes.some((h) => h.id === storedHomeId)) {
+      return storedHomeId;
+    }
+
+    // Stale or missing Home ID -> Select first accessible home
+    const firstHomeId = normalizedHomes[0].id;
+    this.setActiveHomeId(firstHomeId);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('home-changed', { detail: { homeId: firstHomeId } }));
+    }
+    return firstHomeId;
+  }
+
+  /**
+   * Retrieves and verifies a valid active Home ID for the currently authenticated user.
+   * Never leaks or returns a stale Home ID belonging to another user.
+   */
+  async getValidActiveHome(): Promise<string | null> {
+    if (typeof window === 'undefined') return null;
+
+    try {
+      const homes = await this.get<Array<{ id: string; name?: string; role?: string }>>('/homes');
+      return this.resolveActiveHome(homes || []);
+    } catch (err: any) {
+      console.warn('Unable to validate user home memberships:', err?.message);
+      return null;
+    }
+  }
+
   private handleUnauthorizedRedirect() {
     if (typeof window !== 'undefined') {
       const pathname = window.location.pathname;
       if (!pathname.startsWith('/login') && !pathname.startsWith('/register')) {
+        this.clearSession();
         window.location.href = '/login';
       }
     }
@@ -107,7 +184,7 @@ class ApiClient {
   private async performTokenRefresh(): Promise<string | null> {
     const currentRefreshToken = this.getRefreshToken();
     if (!currentRefreshToken) {
-      this.clearTokens();
+      this.clearSession();
       this.handleUnauthorizedRedirect();
       return null;
     }
@@ -124,7 +201,7 @@ class ApiClient {
       });
 
       if (!res.ok) {
-        this.clearTokens();
+        this.clearSession();
         this.handleUnauthorizedRedirect();
         return null;
       }
@@ -137,12 +214,12 @@ class ApiClient {
         });
         return json.data.access_token;
       } else {
-        this.clearTokens();
+        this.clearSession();
         this.handleUnauthorizedRedirect();
         return null;
       }
     } catch {
-      this.clearTokens();
+      this.clearSession();
       this.handleUnauthorizedRedirect();
       return null;
     }
@@ -227,6 +304,21 @@ class ApiClient {
       } else {
         errorMsg = `Request failed with status ${response.status}`;
       }
+
+      // Handle 403 Home Membership Error: clear stale home selection
+      if (
+        response.status === 403 &&
+        (errorMsg.toLowerCase().includes('not an active member') ||
+          errorMsg.includes('HOME_NOT_MEMBER') ||
+          errorMsg.includes('Not an active member of this home'))
+      ) {
+        this.setActiveHomeId(null);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('stale-home-cleared'));
+          window.dispatchEvent(new CustomEvent('home-changed'));
+        }
+      }
+
       throw new Error(errorMsg);
     }
 
@@ -265,3 +357,4 @@ class ApiClient {
 }
 
 export const apiClient = new ApiClient();
+

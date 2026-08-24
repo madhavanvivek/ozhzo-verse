@@ -93,17 +93,10 @@ export default function MembersPage() {
     if (showLoading) setIsLoading(true);
     setError(null);
     try {
-      const savedHomeId = localStorage.getItem('active_home_id');
-      let homeId = savedHomeId;
-
       const userRes = await apiClient.get<UserProfile>('/users/me');
       setCurrentUser(userRes);
 
-      if (!homeId && userRes?.homes?.length > 0) {
-        homeId = userRes.homes[0].home_id;
-        localStorage.setItem('active_home_id', homeId);
-      }
-
+      const homeId = await apiClient.getValidActiveHome();
       setActiveHomeId(homeId);
 
       if (homeId) {

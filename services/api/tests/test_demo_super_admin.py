@@ -532,3 +532,173 @@ async def test_u_admin_analytics_counts_real_db_records():
     assert res.data.suspended_users == 1
     assert res.data.total_homes == 5
     assert res.data.average_members_per_home == 2.4
+
+
+# ==============================================================================
+# TEST V: Super Admin Lists Real Homes with Creator and Member Count
+# ==============================================================================
+@pytest.mark.asyncio
+async def test_v_super_admin_lists_real_homes():
+    """V. GET /admin/homes returns authoritative Home records with creator details and member counts."""
+    from src.api.v1.admin_homes import list_and_search_homes
+
+    super_user = UserModel(
+        id=uuid4(),
+        email="vivek@zinfog.com",
+        is_super_admin=True,
+        system_role="SUPER_ADMIN"
+    )
+
+    ichu_home = HomeModel(
+        id=uuid4(),
+        name="ichu's home",
+        status="ACTIVE",
+        currency="USD",
+        timezone="UTC",
+        created_by=super_user.id,
+        created_at=datetime.now(timezone.utc)
+    )
+
+    mock_db = AsyncMock()
+    mock_res = MagicMock()
+    mock_res.all.return_value = [(ichu_home, "vivek@zinfog.com", "Vivek", 3, "ACTIVE")]
+    mock_db.execute.return_value = mock_res
+
+    res = await list_and_search_homes(query=None, status=None, limit=50, offset=0, super_admin=super_user, db=mock_db)
+    assert res.success is True
+    assert len(res.data) == 1
+    assert res.data[0].name == "ichu's home"
+    assert res.data[0].created_by_email == "vivek@zinfog.com"
+    assert res.data[0].created_by_name == "Vivek"
+    assert res.data[0].members_count == 3
+    assert res.data[0].status == "ACTIVE"
+
+
+# ==============================================================================
+# TEST W: Non-Super-Admins Get 403 on Admin Homes
+# ==============================================================================
+@pytest.mark.asyncio
+async def test_w_non_super_admin_forbidden_admin_homes():
+    """W. Normal USER, OWNER, HOME_ADMIN without SUPER_ADMIN role get 403 Forbidden."""
+    from src.api.dependencies import require_admin_permission
+    from fastapi import HTTPException
+
+    normal_user = UserModel(
+        id=uuid4(),
+        email="member@example.com",
+        is_super_admin=False,
+        system_role="USER"
+    )
+
+    checker = require_admin_permission("admin:homes:view")
+    with pytest.raises(HTTPException) as exc_info:
+        await checker(current_user=normal_user)
+
+    assert exc_info.value.status_code == 403
+    assert "Super Admin privileges required" in exc_info.value.detail or "privileges required" in exc_info.value.detail
+
+
+# ==============================================================================
+# TEST X: Admin Homes Search by Name "ichu"
+# ==============================================================================
+@pytest.mark.asyncio
+async def test_x_admin_homes_search_by_name():
+    """X. Searching query='ichu' finds 'ichu\\'s home'."""
+    from src.api.v1.admin_homes import list_and_search_homes
+
+    super_user = UserModel(
+        id=uuid4(),
+        email="vivek@zinfog.com",
+        is_super_admin=True,
+        system_role="SUPER_ADMIN"
+    )
+
+    ichu_home = HomeModel(
+        id=uuid4(),
+        name="ichu's home",
+        status="ACTIVE",
+        currency="USD",
+        timezone="UTC",
+        created_by=super_user.id,
+        created_at=datetime.now(timezone.utc)
+    )
+
+    mock_db = AsyncMock()
+    mock_res = MagicMock()
+    mock_res.all.return_value = [(ichu_home, "vivek@zinfog.com", "Vivek", 1, "TRIALING")]
+    mock_db.execute.return_value = mock_res
+
+    res = await list_and_search_homes(query="ichu", status="ACTIVE", super_admin=super_user, db=mock_db)
+    assert res.success is True
+    assert len(res.data) == 1
+    assert res.data[0].name == "ichu's home"
+
+
+# ==============================================================================
+# TEST Y: Admin Home Detail Never Exposes Passwords or Tokens
+# ==============================================================================
+@pytest.mark.asyncio
+async def test_y_admin_home_detail_security():
+    """Y. GET /admin/homes/{id} returns details, member list and never leaks credentials."""
+    from src.api.v1.admin_homes import get_home_detail
+
+    home_id = uuid4()
+    super_user = UserModel(
+        id=uuid4(),
+        email="vivek@zinfog.com",
+        is_super_admin=True,
+        system_role="SUPER_ADMIN"
+    )
+
+    ichu_home = HomeModel(
+        id=home_id,
+        name="ichu's home",
+        status="ACTIVE",
+        currency="USD",
+        timezone="UTC",
+        created_by=super_user.id,
+        created_at=datetime.now(timezone.utc)
+    )
+
+    member_user = UserModel(
+        id=uuid4(),
+        email="ichu@example.com",
+        phone_number="+1234567890",
+        is_super_admin=False,
+        system_role="USER"
+    )
+
+    mock_member = HomeMemberModel(
+        id=uuid4(),
+        home_id=home_id,
+        user_id=member_user.id,
+        role="MEMBER",
+        status="ACTIVE",
+        created_at=datetime.now(timezone.utc)
+    )
+
+    mock_db = AsyncMock()
+    mock_res_home = MagicMock()
+    mock_res_home.first.return_value = (ichu_home, "vivek@zinfog.com", "Vivek")
+
+    mock_res_members = MagicMock()
+    mock_res_members.all.return_value = [(mock_member, "ichu@example.com", "+1234567890", "Ichu")]
+
+    mock_res_sub = MagicMock()
+    mock_res_sub.scalar_one_or_none.return_value = None
+
+    mock_db.execute.side_effect = [mock_res_home, mock_res_members, mock_res_sub]
+
+    res = await get_home_detail(home_id=home_id, super_admin=super_user, db=mock_db)
+    assert res.success is True
+    assert res.data.id == home_id
+    assert res.data.name == "ichu's home"
+    assert res.data.created_by_name == "Vivek"
+    assert len(res.data.members) == 1
+    assert res.data.members[0].display_name == "Ichu"
+
+    detail_str = res.model_dump_json() if hasattr(res, "model_dump_json") else json.dumps(res.dict(), default=str)
+    assert "password_hash" not in detail_str
+    assert "access_token" not in detail_str
+    assert "refresh_token" not in detail_str
+

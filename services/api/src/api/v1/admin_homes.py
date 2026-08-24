@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import Any, List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, select, or_, cast, String
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -81,6 +81,8 @@ async def list_and_search_homes(
 ):
     """
     Search and list platform homes for Super Admin.
+    Queries the authoritative HomeModel database table with real creator details,
+    distinct active member counts, and live subscription status.
     """
     lim = _extract_int_param(limit, 50)
     off = _extract_int_param(offset, 0)
@@ -91,39 +93,58 @@ async def list_and_search_homes(
         select(
             HomeModel,
             UserModel.email.label("creator_email"),
-            func.count(HomeMemberModel.id).label("members_count"),
+            UserProfileModel.display_name.label("creator_name"),
+            func.count(func.distinct(HomeMemberModel.id)).label("members_count"),
             SubscriptionModel.status.label("sub_status")
         )
-        .join(UserModel, HomeModel.created_by == UserModel.id)
-        .outerjoin(HomeMemberModel, HomeModel.id == HomeMemberModel.home_id)
+        .outerjoin(UserModel, HomeModel.created_by == UserModel.id)
+        .outerjoin(UserProfileModel, UserModel.id == UserProfileModel.user_id)
+        .outerjoin(HomeMemberModel, (HomeModel.id == HomeMemberModel.home_id) & (HomeMemberModel.status == "ACTIVE"))
         .outerjoin(SubscriptionModel, HomeModel.id == SubscriptionModel.home_id)
-        .group_by(HomeModel.id, UserModel.email, SubscriptionModel.status)
-        .order_by(desc(HomeModel.created_at))
-        .limit(lim)
-        .offset(off)
+        .where(HomeModel.deleted_at == None)
+        .group_by(HomeModel.id, UserModel.email, UserProfileModel.display_name, SubscriptionModel.status)
     )
 
     if q_str:
-        stmt = stmt.where(HomeModel.name.ilike(f"%{q_str.strip()}%"))
-    if status_str:
+        clean_q = f"%{q_str.strip()}%"
+        stmt = stmt.where(
+            or_(
+                HomeModel.name.ilike(clean_q),
+                UserModel.email.ilike(clean_q),
+                UserProfileModel.display_name.ilike(clean_q),
+                cast(HomeModel.id, String).ilike(clean_q)
+            )
+        )
+
+    if status_str and status_str.upper() != "ALL":
         stmt = stmt.where(HomeModel.status == status_str.upper().strip())
+
+    stmt = stmt.order_by(desc(HomeModel.created_at)).limit(lim).offset(off)
 
     res = await db.execute(stmt)
     rows = res.all()
 
-    dtos = [
-        AdminHomeListItemDTO(
-            id=h.id,
-            name=h.name,
-            status=getattr(h, "status", "ACTIVE"),
-            currency=getattr(h, "currency", None) or "USD",
-            created_by_email=c_email,
-            members_count=m_count or 0,
-            subscription_status=s_status or "TRIALING",
-            created_at=h.created_at or datetime.now(timezone.utc)
+    dtos = []
+    for row in rows:
+        if len(row) >= 5:
+            h, c_email, c_disp, m_count, s_status = row[:5]
+        else:
+            h, c_email, m_count, s_status = row[:4]
+            c_disp = None
+
+        dtos.append(
+            AdminHomeListItemDTO(
+                id=h.id,
+                name=h.name,
+                status=getattr(h, "status", "ACTIVE") or "ACTIVE",
+                currency=getattr(h, "currency", None) or "USD",
+                created_by_email=c_email,
+                created_by_name=c_disp or (c_email.split("@")[0] if c_email else "Home Creator"),
+                members_count=m_count or 0,
+                subscription_status=s_status or "TRIALING",
+                created_at=h.created_at or datetime.now(timezone.utc)
+            )
         )
-        for h, c_email, m_count, s_status in rows
-    ]
     return ApiSuccessResponse(data=dtos)
 
 
@@ -135,23 +156,24 @@ async def get_home_detail(
 ):
     """
     Get detailed information about a Home, including creator, active members, and subscription.
+    Never exposes passwords, tokens, or private credentials.
     """
     home_query = (
         select(HomeModel, UserModel.email, UserProfileModel.display_name)
-        .join(UserModel, HomeModel.created_by == UserModel.id)
+        .outerjoin(UserModel, HomeModel.created_by == UserModel.id)
         .outerjoin(UserProfileModel, UserModel.id == UserProfileModel.user_id)
-        .where(HomeModel.id == home_id)
+        .where(HomeModel.id == home_id, HomeModel.deleted_at == None)
     )
     home_row = (await db.execute(home_query)).first()
     if not home_row:
-        raise HTTPException(status_code=404, detail="Home not found.")
+        raise HTTPException(status_code=404, detail="Home workspace not found.")
 
     home, creator_email, creator_name = home_row
 
-    # Fetch members
+    # Fetch members with active statuses
     members_query = (
         select(HomeMemberModel, UserModel.email, UserModel.phone_number, UserProfileModel.display_name)
-        .join(UserModel, HomeMemberModel.user_id == UserModel.id)
+        .outerjoin(UserModel, HomeMemberModel.user_id == UserModel.id)
         .outerjoin(UserProfileModel, UserModel.id == UserProfileModel.user_id)
         .where(HomeMemberModel.home_id == home_id)
         .order_by(HomeMemberModel.created_at.asc())
@@ -179,15 +201,15 @@ async def get_home_detail(
         data=AdminHomeDetailDTO(
             id=home.id,
             name=home.name,
-            status=getattr(home, "status", "ACTIVE"),
-            currency=home.currency,
-            timezone=home.timezone,
+            status=getattr(home, "status", "ACTIVE") or "ACTIVE",
+            currency=home.currency or "USD",
+            timezone=home.timezone or "UTC",
             address=home.address,
-            created_by_id=home.created_by,
+            created_by_id=home.created_by or super_admin.id,
             created_by_email=creator_email,
-            created_by_name=creator_name or "Home Creator",
-            created_at=home.created_at,
-            members_count=len(member_dtos),
+            created_by_name=creator_name or (creator_email.split("@")[0] if creator_email else "Home Creator"),
+            created_at=home.created_at or datetime.now(timezone.utc),
+            members_count=len([m for m in member_dtos if m.status == "ACTIVE"]) or len(member_dtos),
             subscription_status=sub.status if sub else "TRIALING",
             subscription_plan="Ozhzo Home Standard",
             paid_seats=sub.paid_member_seats if sub else 0,

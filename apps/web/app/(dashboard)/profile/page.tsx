@@ -77,8 +77,8 @@ export default function ProfilePage() {
       setProfile(data);
       setEditDisplayName(data.display_name);
 
-      const savedHomeId = localStorage.getItem('active_home_id');
-      setActiveHomeId(savedHomeId);
+      const homeId = await apiClient.getValidActiveHome();
+      setActiveHomeId(homeId);
     } catch (err: any) {
       console.error('Failed to fetch user profile:', err);
       setError(err?.message || 'Unable to load profile. Please verify your connection.');
@@ -143,10 +143,7 @@ export default function ProfilePage() {
   };
 
   const handleSignOut = () => {
-    apiClient.clearTokens();
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('refresh_token');
-    localStorage.removeItem('active_home_id');
+    apiClient.clearSession();
     router.push('/login');
   };
 

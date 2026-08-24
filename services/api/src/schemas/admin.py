@@ -89,6 +89,7 @@ class AdminHomeListItemDTO(BaseModel):
     status: str
     currency: Optional[str] = "USD"
     created_by_email: Optional[str] = None
+    created_by_name: Optional[str] = None
     members_count: int
     subscription_status: str
     created_at: Optional[datetime] = None

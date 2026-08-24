@@ -122,6 +122,7 @@ export default function AdminHomeDetailPage() {
   }
 
   if (error || !home) {
+    const is403 = error?.includes('403') || error?.toLowerCase().includes('permission') || error?.toLowerCase().includes('admin');
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
         <Link
@@ -132,7 +133,8 @@ export default function AdminHomeDetailPage() {
             gap: '6px',
             color: 'var(--color-text-secondary, #64748b)',
             fontSize: '14px',
-            fontWeight: 600
+            fontWeight: 600,
+            minHeight: '44px'
           }}
         >
           <ArrowLeft size={16} />
@@ -144,11 +146,37 @@ export default function AdminHomeDetailPage() {
             backgroundColor: 'var(--status-overdue-bg, #fef2f2)',
             border: '1px solid #fecaca',
             borderRadius: 'var(--radius-lg, 16px)',
-            color: 'var(--status-overdue, #ef4444)'
+            color: 'var(--status-overdue, #ef4444)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '12px'
           }}
         >
-          <h2 style={{ fontSize: '18px', fontWeight: 700, margin: '0 0 8px' }}>Workspace Not Found</h2>
-          <p style={{ fontSize: '14px', margin: 0 }}>{error || 'Unable to locate household workspace.'}</p>
+          <h2 style={{ fontSize: '18px', fontWeight: 700, margin: 0 }}>
+            {is403 ? 'Platform Administrator Access Required' : 'Unable to Load Workspace'}
+          </h2>
+          <p style={{ fontSize: '14px', margin: 0, color: '#991b1b' }}>{error || 'Unable to locate household workspace.'}</p>
+          <div>
+            <button
+              onClick={fetchHomeDetail}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '8px 14px',
+                borderRadius: 'var(--radius-md, 10px)',
+                backgroundColor: 'var(--color-primary-900, #0f172a)',
+                color: '#ffffff',
+                border: 'none',
+                fontSize: '13px',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+            >
+              <RefreshCw size={14} />
+              <span>Retry</span>
+            </button>
+          </div>
         </div>
       </div>
     );

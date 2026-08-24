@@ -142,16 +142,7 @@ function DashboardPageContent() {
     setIsLoading(true);
     setError(null);
     try {
-      let homeId = apiClient.getActiveHomeId();
-      if (!homeId) {
-        const homes = await apiClient.get<Array<{ id: string }>>('/homes');
-        if (homes && homes.length > 0) {
-          homeId = homes[0].id;
-          apiClient.setActiveHomeId(homeId);
-          localStorage.setItem('active_home_id', homeId);
-          window.dispatchEvent(new Event('home-changed'));
-        }
-      }
+      const homeId = await apiClient.getValidActiveHome();
 
       if (!homeId) {
         setData(null);
@@ -159,8 +150,35 @@ function DashboardPageContent() {
         return;
       }
 
-      const res = await apiClient.get<DashboardData>(`/homes/${homeId}/dashboard`);
-      setData(res || null);
+      const res = await apiClient.get<any>(`/homes/${homeId}/dashboard`);
+      if (res) {
+        const normalizedData: DashboardData = {
+          greeting: res.greeting || { greeting: 'Welcome', user_display_name: 'Home', date_formatted: '', time_period: '' },
+          summary: res.summary || {
+            home_id: homeId,
+            home_name: res.home_name || 'Home',
+            currency: 'USD',
+            timezone: 'UTC',
+            members_count: 1,
+            active_tasks_count: 0,
+            low_stock_count: 0,
+            unpaid_bills_count: 0,
+            unpaid_bills_sum: 0,
+            upcoming_events_count: 0,
+            unread_notifications_count: 0
+          },
+          pending_tasks: Array.isArray(res.pending_tasks) ? res.pending_tasks : [],
+          upcoming_bills: Array.isArray(res.upcoming_bills) ? res.upcoming_bills : [],
+          upcoming_events: Array.isArray(res.upcoming_events) ? res.upcoming_events : [],
+          low_stock_inventory: Array.isArray(res.low_stock_inventory) ? res.low_stock_inventory : [],
+          shopping_items: Array.isArray(res.shopping_items) ? res.shopping_items : [],
+          notifications: Array.isArray(res.notifications) ? res.notifications : [],
+          role: res.role || 'MEMBER'
+        };
+        setData(normalizedData);
+      } else {
+        setData(null);
+      }
     } catch (err: any) {
       console.error('Failed to load dashboard:', err);
       // If permission or not found, keep data as null so user can create/switch
@@ -710,12 +728,12 @@ function DashboardPageContent() {
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
         <div>
           <h1 style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--color-primary-900)', letterSpacing: '-0.02em' }}>
-            {data.greeting.greeting}, {data.greeting.user_display_name}
+            {data?.greeting?.greeting || 'Welcome'}, {data?.greeting?.user_display_name || userProfile?.display_name || 'Home'}
           </h1>
           <p style={{ fontSize: '14px', color: 'var(--color-text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span>{data.greeting.date_formatted}</span>
+            <span>{data?.greeting?.date_formatted || 'Today'}</span>
             <span>•</span>
-            <span style={{ fontWeight: 600, color: 'var(--color-primary-900)' }}>{data.summary.home_name}</span>
+            <span style={{ fontWeight: 600, color: 'var(--color-primary-900)' }}>{data?.summary?.home_name || 'Home'}</span>
           </p>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>

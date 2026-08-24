@@ -38,6 +38,9 @@ function AdminLoginForm() {
         throw new Error('Invalid email or password.');
       }
 
+      // Wipe previous session state before authenticating admin
+      apiClient.clearSession();
+
       apiClient.setTokens({
         access_token: accessToken,
         refresh_token: refreshToken

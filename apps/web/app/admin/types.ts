@@ -71,6 +71,7 @@ export interface AdminHomeListItem {
   status: string;
   currency: string;
   created_by_email?: string | null;
+  created_by_name?: string | null;
   members_count: number;
   subscription_status: string;
   created_at?: string | null;

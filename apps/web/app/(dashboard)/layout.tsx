@@ -94,24 +94,14 @@ export default function DashboardLayout({
         }));
 
         setHomes(mappedHomes);
-
-        const savedHomeId = localStorage.getItem('active_home_id');
-
-        if (savedHomeId && mappedHomes.some((h) => h.home_id === savedHomeId)) {
-          setActiveHomeId(savedHomeId);
-        } else if (mappedHomes.length > 0) {
-          setActiveHomeId(mappedHomes[0].home_id);
-          localStorage.setItem('active_home_id', mappedHomes[0].home_id);
-        } else {
-          setActiveHomeId(null);
-          localStorage.removeItem('active_home_id');
-        }
+        const resolvedId = apiClient.resolveActiveHome(mappedHomes);
+        setActiveHomeId(resolvedId);
       }
     } catch (error) {
       console.error('Failed to load user and homes:', error);
       setHomes([]);
       setActiveHomeId(null);
-      localStorage.removeItem('active_home_id');
+      apiClient.setActiveHomeId(null);
     }
   };
 

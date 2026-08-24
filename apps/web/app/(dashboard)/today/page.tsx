@@ -54,20 +54,13 @@ export default function TodayPage() {
     const loadTodayData = async () => {
       setIsLoading(true);
       try {
-        const savedHomeId = localStorage.getItem('active_home_id');
-        let homeId = savedHomeId;
-
-        if (!homeId) {
-          const homes = await apiClient.get<Array<{ id: string }>>('/homes');
-          if (homes && homes.length > 0) {
-            homeId = homes[0].id;
-            localStorage.setItem('active_home_id', homeId);
-          }
-        }
+        const homeId = await apiClient.getValidActiveHome();
 
         if (homeId) {
           const res = await apiClient.get<TodayResponse>(`/homes/${homeId}/today`);
           setData(res);
+        } else {
+          setData(null);
         }
       } catch (err) {
         console.error('Failed to load today data:', err);

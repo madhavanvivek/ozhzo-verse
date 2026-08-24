@@ -2,7 +2,7 @@ import json
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import List
-from uuid import UUID
+from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
@@ -180,7 +180,9 @@ async def create_invitation(
     token = secrets.token_urlsafe(24)
     expires_at = datetime.now(timezone.utc) + timedelta(days=7)
 
+    now = datetime.now(timezone.utc)
     new_invite = InvitationModel(
+        id=uuid4(),
         home_id=home_ctx.home_id,
         phone_number=normalized_phone,
         email=payload.email.lower() if payload.email else None,
@@ -189,7 +191,9 @@ async def create_invitation(
         token=token,
         invited_by=home_ctx.user.id,
         status="PENDING",
-        expires_at=expires_at
+        expires_at=expires_at,
+        created_at=now,
+        updated_at=now
     )
     db.add(new_invite)
 
@@ -268,6 +272,94 @@ async def list_home_invitations(
     ]
 
     return ApiSuccessResponse(data=invitations)
+
+
+@router.delete("/homes/{home_id}/invitations/{invitation_id}", response_model=ApiSuccessResponse[MessageResponse])
+async def cancel_home_invitation(
+    invitation_id: UUID,
+    home_ctx: HomeContext = Depends(require_home_permission("members:invite")),
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(InvitationModel).where(
+        InvitationModel.id == invitation_id,
+        InvitationModel.home_id == home_ctx.home_id,
+        InvitationModel.status == "PENDING"
+    )
+    result = await db.execute(query)
+    inv = result.scalar_one_or_none()
+
+    if not inv:
+        raise HTTPException(status_code=404, detail="Pending invitation not found.")
+
+    inv.status = "REVOKED"
+    inv.updated_at = datetime.now(timezone.utc)
+
+    audit = AuditLogModel(
+        entity_type="INVITATION",
+        entity_id=inv.id,
+        action="INVITATION_REVOKED",
+        performed_by=home_ctx.user.id,
+        details=json.dumps({"home_id": str(home_ctx.home_id), "email": inv.email, "phone_number": inv.phone_number})
+    )
+    db.add(audit)
+    await db.commit()
+
+    return ApiSuccessResponse(data=MessageResponse(message="Invitation has been cancelled."))
+
+
+@router.post("/homes/{home_id}/invitations/{invitation_id}/resend", response_model=ApiSuccessResponse[InvitationDTO])
+async def resend_home_invitation(
+    invitation_id: UUID,
+    home_ctx: HomeContext = Depends(require_home_permission("members:invite")),
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(InvitationModel).where(
+        InvitationModel.id == invitation_id,
+        InvitationModel.home_id == home_ctx.home_id,
+        InvitationModel.status == "PENDING"
+    )
+    result = await db.execute(query)
+    inv = result.scalar_one_or_none()
+
+    if not inv:
+        raise HTTPException(status_code=404, detail="Pending invitation not found.")
+
+    # Refresh token and extend expiry by 7 days
+    inv.token = secrets.token_urlsafe(24)
+    inv.expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+    inv.updated_at = datetime.now(timezone.utc)
+
+    audit = AuditLogModel(
+        entity_type="INVITATION",
+        entity_id=inv.id,
+        action="INVITATION_RESENT",
+        performed_by=home_ctx.user.id,
+        details=json.dumps({"home_id": str(home_ctx.home_id), "email": inv.email, "phone_number": inv.phone_number})
+    )
+    db.add(audit)
+    await db.commit()
+
+    home = await db.get(HomeModel, home_ctx.home_id)
+    home_name = home.name if home else "Home"
+
+    return ApiSuccessResponse(
+        data=InvitationDTO(
+            id=inv.id,
+            home_id=inv.home_id,
+            home_name=home_name,
+            phone_number=inv.phone_number,
+            email=inv.email,
+            role=inv.role,
+            invitation_mode=inv.invitation_mode,
+            token=inv.token,
+            invite_url=f"/join?token={inv.token}",
+            status=inv.status,
+            invited_by=inv.invited_by,
+            expires_at=inv.expires_at,
+            created_at=inv.created_at
+        ),
+        message="Invitation link refreshed and expiry extended."
+    )
 
 
 @router.post("/invitations/{token}/accept", response_model=ApiSuccessResponse[AcceptInvitationResponse])

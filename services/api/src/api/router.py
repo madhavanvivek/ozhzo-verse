@@ -23,6 +23,7 @@ from src.api.v1.admin_users import router as admin_users_router
 from src.api.v1.admin_homes import router as admin_homes_router
 from src.api.v1.admin_system import router as admin_system_router
 from src.api.v1.admin_activity import router as admin_activity_router
+from src.api.v1.admin_security import router as admin_security_router
 from src.api.v1.search import router as search_router
 from src.api.v1.dashboard import router as dashboard_router
 from src.api.v1.today import router as today_router
@@ -56,6 +57,7 @@ api_v1_router.include_router(admin_users_router)
 api_v1_router.include_router(admin_homes_router)
 api_v1_router.include_router(admin_system_router)
 api_v1_router.include_router(admin_activity_router)
+api_v1_router.include_router(admin_security_router)
 api_v1_router.include_router(search_router)
 api_v1_router.include_router(dashboard_router)
 api_v1_router.include_router(today_router)

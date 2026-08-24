@@ -62,6 +62,7 @@ class CreateEventRequest(BaseModel):
     end_time: datetime
     is_all_day: bool = False
     category_id: Optional[UUID] = None
+    category_name: Optional[str] = Field(None, max_length=100)
     recurrence_type: Optional[Literal["NONE", "DAILY", "WEEKLY", "MONTHLY", "YEARLY", "CUSTOM_DAYS"]] = "NONE"
     recurrence_interval_days: Optional[int] = None
     reminder_minutes_before: Optional[int] = Field(default=30, ge=0)
@@ -84,6 +85,7 @@ class UpdateEventRequest(BaseModel):
     end_time: Optional[datetime] = None
     is_all_day: Optional[bool] = None
     category_id: Optional[UUID] = None
+    category_name: Optional[str] = Field(None, max_length=100)
     recurrence_type: Optional[Literal["NONE", "DAILY", "WEEKLY", "MONTHLY", "YEARLY", "CUSTOM_DAYS"]] = None
     recurrence_interval_days: Optional[int] = None
     status: Optional[Literal["CONFIRMED", "TENTATIVE", "CANCELLED"]] = None

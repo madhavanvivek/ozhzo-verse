@@ -216,7 +216,7 @@ class LocationModel(Base):
     home_id = Column(UUID(as_uuid=True), ForeignKey("homes.id", ondelete="CASCADE"), nullable=False, index=True)
     parent_id = Column(UUID(as_uuid=True), ForeignKey("locations.id", ondelete="CASCADE"), nullable=True, index=True)
     name = Column(String(120), nullable=False)
-    location_type = Column(String(32), default="ZONE", nullable=False)  # ROOM, ZONE, FURNITURE, CONTAINER, SHELF, HOOK, VEHICLE, OTHER
+    location_type = Column(String(64), default="ZONE", nullable=False)  # ROOM, ZONE, FURNITURE, CONTAINER, SHELF, HOOK, VEHICLE, OTHER
     description = Column(Text, nullable=True)
     icon = Column(String(50), nullable=True)
     sort_order = Column(Integer, default=0, nullable=False)
@@ -267,6 +267,25 @@ class InventoryItemModel(Base):
     status = Column(String(32), default="GOOD", nullable=False)  # GOOD, LOW, OUT_OF_STOCK
     expiry_status = Column(String(32), default="NORMAL", nullable=False)  # NORMAL, EXPIRING_SOON, EXPIRED
     notes = Column(Text, nullable=True)
+
+    # Extended Asset Tracking & Home Memory
+    brand = Column(String(100), nullable=True)
+    model_number = Column(String(100), nullable=True)
+    serial_number = Column(String(120), nullable=True, index=True)
+    barcode = Column(String(100), nullable=True, index=True)
+    qr_code_identifier = Column(String(120), nullable=True, index=True)
+    purchase_date = Column(Date, nullable=True)
+    purchase_price = Column(Numeric(12, 2), nullable=True)
+    purchase_store = Column(String(150), nullable=True)
+    warranty_expiry_date = Column(Date, nullable=True)
+    warranty_notes = Column(Text, nullable=True)
+    photo_url = Column(String(512), nullable=True)
+    receipt_url = Column(String(512), nullable=True)
+    manual_url = Column(String(512), nullable=True)
+    last_serviced_at = Column(Date, nullable=True)
+    next_service_due_at = Column(Date, nullable=True)
+    service_notes = Column(Text, nullable=True)
+
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
@@ -276,6 +295,8 @@ class InventoryItemModel(Base):
         Index("idx_inv_items_home_status", "home_id", "status"),
         Index("idx_inv_items_home_type", "home_id", "item_type"),
         Index("idx_inv_items_home_search", "home_id", "name"),
+        Index("idx_inv_items_barcode", "home_id", "barcode"),
+        Index("idx_inv_items_serial", "home_id", "serial_number"),
     )
 
     home = relationship("HomeModel", back_populates="inventory_items")

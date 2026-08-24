@@ -16,7 +16,8 @@ import {
   ArrowRight,
   FolderPlus,
   X,
-  Sparkles
+  Sparkles,
+  Edit2
 } from 'lucide-react';
 import { apiClient } from '@/lib/apiClient';
 
@@ -81,9 +82,20 @@ export default function InventoryPage() {
   // Form states for Add Location
   const [newLocationName, setNewLocationName] = useState('');
   const [newLocationType, setNewLocationType] = useState('ROOM');
+  const [newCustomLocationType, setNewCustomLocationType] = useState('');
   const [newLocationParentId, setNewLocationParentId] = useState<string>('');
   const [newLocationDescription, setNewLocationDescription] = useState('');
   const [isSubmittingLocation, setIsSubmittingLocation] = useState(false);
+
+  // Form states for Edit Location
+  const [isEditLocationOpen, setIsEditLocationOpen] = useState(false);
+  const [editingLocationNode, setEditingLocationNode] = useState<LocationNode | null>(null);
+  const [editLocationName, setEditLocationName] = useState('');
+  const [editLocationType, setEditLocationType] = useState('ROOM');
+  const [editCustomLocationType, setEditCustomLocationType] = useState('');
+  const [editLocationParentId, setEditLocationParentId] = useState<string>('');
+  const [editLocationDescription, setEditLocationDescription] = useState('');
+  const [isSubmittingEditLocation, setIsSubmittingEditLocation] = useState(false);
 
   // Relocation state
   const [targetLocationId, setTargetLocationId] = useState('');
@@ -203,10 +215,29 @@ export default function InventoryPage() {
   const openAddLocationModal = (parentId?: string) => {
     setNewLocationParentId(parentId || '');
     setNewLocationName('');
+    setNewLocationType('ROOM');
+    setNewCustomLocationType('');
+    setNewLocationDescription('');
     setIsAddLocationOpen(true);
     setTimeout(() => {
       locInputRef.current?.focus();
     }, 100);
+  };
+
+  const openEditLocationModal = (node: LocationNode) => {
+    setEditingLocationNode(node);
+    setEditLocationName(node.name);
+    const standardTypes = ['ROOM', 'FURNITURE', 'SHELF', 'CONTAINER'];
+    if (node.location_type && !standardTypes.includes(node.location_type)) {
+      setEditLocationType('CUSTOM');
+      setEditCustomLocationType(node.location_type);
+    } else {
+      setEditLocationType(node.location_type || 'ROOM');
+      setEditCustomLocationType('');
+    }
+    setEditLocationParentId((node as any).parent_id || '');
+    setEditLocationDescription((node as any).description || '');
+    setIsEditLocationOpen(true);
   };
 
   const handleAddItem = async (e: React.FormEvent) => {
@@ -246,9 +277,13 @@ export default function InventoryPage() {
 
     setIsSubmittingLocation(true);
     try {
+      const finalType = newLocationType === 'CUSTOM'
+        ? (newCustomLocationType.trim() || 'CUSTOM')
+        : newLocationType;
+
       const payload = {
         name: newLocationName.trim(),
-        location_type: newLocationType,
+        location_type: finalType,
         parent_id: newLocationParentId || undefined,
         description: newLocationDescription.trim() || undefined
       };
@@ -256,6 +291,7 @@ export default function InventoryPage() {
       await apiClient.post(`/homes/${activeHomeId}/locations`, payload);
       setNewLocationName('');
       setNewLocationDescription('');
+      setNewCustomLocationType('');
       setIsAddLocationOpen(false);
       await loadData();
     } catch (err: any) {
@@ -263,6 +299,63 @@ export default function InventoryPage() {
       alert(err?.message || 'Failed to create location.');
     } finally {
       setIsSubmittingLocation(false);
+    }
+  };
+
+  const handleEditLocation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingLocationNode || !editLocationName.trim() || !activeHomeId) return;
+
+    setIsSubmittingEditLocation(true);
+    try {
+      const finalType = editLocationType === 'CUSTOM'
+        ? (editCustomLocationType.trim() || 'CUSTOM')
+        : editLocationType;
+
+      const payload = {
+        name: editLocationName.trim(),
+        location_type: finalType,
+        parent_id: editLocationParentId || undefined,
+        description: editLocationDescription.trim() || undefined
+      };
+
+      await apiClient.patch(`/homes/${activeHomeId}/locations/${editingLocationNode.id}`, payload);
+      setIsEditLocationOpen(false);
+      setEditingLocationNode(null);
+      await loadData();
+    } catch (err: any) {
+      console.error('Failed to update location:', err);
+      alert(err?.message || 'Failed to update location.');
+    } finally {
+      setIsSubmittingEditLocation(false);
+    }
+  };
+
+  const handleDeleteLocation = async (node: LocationNode) => {
+    if (!activeHomeId) return;
+
+    if (node.children && node.children.length > 0) {
+      alert(`Cannot delete "${node.name}" because it contains ${node.children.length} sub-location(s). Please remove or relocate child locations first.`);
+      return;
+    }
+
+    const itemsInLoc = items.filter(i => i.location_id === node.id || i.location_path?.includes(node.name));
+    if (itemsInLoc.length > 0) {
+      alert(`Cannot delete "${node.name}" because it contains ${itemsInLoc.length} inventory item(s). Please move or reassign items first.`);
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to delete the location "${node.name}"?`)) return;
+
+    try {
+      await apiClient.delete(`/homes/${activeHomeId}/locations/${node.id}`);
+      if (selectedLocation === node.name) {
+        setSelectedLocation(null);
+      }
+      await loadData();
+    } catch (err: any) {
+      console.error('Failed to delete location:', err);
+      alert(err?.message || 'Failed to delete location.');
     }
   };
 
@@ -362,6 +455,15 @@ export default function InventoryPage() {
   const renderLocationTreeNodes = (nodes: LocationNode[], depth: number = 0) => {
     return nodes.map((node) => {
       const isSelected = selectedLocation === node.name;
+      const formatTypeLabel = (t?: string) => {
+        if (!t) return 'Room';
+        if (t === 'ROOM') return 'Room';
+        if (t === 'FURNITURE') return 'Cabinet';
+        if (t === 'SHELF') return 'Shelf';
+        if (t === 'CONTAINER') return 'Box';
+        return t;
+      };
+
       return (
         <div key={node.id} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
           <div
@@ -369,35 +471,41 @@ export default function InventoryPage() {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
-              padding: '6px 10px',
-              paddingLeft: `${Math.max(10, depth * 16 + 10)}px`,
+              padding: '6px 8px',
+              paddingLeft: `${Math.max(8, depth * 16 + 8)}px`,
               borderRadius: 'var(--radius-md)',
               backgroundColor: isSelected ? 'var(--color-primary-100)' : 'transparent',
               cursor: 'pointer',
               fontSize: '13px',
               fontWeight: depth === 0 ? 700 : 500,
               color: isSelected ? 'var(--color-primary-900)' : 'var(--color-text-primary)',
-              transition: 'background-color 0.15s ease'
+              transition: 'background-color 0.15s ease',
+              gap: '6px',
+              flexWrap: 'nowrap'
             }}
             onClick={() => setSelectedLocation(isSelected ? null : node.name)}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0, flex: 1 }}>
               {depth === 0 ? <FolderOpen size={16} color="var(--color-primary-700)" /> : <Box size={14} color="var(--color-text-secondary)" />}
               <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{node.name}</span>
+              <span style={{ fontSize: '10px', color: 'var(--color-text-tertiary)', padding: '1px 5px', borderRadius: '4px', backgroundColor: 'var(--color-surface-subtle)', flexShrink: 0 }}>
+                {formatTypeLabel(node.location_type)}
+              </span>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '2px', flexShrink: 0 }}>
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   openAddLocationModal(node.id);
                 }}
-                className="touch-target"
                 style={{
                   background: 'none',
                   border: 'none',
                   cursor: 'pointer',
-                  padding: '4px',
+                  padding: '6px',
+                  minWidth: '44px',
+                  minHeight: '44px',
                   borderRadius: '4px',
                   color: 'var(--color-text-secondary)',
                   display: 'inline-flex',
@@ -407,7 +515,55 @@ export default function InventoryPage() {
                 title={`Add sub-location inside ${node.name}`}
                 aria-label={`Add sub-location inside ${node.name}`}
               >
-                <Plus size={14} />
+                <Plus size={15} />
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openEditLocationModal(node);
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: '6px',
+                  minWidth: '44px',
+                  minHeight: '44px',
+                  borderRadius: '4px',
+                  color: 'var(--color-text-secondary)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}
+                title={`Edit ${node.name}`}
+                aria-label={`Edit ${node.name}`}
+              >
+                <Edit2 size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDeleteLocation(node);
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: '6px',
+                  minWidth: '44px',
+                  minHeight: '44px',
+                  borderRadius: '4px',
+                  color: 'var(--status-overdue)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}
+                title={`Delete ${node.name}`}
+                aria-label={`Delete ${node.name}`}
+              >
+                <Trash2 size={14} />
               </button>
             </div>
           </div>
@@ -1018,6 +1174,7 @@ export default function InventoryPage() {
                     <option value="FURNITURE">Cupboard / Cabinet / Furniture</option>
                     <option value="SHELF">Shelf / Rack</option>
                     <option value="CONTAINER">Box / Container / Bin</option>
+                    <option value="CUSTOM">Custom Location Type...</option>
                   </select>
                 </div>
 
@@ -1039,6 +1196,17 @@ export default function InventoryPage() {
                 </div>
               </div>
 
+              {newLocationType === 'CUSTOM' && (
+                <Input
+                  id="customLocationTypeInput"
+                  label="Custom Location Type *"
+                  placeholder="e.g. Garage Cabinet, Tool Rack, Vehicle Trunk"
+                  value={newCustomLocationType}
+                  onChange={(e) => setNewCustomLocationType(e.target.value)}
+                  required
+                />
+              )}
+
               <Input
                 id="locationDesc"
                 label="Description / Notes"
@@ -1053,6 +1221,118 @@ export default function InventoryPage() {
                 </Button>
                 <Button type="submit" disabled={isSubmittingLocation}>
                   {isSubmittingLocation ? 'Creating...' : 'Create Location'}
+                </Button>
+              </div>
+            </form>
+          </Card>
+        </div>
+      )}
+
+      {/* Edit Location Modal */}
+      {isEditLocationOpen && editingLocationNode && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            zIndex: 100,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '16px'
+          }}
+          onClick={() => setIsEditLocationOpen(false)}
+        >
+          <Card
+            style={{ width: '100%', maxWidth: '500px', border: '2px solid var(--color-primary-900)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)' }}>
+              <h3 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--color-primary-900)' }}>
+                Edit Location &ldquo;{editingLocationNode.name}&rdquo;
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsEditLocationOpen(false)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px' }}
+                aria-label="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleEditLocation} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+              <Input
+                id="editLocationName"
+                label="Location Name *"
+                value={editLocationName}
+                onChange={(e) => setEditLocationName(e.target.value)}
+                required
+              />
+
+              <div
+                className="ozhzo-responsive-form-grid"
+                style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)' }}
+              >
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label htmlFor="editLocationType" style={{ fontSize: '13px', fontWeight: 600 }}>Location Type</label>
+                  <select
+                    id="editLocationType"
+                    value={editLocationType}
+                    onChange={(e) => setEditLocationType(e.target.value)}
+                    style={{ height: '40px', padding: '0 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border-subtle)' }}
+                  >
+                    <option value="ROOM">Room / Area</option>
+                    <option value="FURNITURE">Cupboard / Cabinet / Furniture</option>
+                    <option value="SHELF">Shelf / Rack</option>
+                    <option value="CONTAINER">Box / Container / Bin</option>
+                    <option value="CUSTOM">Custom Location Type...</option>
+                  </select>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label htmlFor="editLocationParent" style={{ fontSize: '13px', fontWeight: 600 }}>Parent Location</label>
+                  <select
+                    id="editLocationParent"
+                    value={editLocationParentId}
+                    onChange={(e) => setEditLocationParentId(e.target.value)}
+                    style={{ height: '40px', padding: '0 12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border-subtle)' }}
+                  >
+                    <option value="">-- Root Level (No Parent) --</option>
+                    {flatLocations.filter(loc => loc.id !== editingLocationNode.id).map((loc) => (
+                      <option key={loc.id} value={loc.id}>
+                        {loc.path || loc.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {editLocationType === 'CUSTOM' && (
+                <Input
+                  id="editCustomLocationTypeInput"
+                  label="Custom Location Type *"
+                  placeholder="e.g. Garage Cabinet, Tool Rack"
+                  value={editCustomLocationType}
+                  onChange={(e) => setEditCustomLocationType(e.target.value)}
+                  required
+                />
+              )}
+
+              <Input
+                id="editLocationDesc"
+                label="Description / Notes"
+                placeholder="Optional notes regarding this storage area..."
+                value={editLocationDescription}
+                onChange={(e) => setEditLocationDescription(e.target.value)}
+              />
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: 'var(--space-3)' }}>
+                <Button type="button" variant="ghost" onClick={() => setIsEditLocationOpen(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isSubmittingEditLocation}>
+                  {isSubmittingEditLocation ? 'Saving...' : 'Save Changes'}
                 </Button>
               </div>
             </form>

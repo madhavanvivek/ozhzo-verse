@@ -13,6 +13,7 @@ import {
   ArrowLeft,
   LogOut,
   ShieldCheck,
+  Settings,
   X
 } from 'lucide-react';
 import { Logo } from '@/components/brand/Logo';
@@ -43,7 +44,8 @@ export function AdminNav({
     { href: '/admin/homes', label: 'Homes', icon: Home, exact: false },
     { href: '/admin/subscriptions', label: 'Subscriptions', icon: CreditCard, exact: false },
     { href: '/admin/coupons', label: 'Coupons & Grants', icon: Tag, exact: false },
-    { href: '/admin/activity', label: 'Activity Logs', icon: Activity, exact: false }
+    { href: '/admin/activity', label: 'Activity Logs', icon: Activity, exact: false },
+    { href: '/admin/settings', label: 'Security & Settings', icon: Settings, exact: false }
   ];
 
   const isLinkActive = (item: (typeof navItems)[0]) => {

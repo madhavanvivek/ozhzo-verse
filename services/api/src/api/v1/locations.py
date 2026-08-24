@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import List, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
@@ -28,6 +28,25 @@ from src.schemas.inventory import (
 router = APIRouter(prefix="/homes/{home_id}/locations", tags=["Locations"])
 
 
+def to_location_dto(loc: LocationModel, path: Optional[str] = None, item_count: int = 0) -> LocationDTO:
+    now = datetime.now(timezone.utc)
+    return LocationDTO(
+        id=loc.id or uuid4(),
+        home_id=loc.home_id or uuid4(),
+        parent_id=loc.parent_id,
+        name=loc.name or "Location",
+        location_type=loc.location_type or "ROOM",
+        description=loc.description,
+        icon=loc.icon,
+        sort_order=loc.sort_order if loc.sort_order is not None else 0,
+        is_active=bool(loc.is_active) if loc.is_active is not None else True,
+        path=path or loc.name or "Location",
+        item_count=item_count,
+        created_at=loc.created_at or now,
+        updated_at=loc.updated_at or now
+    )
+
+
 @router.get("", response_model=ApiSuccessResponse[List[LocationDTO]])
 async def list_locations(
     as_tree: bool = Query(False, description="Return nested hierarchy tree instead of flat list"),
@@ -53,20 +72,10 @@ async def list_locations(
         return ApiSuccessResponse(data=tree)
 
     dtos = [
-        LocationDTO(
-            id=loc.id,
-            home_id=loc.home_id,
-            parent_id=loc.parent_id,
-            name=loc.name,
-            location_type=loc.location_type,
-            description=loc.description,
-            icon=loc.icon,
-            sort_order=loc.sort_order,
-            is_active=loc.is_active,
+        to_location_dto(
+            loc,
             path=path_map.get(loc.id, loc.name),
-            item_count=len([i for i in loc.items if i.deleted_at is None]) if loc.items else 0,
-            created_at=loc.created_at,
-            updated_at=loc.updated_at
+            item_count=len([i for i in loc.items if i.deleted_at is None]) if loc.items else 0
         )
         for loc in locations
     ]
@@ -123,21 +132,7 @@ async def create_location(
     path_map = await build_location_path_map(db, home_ctx.home_id)
 
     return ApiSuccessResponse(
-        data=LocationDTO(
-            id=new_loc.id,
-            home_id=new_loc.home_id,
-            parent_id=new_loc.parent_id,
-            name=new_loc.name,
-            location_type=new_loc.location_type,
-            description=new_loc.description,
-            icon=new_loc.icon,
-            sort_order=new_loc.sort_order,
-            is_active=new_loc.is_active,
-            path=path_map.get(new_loc.id, new_loc.name),
-            item_count=0,
-            created_at=new_loc.created_at,
-            updated_at=new_loc.updated_at
-        )
+        data=to_location_dto(new_loc, path=path_map.get(new_loc.id, new_loc.name))
     )
 
 
@@ -165,20 +160,10 @@ async def get_location(
     path_map = await build_location_path_map(db, home_ctx.home_id)
 
     return ApiSuccessResponse(
-        data=LocationDTO(
-            id=loc.id,
-            home_id=loc.home_id,
-            parent_id=loc.parent_id,
-            name=loc.name,
-            location_type=loc.location_type,
-            description=loc.description,
-            icon=loc.icon,
-            sort_order=loc.sort_order,
-            is_active=loc.is_active,
+        data=to_location_dto(
+            loc,
             path=path_map.get(loc.id, loc.name),
-            item_count=len([i for i in loc.items if i.deleted_at is None]) if loc.items else 0,
-            created_at=loc.created_at,
-            updated_at=loc.updated_at
+            item_count=len([i for i in loc.items if i.deleted_at is None]) if loc.items else 0
         )
     )
 
@@ -234,21 +219,7 @@ async def update_location(
     path_map = await build_location_path_map(db, home_ctx.home_id)
 
     return ApiSuccessResponse(
-        data=LocationDTO(
-            id=loc.id,
-            home_id=loc.home_id,
-            parent_id=loc.parent_id,
-            name=loc.name,
-            location_type=loc.location_type,
-            description=loc.description,
-            icon=loc.icon,
-            sort_order=loc.sort_order,
-            is_active=loc.is_active,
-            path=path_map.get(loc.id, loc.name),
-            item_count=0,
-            created_at=loc.created_at,
-            updated_at=loc.updated_at
-        )
+        data=to_location_dto(loc, path=path_map.get(loc.id, loc.name))
     )
 
 

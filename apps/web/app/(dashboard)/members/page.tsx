@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Input } from '@/components/ui/Input';
-import { Users, UserPlus, Copy, Check, Trash2, Mail, AlertCircle } from 'lucide-react';
+import { Users, UserPlus, Copy, Check, Trash2, Mail, AlertCircle, RefreshCw, X, Shield } from 'lucide-react';
 import { apiClient } from '@/lib/apiClient';
 
 interface MemberItem {
@@ -49,6 +49,22 @@ interface UserProfile {
   }>;
 }
 
+function formatErrorMessage(err: any): string {
+  if (!err) return 'An error occurred';
+  if (typeof err === 'string') return err;
+  if (typeof err?.message === 'string') return err.message;
+  if (Array.isArray(err?.detail)) {
+    return err.detail.map((d: any) => (typeof d === 'string' ? d : d.msg || d.message || JSON.stringify(d))).join(', ');
+  }
+  if (typeof err?.detail === 'string') return err.detail;
+  if (typeof err?.detail === 'object') return JSON.stringify(err.detail);
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return 'An unexpected error occurred';
+  }
+}
+
 export default function MembersPage() {
   const [activeHomeId, setActiveHomeId] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
@@ -66,10 +82,15 @@ export default function MembersPage() {
   const [inviteError, setInviteError] = useState<string | null>(null);
 
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
-  const [removingMemberId, setRemovingMemberId] = useState<string | null>(null);
+  const [actionInProgressId, setActionInProgressId] = useState<string | null>(null);
 
-  const loadData = async () => {
-    setIsLoading(true);
+  // Role Editing State
+  const [editingMemberRole, setEditingMemberRole] = useState<{ id: string; name: string; currentRole: string } | null>(null);
+  const [newSelectedRole, setNewSelectedRole] = useState<string>('MEMBER');
+  const [isSavingRole, setIsSavingRole] = useState(false);
+
+  const loadData = async (showLoading = true) => {
+    if (showLoading) setIsLoading(true);
     setError(null);
     try {
       const savedHomeId = localStorage.getItem('active_home_id');
@@ -92,30 +113,33 @@ export default function MembersPage() {
         ]);
 
         if (membersRes.status === 'fulfilled' && membersRes.value) {
-          setMembers(membersRes.value);
+          setMembers(Array.isArray(membersRes.value) ? membersRes.value : []);
         } else {
           setMembers([]);
         }
 
         if (invitesRes.status === 'fulfilled' && invitesRes.value) {
-          setPendingInvites(invitesRes.value);
+          setPendingInvites(Array.isArray(invitesRes.value) ? invitesRes.value : []);
         } else {
           setPendingInvites([]);
         }
       }
     } catch (err: any) {
       console.error('Failed to load members or invitations:', err);
-      setError(err?.message || 'Unable to load members.');
+      setError(formatErrorMessage(err));
     } finally {
-      setIsLoading(false);
+      if (showLoading) setIsLoading(false);
     }
   };
 
   useEffect(() => {
     loadData();
+    const handleHomeChanged = () => loadData(false);
+    window.addEventListener('home-changed', handleHomeChanged);
+    return () => window.removeEventListener('home-changed', handleHomeChanged);
   }, []);
 
-  const activeMembership = currentUser?.homes.find((h) => h.home_id === activeHomeId);
+  const activeMembership = currentUser?.homes?.find((h) => h.home_id === activeHomeId);
   const currentUserRole = activeMembership?.role || 'MEMBER';
   const canManageMembers = ['OWNER', 'HOME_ADMIN', 'ADMIN'].includes(currentUserRole);
 
@@ -129,7 +153,7 @@ export default function MembersPage() {
   };
 
   const handleCopyLink = (token: string) => {
-    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://app.ozhzoverse.com';
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://ozhzo-web.onrender.com';
     navigator.clipboard.writeText(`${origin}/join?token=${token}`);
     setCopiedToken(token);
     setTimeout(() => setCopiedToken(null), 2000);
@@ -139,7 +163,7 @@ export default function MembersPage() {
     e.preventDefault();
     if (!activeHomeId) return;
     if (!inviteEmail.trim() && !invitePhone.trim()) {
-      setInviteError('Please provide an email address or phone number for the invite.');
+      setInviteError('Please provide an email address or mobile number for the invitation.');
       return;
     }
 
@@ -152,36 +176,90 @@ export default function MembersPage() {
         email: inviteEmail.trim() || undefined,
         phone_number: invitePhone.trim() || undefined,
         role: inviteRole,
-        invitation_mode: 'STANDARD'
+        invitation_mode: 'INVITE_ONLY'
       };
 
       const newInvite = await apiClient.post<InvitationItem>(`/homes/${activeHomeId}/invitations`, payload);
-      setPendingInvites([newInvite, ...pendingInvites]);
+      setPendingInvites(prev => [newInvite, ...prev]);
       setInviteEmail('');
       setInvitePhone('');
-      setInviteSuccess('Invitation created successfully. Copy the link below to share.');
-      setTimeout(() => setInviteSuccess(null), 4000);
+      setInviteSuccess('Invitation generated successfully. Copy the link below to share with your family member.');
+      setTimeout(() => setInviteSuccess(null), 5000);
+      loadData(false);
     } catch (err: any) {
       console.error('Failed to create invitation:', err);
-      setInviteError(err?.message || 'Failed to create invitation.');
+      setInviteError(formatErrorMessage(err));
     } finally {
       setIsSubmittingInvite(false);
     }
   };
 
-  const handleRemoveMember = async (memberId: string) => {
+  const handleResendInvite = async (inviteId: string) => {
     if (!activeHomeId) return;
-    if (!confirm('Are you sure you want to remove this member from the Home workspace?')) return;
+    setActionInProgressId(inviteId);
+    try {
+      await apiClient.post(`/homes/${activeHomeId}/invitations/${inviteId}/resend`, {});
+      await loadData(false);
+      setInviteSuccess('Invitation link refreshed and expiry extended.');
+      setTimeout(() => setInviteSuccess(null), 4000);
+    } catch (err: any) {
+      alert(formatErrorMessage(err));
+    } finally {
+      setActionInProgressId(null);
+    }
+  };
 
-    setRemovingMemberId(memberId);
+  const handleCancelInvite = async (inviteId: string) => {
+    if (!activeHomeId) return;
+    if (!confirm('Cancel this pending invitation?')) return;
+    setActionInProgressId(inviteId);
+    try {
+      await apiClient.delete(`/homes/${activeHomeId}/invitations/${inviteId}`);
+      setPendingInvites(prev => prev.filter(i => i.id !== inviteId));
+    } catch (err: any) {
+      alert(formatErrorMessage(err));
+    } finally {
+      setActionInProgressId(null);
+    }
+  };
+
+  const handleOpenRoleModal = (m: MemberItem) => {
+    setEditingMemberRole({ id: m.id, name: m.display_name, currentRole: m.role });
+    setNewSelectedRole(m.role === 'OWNER' ? 'HOME_ADMIN' : m.role);
+  };
+
+  const handleSaveMemberRole = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeHomeId || !editingMemberRole) return;
+
+    setIsSavingRole(true);
+    try {
+      await apiClient.patch(`/homes/${activeHomeId}/members/${editingMemberRole.id}/role`, {
+        role: newSelectedRole
+      });
+      setMembers(prev => prev.map(m => m.id === editingMemberRole.id ? { ...m, role: newSelectedRole } : m));
+      setEditingMemberRole(null);
+      await loadData(false);
+    } catch (err: any) {
+      alert(formatErrorMessage(err));
+    } finally {
+      setIsSavingRole(false);
+    }
+  };
+
+  const handleRemoveMember = async (memberId: string, memberName: string) => {
+    if (!activeHomeId) return;
+    if (!confirm(`Are you sure you want to remove ${memberName} from this Home workspace?`)) return;
+
+    setActionInProgressId(memberId);
     try {
       await apiClient.delete(`/homes/${activeHomeId}/members/${memberId}`);
-      setMembers(members.filter((m) => m.id !== memberId));
+      setMembers(prev => prev.filter((m) => m.id !== memberId));
     } catch (err: any) {
       console.error('Failed to remove member:', err);
-      alert(err?.message || 'Failed to remove member.');
+      alert(formatErrorMessage(err));
     } finally {
-      setRemovingMemberId(null);
+      setActionInProgressId(null);
     }
   };
 
@@ -202,8 +280,27 @@ export default function MembersPage() {
     }
   };
 
+  const getRoleDisplayName = (role: string) => {
+    switch (role) {
+      case 'OWNER':
+        return 'Owner';
+      case 'HOME_ADMIN':
+        return 'Home Admin';
+      case 'ADMIN':
+        return 'Admin';
+      case 'MEMBER':
+        return 'Member';
+      case 'CHILD':
+        return 'Child';
+      case 'GUEST':
+        return 'Guest';
+      default:
+        return role;
+    }
+  };
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)', maxWidth: '900px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)', maxWidth: '900px', width: '100%' }}>
       <div>
         <h1 style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--color-primary-900)' }}>
           Family Members & Roles
@@ -229,14 +326,14 @@ export default function MembersPage() {
           </div>
 
           {inviteSuccess && (
-            <div style={{ padding: '8px 12px', backgroundColor: 'var(--status-in-stock-bg)', color: 'var(--status-in-stock)', borderRadius: 'var(--radius-md)', fontSize: '13px', fontWeight: 600, marginBottom: 'var(--space-3)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{ padding: '10px 14px', backgroundColor: 'var(--status-in-stock-bg)', color: 'var(--status-in-stock)', borderRadius: 'var(--radius-md)', fontSize: '13px', fontWeight: 600, marginBottom: 'var(--space-3)', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Check size={16} />
               <span>{inviteSuccess}</span>
             </div>
           )}
 
           {inviteError && (
-            <div style={{ padding: '8px 12px', backgroundColor: 'var(--status-overdue-bg)', color: 'var(--status-overdue)', borderRadius: 'var(--radius-md)', fontSize: '13px', fontWeight: 500, marginBottom: 'var(--space-3)' }}>
+            <div style={{ padding: '10px 14px', backgroundColor: 'var(--status-overdue-bg)', color: 'var(--status-overdue)', borderRadius: 'var(--radius-md)', fontSize: '13px', fontWeight: 500, marginBottom: 'var(--space-3)' }}>
               {inviteError}
             </div>
           )}
@@ -255,13 +352,13 @@ export default function MembersPage() {
               id="invitePhone"
               type="tel"
               label="Mobile Number (Optional)"
-              placeholder="+1234567890"
+              placeholder="+919876543210"
               value={invitePhone}
               onChange={(e) => setInvitePhone(e.target.value)}
             />
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <label htmlFor="inviteRole" style={{ fontSize: '13px', fontWeight: 600 }}>
+              <label htmlFor="inviteRole" style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
                 Assigned Role
               </label>
               <select
@@ -278,6 +375,7 @@ export default function MembersPage() {
                   fontSize: '14px'
                 }}
               >
+                <option value="HOME_ADMIN">Home Admin (Co-management)</option>
                 <option value="ADMIN">Admin (Full Management)</option>
                 <option value="MEMBER">Adult Member (Chores & Bills)</option>
                 <option value="CHILD">Child (Chores Only)</option>
@@ -285,8 +383,8 @@ export default function MembersPage() {
               </select>
             </div>
 
-            <Button type="submit" isLoading={isSubmittingInvite} disabled={!activeHomeId}>
-              Generate Invite
+            <Button type="submit" isLoading={isSubmittingInvite} disabled={!activeHomeId} style={{ minHeight: '44px', minWidth: '130px' }}>
+              Send Invite
             </Button>
           </form>
         </Card>
@@ -318,7 +416,7 @@ export default function MembersPage() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
             {members.map((m) => {
               const isMe = currentUser?.id === m.user_id;
-              const canRemoveThisMember = canManageMembers && !isMe && !['OWNER', 'HOME_ADMIN'].includes(m.role);
+              const canManageThisMember = canManageMembers && !isMe && !['OWNER'].includes(m.role);
 
               return (
                 <div
@@ -329,11 +427,13 @@ export default function MembersPage() {
                     justifyContent: 'space-between',
                     padding: '12px 14px',
                     backgroundColor: 'var(--color-surface-subtle)',
-                    borderRadius: 'var(--radius-md)'
+                    borderRadius: 'var(--radius-md)',
+                    flexWrap: 'wrap',
+                    gap: '12px'
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <div style={{ width: '36px', height: '36px', borderRadius: '50%', backgroundColor: 'var(--color-primary-900)', color: 'var(--color-text-inverse)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: 600 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: '200px' }}>
+                    <div style={{ width: '38px', height: '38px', borderRadius: '50%', backgroundColor: 'var(--color-primary-900)', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: 600 }}>
                       {getInitials(m.display_name)}
                     </div>
                     <div>
@@ -346,16 +446,30 @@ export default function MembersPage() {
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                     <Badge variant={getRoleBadgeVariant(m.role)}>
-                      {m.role}
+                      {getRoleDisplayName(m.role)}
                     </Badge>
-                    {canRemoveThisMember && (
+
+                    {canManageThisMember && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => handleOpenRoleModal(m)}
+                        style={{ minHeight: '44px', padding: '0 10px', fontSize: '12px' }}
+                      >
+                        <Shield size={14} style={{ marginRight: '4px' }} />
+                        <span>Role</span>
+                      </Button>
+                    )}
+
+                    {canManageThisMember && (
                       <button
-                        onClick={() => handleRemoveMember(m.id)}
-                        disabled={removingMemberId === m.id}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--status-overdue)', padding: '4px' }}
+                        onClick={() => handleRemoveMember(m.id, m.display_name)}
+                        disabled={actionInProgressId === m.id}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--status-overdue)', padding: '10px', minWidth: '44px', minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                         aria-label={`Remove ${m.display_name}`}
+                        title="Remove Member"
                       >
                         <Trash2 size={16} />
                       </button>
@@ -388,26 +502,121 @@ export default function MembersPage() {
                   justifyContent: 'space-between',
                   padding: '12px 14px',
                   backgroundColor: 'var(--color-surface-subtle)',
-                  borderRadius: 'var(--radius-md)'
+                  borderRadius: 'var(--radius-md)',
+                  flexWrap: 'wrap',
+                  gap: '12px'
                 }}
               >
                 <div>
                   <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
                     {inv.email || inv.phone_number || 'General Link Invite'}
                   </div>
-                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>
-                    Role: {inv.role} • Status: {inv.status} • Expires: {new Date(inv.expires_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
+                    Role: <strong>{getRoleDisplayName(inv.role)}</strong> • Status: {inv.status} • Expires: {new Date(inv.expires_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}
                   </div>
                 </div>
 
-                <Button size="sm" variant="secondary" onClick={() => handleCopyLink(inv.token)}>
-                  {copiedToken === inv.token ? <Check size={14} color="var(--status-in-stock)" /> : <Copy size={14} />}
-                  <span>{copiedToken === inv.token ? 'Copied' : 'Copy Link'}</span>
-                </Button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Button size="sm" variant="secondary" onClick={() => handleCopyLink(inv.token)} style={{ minHeight: '44px' }}>
+                    {copiedToken === inv.token ? <Check size={14} color="var(--status-in-stock)" /> : <Copy size={14} />}
+                    <span>{copiedToken === inv.token ? 'Copied' : 'Copy Link'}</span>
+                  </Button>
+
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => handleResendInvite(inv.id)}
+                    disabled={actionInProgressId === inv.id}
+                    style={{ minHeight: '44px', padding: '0 8px' }}
+                    title="Resend / Extend Invitation"
+                  >
+                    <RefreshCw size={14} className={actionInProgressId === inv.id ? 'animate-spin' : ''} />
+                  </Button>
+
+                  <button
+                    onClick={() => handleCancelInvite(inv.id)}
+                    disabled={actionInProgressId === inv.id}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--status-overdue)', padding: '10px', minWidth: '44px', minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    aria-label="Cancel invitation"
+                    title="Cancel Invitation"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
         </Card>
+      )}
+
+      {/* Change Member Role Modal */}
+      {editingMemberRole && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Change Member Role"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: '16px'
+          }}
+        >
+          <Card style={{ maxWidth: '420px', width: '100%', padding: '24px', position: 'relative' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+              <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--color-primary-900)' }}>
+                Change Role: {editingMemberRole.name}
+              </h3>
+              <button
+                onClick={() => setEditingMemberRole(null)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px' }}
+                aria-label="Close modal"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveMemberRole} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div>
+                <label style={{ fontSize: '13px', fontWeight: 600, display: 'block', marginBottom: '6px' }}>
+                  Select New Household Role
+                </label>
+                <select
+                  value={newSelectedRole}
+                  onChange={(e) => setNewSelectedRole(e.target.value)}
+                  style={{
+                    width: '100%',
+                    height: '42px',
+                    padding: '0 12px',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--color-border-strong)',
+                    backgroundColor: 'var(--color-surface-card)',
+                    fontSize: '14px'
+                  }}
+                >
+                  <option value="HOME_ADMIN">Home Admin (Co-management)</option>
+                  <option value="ADMIN">Admin (Full Management)</option>
+                  <option value="MEMBER">Adult Member (Chores & Bills)</option>
+                  <option value="CHILD">Child (Chores Only)</option>
+                  <option value="GUEST">Guest (Limited Scope)</option>
+                </select>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
+                <Button type="button" variant="secondary" onClick={() => setEditingMemberRole(null)} style={{ minHeight: '44px' }}>
+                  Cancel
+                </Button>
+                <Button type="submit" isLoading={isSavingRole} style={{ minHeight: '44px' }}>
+                  Save Role
+                </Button>
+              </div>
+            </form>
+          </Card>
+        </div>
       )}
     </div>
   );

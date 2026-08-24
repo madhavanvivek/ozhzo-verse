@@ -18,6 +18,17 @@ async def lifespan(app: FastAPI):
     # Production secret key sanity check
     if settings.ENVIRONMENT == "production" and "development" in settings.JWT_SECRET_KEY:
         logger.critical("FATAL SECURITY RISK: Default development JWT secret key detected in production environment!")
+
+    # Safe and idempotent Super Admin initialization
+    if settings.ENABLE_DEMO_SUPER_ADMIN_BOOTSTRAP:
+        try:
+            from src.infrastructure.database.session import AsyncSessionLocal
+            from src.core.bootstrap import seed_demo_super_admin
+            async with AsyncSessionLocal() as db:
+                await seed_demo_super_admin(db)
+        except Exception as e:
+            logger.warning(f"Super Admin bootstrap encountered an issue during startup: {e}")
+
     yield
     logger.info("Shutting down Ozhzo Verse Backend Service...")
 

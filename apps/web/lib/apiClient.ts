@@ -211,10 +211,22 @@ class ApiClient {
     }
 
     if (!response.ok || (data && data.success === false)) {
-      const errorMsg =
-        data?.error?.message ||
-        data?.detail ||
-        (rawText ? `Server error (${response.status}): ${rawText}` : `Request failed with status ${response.status}`);
+      let errorMsg = 'An unexpected error occurred';
+      if (data?.error?.message && typeof data.error.message === 'string') {
+        errorMsg = data.error.message;
+      } else if (typeof data?.detail === 'string') {
+        errorMsg = data.detail;
+      } else if (Array.isArray(data?.detail)) {
+        errorMsg = data.detail.map((d: any) => d.msg || d.message || (typeof d === 'string' ? d : JSON.stringify(d))).join(', ');
+      } else if (data?.detail && typeof data.detail === 'object') {
+        errorMsg = data.detail.message || data.detail.msg || JSON.stringify(data.detail);
+      } else if (data?.message && typeof data.message === 'string') {
+        errorMsg = data.message;
+      } else if (rawText) {
+        errorMsg = `Server error (${response.status}): ${rawText}`;
+      } else {
+        errorMsg = `Request failed with status ${response.status}`;
+      }
       throw new Error(errorMsg);
     }
 

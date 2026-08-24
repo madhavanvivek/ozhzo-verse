@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import List, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
@@ -18,19 +18,39 @@ from src.infrastructure.database.models import (
     UserProfileModel
 )
 from src.infrastructure.cache.redis_client import get_redis_client
-from src.schemas.common import ApiSuccessResponse
+from src.schemas.common import ApiSuccessResponse, MessageResponse
 from src.schemas.shopping import (
     CheckItemRequest,
     ConvertFromInventoryRequest,
     CreateShoppingItemRequest,
     CreateShoppingListRequest,
-    MessageResponse,
     ShoppingListDTO,
     ShoppingListItemDTO,
     UpdateShoppingItemRequest
 )
 
-router = APIRouter(prefix="/homes/{home_id}/shopping", tags=["Shopping"])
+router = APIRouter(prefix="/homes/{home_id}/shopping", tags=["Shopping Lists"])
+
+
+def to_shopping_item_dto(item: ShoppingListItemModel, assigned_name: Optional[str] = None) -> ShoppingListItemDTO:
+    now = datetime.now(timezone.utc)
+    return ShoppingListItemDTO(
+        id=item.id or uuid4(),
+        list_id=item.list_id or uuid4(),
+        home_id=item.home_id or uuid4(),
+        inventory_item_id=item.inventory_item_id,
+        name=item.name or "Item",
+        quantity=item.quantity if item.quantity is not None else Decimal("1.0"),
+        unit=item.unit or "pcs",
+        priority=item.priority or "MEDIUM",
+        is_checked=bool(item.is_checked),
+        added_by=getattr(item, "added_by", None),
+        assigned_to=item.assigned_to,
+        assigned_to_name=assigned_name,
+        version=item.version or 1,
+        created_at=item.created_at or now,
+        updated_at=item.updated_at or now
+    )
 
 
 # ==================================
@@ -137,23 +157,7 @@ async def list_items_for_shopping_list(
     rows = result.all()
 
     dtos = [
-        ShoppingListItemDTO(
-            id=item.id,
-            list_id=item.list_id,
-            home_id=item.home_id,
-            inventory_item_id=item.inventory_item_id,
-            name=item.name,
-            quantity=item.quantity,
-            unit=item.unit,
-            priority=item.priority,
-            is_checked=item.is_checked,
-            added_by=item.added_by,
-            assigned_to=item.assigned_to,
-            assigned_to_name=assigned_name,
-            version=item.version,
-            created_at=item.created_at,
-            updated_at=item.updated_at
-        )
+        to_shopping_item_dto(item, assigned_name)
         for item, assigned_name in rows
     ]
 
@@ -177,7 +181,6 @@ async def add_shopping_item(
         unit=payload.unit,
         priority=payload.priority,
         is_checked=False,
-        added_by=home_ctx.user.id,
         assigned_to=payload.assigned_to,
         version=1
     )
@@ -194,23 +197,7 @@ async def add_shopping_item(
         pass
 
     return ApiSuccessResponse(
-        data=ShoppingListItemDTO(
-            id=new_item.id,
-            list_id=new_item.list_id,
-            home_id=new_item.home_id,
-            inventory_item_id=new_item.inventory_item_id,
-            name=new_item.name,
-            quantity=new_item.quantity,
-            unit=new_item.unit,
-            priority=new_item.priority,
-            is_checked=new_item.is_checked,
-            added_by=new_item.added_by,
-            assigned_to=new_item.assigned_to,
-            assigned_to_name=None,
-            version=new_item.version,
-            created_at=new_item.created_at,
-            updated_at=new_item.updated_at
-        )
+        data=to_shopping_item_dto(new_item)
     )
 
 
@@ -254,23 +241,7 @@ async def toggle_item_checked(
         pass
 
     return ApiSuccessResponse(
-        data=ShoppingListItemDTO(
-            id=item.id,
-            list_id=item.list_id,
-            home_id=item.home_id,
-            inventory_item_id=item.inventory_item_id,
-            name=item.name,
-            quantity=item.quantity,
-            unit=item.unit,
-            priority=item.priority,
-            is_checked=item.is_checked,
-            added_by=item.added_by,
-            assigned_to=item.assigned_to,
-            assigned_to_name=None,
-            version=item.version,
-            created_at=item.created_at,
-            updated_at=item.updated_at
-        )
+        data=to_shopping_item_dto(item)
     )
 
 
@@ -316,23 +287,7 @@ async def update_shopping_item(
     await db.commit()
 
     return ApiSuccessResponse(
-        data=ShoppingListItemDTO(
-            id=item.id,
-            list_id=item.list_id,
-            home_id=item.home_id,
-            inventory_item_id=item.inventory_item_id,
-            name=item.name,
-            quantity=item.quantity,
-            unit=item.unit,
-            priority=item.priority,
-            is_checked=item.is_checked,
-            added_by=item.added_by,
-            assigned_to=item.assigned_to,
-            assigned_to_name=None,
-            version=item.version,
-            created_at=item.created_at,
-            updated_at=item.updated_at
-        )
+        data=to_shopping_item_dto(item)
     )
 
 
@@ -420,28 +375,11 @@ async def convert_low_stock_to_shopping_item(
         unit=inv_item.unit,
         priority="HIGH" if inv_item.status in ["LOW_STOCK", "OUT_OF_STOCK"] else "MEDIUM",
         is_checked=False,
-        added_by=home_ctx.user.id,
         version=1
     )
     db.add(shopping_item)
     await db.commit()
 
     return ApiSuccessResponse(
-        data=ShoppingListItemDTO(
-            id=shopping_item.id,
-            list_id=shopping_item.list_id,
-            home_id=shopping_item.home_id,
-            inventory_item_id=shopping_item.inventory_item_id,
-            name=shopping_item.name,
-            quantity=shopping_item.quantity,
-            unit=shopping_item.unit,
-            priority=shopping_item.priority,
-            is_checked=shopping_item.is_checked,
-            added_by=shopping_item.added_by,
-            assigned_to=shopping_item.assigned_to,
-            assigned_to_name=None,
-            version=shopping_item.version,
-            created_at=shopping_item.created_at,
-            updated_at=shopping_item.updated_at
-        )
+        data=to_shopping_item_dto(shopping_item)
     )

@@ -1,4 +1,5 @@
 import pytest
+pytest.importorskip("aiosqlite")
 import pytest_asyncio
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal

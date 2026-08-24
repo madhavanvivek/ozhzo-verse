@@ -38,6 +38,30 @@ from src.schemas.common import ApiSuccessResponse
 router = APIRouter(prefix="/homes/{home_id}/bills", tags=["Bills & Recurring Expenses"])
 
 
+async def send_bill_due_notification(
+    home_id: UUID,
+    bill_title: str,
+    amount: Decimal,
+    currency: str,
+    due_date: date,
+    db: AsyncSession
+) -> None:
+    from src.infrastructure.database.models import NotificationModel, HomeMemberModel
+    members_res = await db.execute(
+        select(HomeMemberModel.user_id).where(HomeMemberModel.home_id == home_id)
+    )
+    user_ids = members_res.scalars().all()
+    for uid in user_ids:
+        notif = NotificationModel(
+            user_id=uid,
+            home_id=home_id,
+            title="Bill Due",
+            body=f"{bill_title} of {currency} {amount} is due on {due_date}.",
+            notification_type="BILL_DUE"
+        )
+        db.add(notif)
+
+
 def calculate_next_bill_due_date(
     current_due: date,
     recurrence_type: str,

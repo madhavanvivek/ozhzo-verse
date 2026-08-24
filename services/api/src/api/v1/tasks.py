@@ -32,6 +32,20 @@ from src.schemas.task import (
 router = APIRouter(prefix="/homes/{home_id}/tasks", tags=["Tasks & Household Responsibilities"])
 
 
+def calculate_next_due_date(base_time: datetime, recurrence_type: str, interval_days: Optional[int] = None) -> datetime:
+    if recurrence_type == "DAILY":
+        return base_time + timedelta(days=1)
+    elif recurrence_type == "WEEKLY":
+        return base_time + timedelta(weeks=1)
+    elif recurrence_type == "MONTHLY":
+        return base_time + timedelta(days=30)
+    elif recurrence_type == "YEARLY":
+        return base_time + timedelta(days=365)
+    elif recurrence_type == "CUSTOM_DAYS":
+        return base_time + timedelta(days=interval_days or 30)
+    return base_time
+
+
 def compute_time_flags(task: TaskModel):
     now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -533,6 +547,31 @@ async def assign_task(
 
     dto = await map_task_dto(task, db)
     return ApiSuccessResponse(data=dto)
+
+
+@router.post("/{task_id}/reopen", response_model=ApiSuccessResponse[TaskDTO])
+async def reopen_task(
+    task_id: UUID,
+    home_ctx: HomeContext = Depends(require_home_permission("tasks:edit")),
+    db: AsyncSession = Depends(get_db),
+):
+    task = await db.get(TaskModel, task_id)
+    if not task or task.home_id != home_ctx.home_id or task.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found in this home."
+        )
+
+    task.status = "PENDING"
+    task.completed_at = None
+    task.completed_by = None
+    task.version += 1
+    task.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(task)
+
+    dto = await map_task_dto(task, db)
+    return ApiSuccessResponse(data=dto, message="Task reopened successfully.")
 
 
 @router.delete("/{task_id}", response_model=ApiSuccessResponse[MessageResponse])

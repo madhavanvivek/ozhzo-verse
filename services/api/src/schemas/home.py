@@ -100,7 +100,17 @@ class CreateInvitationRequest(BaseModel):
     phone_number: Optional[str] = Field(None, description="Mobile number with country code")
     email: Optional[EmailStr] = None
     role: str = Field(default="MEMBER", pattern="^(HOME_ADMIN|ADMIN|MEMBER|CHILD|GUEST)$")
-    invitation_mode: str = Field(default="INVITE_ONLY", pattern="^(INVITE_ONLY|INVITE_WITH_SUBSCRIPTION)$")
+    invitation_mode: str = Field(default="INVITE_ONLY")
+
+    @field_validator("invitation_mode")
+    @classmethod
+    def validate_invitation_mode(cls, v: str) -> str:
+        cleaned = v.strip().upper() if v else "INVITE_ONLY"
+        if cleaned in ["STANDARD", "INVITE_ONLY"]:
+            return "INVITE_ONLY"
+        elif cleaned in ["SUBSCRIPTION", "INVITE_WITH_SUBSCRIPTION"]:
+            return "INVITE_WITH_SUBSCRIPTION"
+        return "INVITE_ONLY"
 
 
 class InvitationDTO(BaseModel):
@@ -114,9 +124,9 @@ class InvitationDTO(BaseModel):
     token: str
     invite_url: str
     status: str
-    invited_by: UUID
+    invited_by: Optional[UUID] = None
     expires_at: datetime
-    created_at: datetime
+    created_at: Optional[datetime] = None
 
 
 class AcceptInvitationResponse(BaseModel):

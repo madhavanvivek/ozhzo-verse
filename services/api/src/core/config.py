@@ -36,11 +36,23 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
-    ENABLE_DEMO_SUPER_ADMIN_BOOTSTRAP: bool = False
+    ENABLE_DEMO_SUPER_ADMIN_BOOTSTRAP: bool = True
     DEMO_SUPER_ADMIN_EMAIL: str = "vivek@zinfog.com"
     DEMO_SUPER_ADMIN_PASSWORD: str | None = None
-    DEMO_OTP_ENABLED: bool = True
+    DEMO_OTP_ENABLED: bool = False
     DEMO_OTP_CODE: str = "123456"
+
+    # Transactional Email (SMTP / Resend)
+    EMAIL_PROVIDER: str = "smtp"
+    EMAIL_SENDER_ADDRESS: str = "no-reply@ozhzoverse.com"
+    EMAIL_SENDER_NAME: str = "Ozhzo Verse"
+    SMTP_HOST: str | None = None
+    SMTP_PORT: int = 587
+    SMTP_USER: str | None = None
+    SMTP_PASSWORD: str | None = None
+    SMTP_USE_TLS: bool = True
+    SMTP_USE_SSL: bool = False
+    RESEND_API_KEY: str | None = None
 
     # PostgreSQL Database
     DATABASE_HOST: str = "localhost"

@@ -9,7 +9,12 @@ import {
   Plus,
   CheckCircle2,
   Trash2,
-  Sparkles
+  Sparkles,
+  RotateCcw,
+  Edit2,
+  Search,
+  Check,
+  X
 } from 'lucide-react';
 import { apiClient } from '@/lib/apiClient';
 
@@ -29,16 +34,33 @@ export default function ShoppingPage() {
   const [activeHomeId, setActiveHomeId] = useState<string | null>(null);
   const [items, setItems] = useState<ShoppingItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Form State
+  // Form State for Quick Add
   const [newItemName, setNewItemName] = useState('');
   const [newItemQty, setNewItemQty] = useState('1');
   const [newItemUnit, setNewItemUnit] = useState('pcs');
   const [newItemNotes, setNewItemNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const loadData = async () => {
-    setIsLoading(true);
+  // Edit Modal State
+  const [editingItem, setEditingItem] = useState<ShoppingItem | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editQty, setEditQty] = useState('1');
+  const [editUnit, setEditUnit] = useState('pcs');
+  const [editNotes, setEditNotes] = useState('');
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage((curr) => (curr === msg ? null : curr));
+    }, 4000);
+  };
+
+  const loadData = async (showLoading = false) => {
+    if (showLoading) setIsLoading(true);
     try {
       const savedHomeId = localStorage.getItem('active_home_id');
       let homeId = savedHomeId;
@@ -77,28 +99,54 @@ export default function ShoppingPage() {
   };
 
   useEffect(() => {
-    loadData();
+    loadData(true);
   }, []);
 
-  const activeItems = items.filter(i => i.status === 'PENDING');
-  const checkedItems = items.filter(i => i.status === 'PURCHASED');
+  const filteredItems = items.filter(i => {
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    return i.name.toLowerCase().includes(q) || (i.notes && i.notes.toLowerCase().includes(q));
+  });
+
+  const activeItems = filteredItems.filter(i => i.status === 'PENDING');
+  const checkedItems = filteredItems.filter(i => i.status === 'PURCHASED');
   const totalCount = items.length;
-  const completedCount = checkedItems.length;
+  const completedCount = items.filter(i => i.status === 'PURCHASED').length;
   const progressPercent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
 
-  const handleToggleCheck = async (item: ShoppingItem) => {
+  const handleMarkPurchased = async (item: ShoppingItem) => {
     if (!activeHomeId) return;
 
+    // Optimistic UI update
+    setItems(prev => prev.map(i => i.id === item.id ? { ...i, status: 'PURCHASED' } : i));
+
     try {
-      if (item.status === 'PENDING') {
-        await apiClient.post(`/homes/${activeHomeId}/purchase-list/${item.id}/purchase`, {
-          restock_inventory: true
-        });
-      }
-      await loadData();
+      await apiClient.post(`/homes/${activeHomeId}/purchase-list/${item.id}/purchase`, {
+        restock_inventory: true
+      });
+      showToast(`Marked "${item.name}" as purchased.`);
+      loadData(false);
     } catch (err: any) {
-      console.error('Failed to toggle purchase state:', err);
+      console.error('Failed to purchase item:', err);
       alert(err?.message || 'Failed to update item status.');
+      loadData(false);
+    }
+  };
+
+  const handleRestoreItem = async (item: ShoppingItem) => {
+    if (!activeHomeId) return;
+
+    // Optimistic UI update
+    setItems(prev => prev.map(i => i.id === item.id ? { ...i, status: 'PENDING' } : i));
+
+    try {
+      await apiClient.post(`/homes/${activeHomeId}/purchase-list/${item.id}/restore`, {});
+      showToast(`Added "${item.name}" back to your shopping list.`);
+      loadData(false);
+    } catch (err: any) {
+      console.error('Failed to restore purchase item:', err);
+      alert(err?.message || 'Failed to restore item to shopping list.');
+      loadData(false);
     }
   };
 
@@ -119,7 +167,8 @@ export default function ShoppingPage() {
       setNewItemName('');
       setNewItemQty('1');
       setNewItemNotes('');
-      await loadData();
+      showToast(`Added "${payload.name}" to shopping list.`);
+      await loadData(false);
     } catch (err: any) {
       console.error('Failed to add purchase item:', err);
       alert(err?.message || 'Failed to add item to purchase list.');
@@ -128,19 +177,93 @@ export default function ShoppingPage() {
     }
   };
 
-  const handleDeleteItem = async (id: string) => {
+  const openEditModal = (item: ShoppingItem) => {
+    setEditingItem(item);
+    setEditName(item.name);
+    setEditQty(item.quantity.toString());
+    setEditUnit(item.unit);
+    setEditNotes(item.notes || '');
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingItem || !activeHomeId || !editName.trim()) return;
+
+    setIsSavingEdit(true);
+    try {
+      await apiClient.patch(`/homes/${activeHomeId}/purchase-list/${editingItem.id}`, {
+        name: editName.trim(),
+        quantity: parseFloat(editQty) || 1,
+        unit: editUnit.trim() || 'pcs',
+        notes: editNotes.trim() || undefined,
+        version: editingItem.version
+      });
+
+      setEditingItem(null);
+      showToast(`Updated "${editName.trim()}".`);
+      await loadData(false);
+    } catch (err: any) {
+      console.error('Failed to update item:', err);
+      alert(err?.message || 'Failed to save item changes.');
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
+  const handleDeleteItem = async (id: string, name: string) => {
     if (!activeHomeId) return;
+    if (!confirm(`Remove "${name}" from the shopping list?`)) return;
+
+    // Optimistic remove
+    setItems(prev => prev.filter(i => i.id !== id));
+
     try {
       await apiClient.delete(`/homes/${activeHomeId}/purchase-list/${id}`);
-      await loadData();
+      showToast(`Removed "${name}".`);
+      loadData(false);
     } catch (err: any) {
       console.error('Failed to delete purchase item:', err);
       alert(err?.message || 'Failed to remove item.');
+      loadData(false);
     }
   };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)', maxWidth: '900px', width: '100%' }}>
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div
+          role="status"
+          style={{
+            position: 'fixed',
+            bottom: '24px',
+            right: '24px',
+            backgroundColor: 'var(--color-primary-900)',
+            color: '#ffffff',
+            padding: '12px 20px',
+            borderRadius: 'var(--radius-md)',
+            boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+            fontSize: '13px',
+            fontWeight: 600,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            zIndex: 9999,
+            animation: 'fadeIn 0.2s ease-out'
+          }}
+        >
+          <Check size={16} color="var(--status-in-stock)" />
+          <span>{toastMessage}</span>
+          <button
+            onClick={() => setToastMessage(null)}
+            style={{ background: 'none', border: 'none', color: '#ffffff', cursor: 'pointer', marginLeft: '6px' }}
+            aria-label="Close notification"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
         <div>
@@ -172,14 +295,14 @@ export default function ShoppingPage() {
         </div>
       </Card>
 
-      {/* Quick Add Bar */}
+      {/* Quick Add Bar & Search */}
       <Card style={{ padding: 'var(--space-4)' }}>
         <form onSubmit={handleAddItem} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             <div style={{ flex: '2 1 200px' }}>
               <Input
                 id="itemName"
-                placeholder="Add grocery or supply item... (e.g. Olive Oil, Milk, Bread)"
+                placeholder="Add grocery or supply item... (e.g. Basmati Rice, Olive Oil)"
                 value={newItemName}
                 onChange={(e) => setNewItemName(e.target.value)}
                 required
@@ -203,15 +326,36 @@ export default function ShoppingPage() {
                 onChange={(e) => setNewItemUnit(e.target.value)}
               />
             </div>
-            <Button type="submit" disabled={isSubmitting} style={{ minHeight: '40px', padding: '0 18px' }}>
+            <Button type="submit" disabled={isSubmitting} style={{ minHeight: '44px', padding: '0 18px' }}>
               <Plus size={16} />
               <span>{isSubmitting ? 'Adding...' : 'Add Item'}</span>
             </Button>
           </div>
         </form>
+
+        {items.length > 3 && (
+          <div style={{ marginTop: '12px', position: 'relative' }}>
+            <Search size={15} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-tertiary)' }} />
+            <input
+              type="text"
+              placeholder="Search shopping list..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{
+                width: '100%',
+                height: '38px',
+                padding: '0 12px 0 34px',
+                borderRadius: 'var(--radius-md)',
+                border: '1px solid var(--color-border)',
+                fontSize: '13px',
+                backgroundColor: 'var(--color-surface-subtle)'
+              }}
+            />
+          </div>
+        )}
       </Card>
 
-      {/* Active Items */}
+      {/* Active Items ("To Buy") */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
         <h2 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
           To Buy ({activeItems.length})
@@ -244,11 +388,12 @@ export default function ShoppingPage() {
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0, flex: 1 }}>
                 <button
-                  onClick={() => handleToggleCheck(item)}
-                  className="touch-target"
+                  onClick={() => handleMarkPurchased(item)}
                   style={{
-                    width: '28px',
-                    height: '28px',
+                    width: '32px',
+                    height: '32px',
+                    minWidth: '44px',
+                    minHeight: '44px',
                     borderRadius: '50%',
                     border: '2px solid var(--color-border-strong)',
                     backgroundColor: 'transparent',
@@ -269,16 +414,37 @@ export default function ShoppingPage() {
                     {item.quantity} {item.unit}
                     {item.added_by_name && ` • Added by ${item.added_by_name}`}
                   </div>
+                  {item.notes && (
+                    <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>
+                      {item.notes}
+                    </div>
+                  )}
                 </div>
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
-                <Badge variant="neutral">Pending</Badge>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => handleMarkPurchased(item)}
+                  style={{ minHeight: '44px', padding: '0 10px', fontSize: '12px' }}
+                >
+                  <Check size={14} style={{ marginRight: '4px' }} />
+                  <span>Mark Purchased</span>
+                </Button>
                 <button
-                  onClick={() => handleDeleteItem(item.id)}
-                  className="touch-target"
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', padding: '6px' }}
+                  onClick={() => openEditModal(item)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-secondary)', padding: '10px', minWidth: '44px', minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                  aria-label={`Edit ${item.name}`}
+                  title="Edit Item"
+                >
+                  <Edit2 size={16} />
+                </button>
+                <button
+                  onClick={() => handleDeleteItem(item.id, item.name)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', padding: '10px', minWidth: '44px', minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                   aria-label={`Delete ${item.name}`}
+                  title="Delete Item"
                 >
                   <Trash2 size={16} />
                 </button>
@@ -288,14 +454,18 @@ export default function ShoppingPage() {
         )}
       </div>
 
-      {/* Checked Items */}
-      {checkedItems.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', marginTop: 'var(--space-2)' }}>
-          <h2 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-            Purchased ({checkedItems.length})
-          </h2>
+      {/* Purchased Items ("Purchased") */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', marginTop: 'var(--space-2)' }}>
+        <h2 style={{ fontSize: '15px', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+          Purchased ({checkedItems.length})
+        </h2>
 
-          {checkedItems.map((item) => (
+        {checkedItems.length === 0 ? (
+          <div style={{ padding: '16px', textAlign: 'center', color: 'var(--color-text-tertiary)', fontSize: '13px' }}>
+            No purchased items yet.
+          </div>
+        ) : (
+          checkedItems.map((item) => (
             <Card
               key={item.id}
               variant="subtle"
@@ -304,11 +474,12 @@ export default function ShoppingPage() {
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 padding: '10px 16px',
-                opacity: 0.75,
-                gap: '12px'
+                opacity: 0.9,
+                gap: '12px',
+                flexWrap: 'wrap'
               }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0, flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0, flex: '1 1 200px' }}>
                 <div
                   style={{
                     width: '28px',
@@ -334,17 +505,136 @@ export default function ShoppingPage() {
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                {/* Restore to Shopping List Action */}
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => handleRestoreItem(item)}
+                  style={{
+                    minHeight: '44px',
+                    padding: '0 14px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    color: 'var(--color-primary-900)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                  aria-label={`Restore ${item.name} to Shopping List`}
+                >
+                  <RotateCcw size={14} />
+                  <span>Restore to Shopping List</span>
+                </Button>
+
                 <button
-                  onClick={() => handleDeleteItem(item.id)}
-                  className="touch-target"
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', padding: '6px' }}
+                  onClick={() => openEditModal(item)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-secondary)', padding: '10px', minWidth: '44px', minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                  aria-label={`Edit ${item.name}`}
+                  title="Edit Record"
+                >
+                  <Edit2 size={15} />
+                </button>
+
+                <button
+                  onClick={() => handleDeleteItem(item.id, item.name)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', padding: '10px', minWidth: '44px', minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                   aria-label={`Delete ${item.name}`}
+                  title="Delete Purchase Record"
                 >
                   <Trash2 size={16} />
                 </button>
               </div>
             </Card>
-          ))}
+          ))
+        )}
+      </div>
+
+      {/* Edit Item Modal */}
+      {editingItem && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: '16px'
+          }}
+        >
+          <Card style={{ maxWidth: '480px', width: '100%', padding: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ fontSize: '16px', fontWeight: 700, color: 'var(--color-primary-900)' }}>
+                Edit Shopping Item
+              </h3>
+              <button
+                onClick={() => setEditingItem(null)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px' }}
+                aria-label="Close modal"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEdit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '4px' }}>
+                  Item Name *
+                </label>
+                <Input
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '4px' }}>
+                    Quantity
+                  </label>
+                  <Input
+                    type="number"
+                    step="0.1"
+                    value={editQty}
+                    onChange={(e) => setEditQty(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '4px' }}>
+                    Unit
+                  </label>
+                  <Input
+                    value={editUnit}
+                    onChange={(e) => setEditUnit(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '4px' }}>
+                  Notes / Brand preference
+                </label>
+                <Input
+                  placeholder="e.g. Extra virgin, organic"
+                  value={editNotes}
+                  onChange={(e) => setEditNotes(e.target.value)}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
+                <Button type="button" variant="secondary" onClick={() => setEditingItem(null)} style={{ minHeight: '44px' }}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isSavingEdit} style={{ minHeight: '44px' }}>
+                  {isSavingEdit ? 'Saving...' : 'Save Changes'}
+                </Button>
+              </div>
+            </form>
+          </Card>
         </div>
       )}
     </div>

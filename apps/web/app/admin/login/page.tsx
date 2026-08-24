@@ -27,24 +27,26 @@ function AdminLoginForm() {
     try {
       // 1. Authenticate using the single centralized auth endpoint
       const response = await apiClient.post<any>('/auth/login', {
-        email: email.trim().toLowerCase(),
+        email: email.trim(),
         password: password
       });
 
       const accessToken = response?.access_token || response?.token;
       const refreshToken = response?.refresh_token;
 
-      if (accessToken) {
-        apiClient.setTokens({
-          access_token: accessToken,
-          refresh_token: refreshToken
-        });
+      if (!accessToken) {
+        throw new Error('Invalid email or password.');
       }
+
+      apiClient.setTokens({
+        access_token: accessToken,
+        refresh_token: refreshToken
+      });
 
       // 2. Authoritative identity and platform role check
       const profile = await apiClient.get<any>('/users/me');
 
-      const isSuper = Boolean(profile?.is_super_admin || profile?.system_role === 'SUPER_ADMIN');
+      const isSuper = Boolean(profile?.is_super_admin === true || profile?.system_role === 'SUPER_ADMIN');
 
       if (!isSuper) {
         // Clear tokens from admin scope if not authorized
@@ -60,12 +62,19 @@ function AdminLoginForm() {
       router.replace(redirectTarget);
     } catch (err: any) {
       const msg = err?.message || '';
-      if (msg.includes('401') || msg.includes('Invalid') || msg.includes('credentials') || msg.includes('password')) {
-        setErrorMessage('Invalid platform administrator email or password.');
+      if (
+        msg.includes('401') ||
+        msg.includes('Invalid') ||
+        msg.includes('credentials') ||
+        msg.includes('password') ||
+        msg.includes('Unauthorized') ||
+        msg.includes('not found')
+      ) {
+        setErrorMessage('Invalid email or password.');
       } else if (msg.includes('429') || msg.includes('rate limit')) {
         setErrorMessage('Too many sign-in attempts. Please try again in a few moments.');
       } else {
-        setErrorMessage(msg || 'An error occurred during platform authentication. Please try again.');
+        setErrorMessage(msg || 'An error occurred during authentication. Please try again.');
       }
     } finally {
       setIsLoading(false);

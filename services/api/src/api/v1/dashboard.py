@@ -55,6 +55,10 @@ def get_time_period_and_greeting(hour: int) -> tuple[str, str]:
         return "night", "Good night"
 
 
+def get_time_greeting(hour: int) -> str:
+    return get_time_period_and_greeting(hour)[1]
+
+
 def format_time_ago(dt: datetime) -> str:
     now = datetime.now(timezone.utc)
     if dt.tzinfo is None:

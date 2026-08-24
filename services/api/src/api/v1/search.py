@@ -18,6 +18,7 @@ from src.infrastructure.database.models import (
     TaskModel,
     UserModel
 )
+from src.domain.permissions import has_permission
 from src.schemas.common import ApiSuccessResponse
 from src.schemas.search import SearchResultItemDTO, UnifiedSearchResponse
 
@@ -32,7 +33,12 @@ async def unified_home_search(
     home_ctx: HomeContext = Depends(require_home_permission("home:view")),
     db: AsyncSession = Depends(get_db),
 ):
-    query_clean = q.strip()
+    if hasattr(domain, "default"):
+        domain = domain.default
+    if hasattr(limit_per_domain, "default"):
+        limit_per_domain = limit_per_domain.default or 5
+
+    query_clean = q.strip() if isinstance(q, str) else str(getattr(q, "default", ""))
     term = f"%{query_clean}%"
 
     results: List[SearchResultItemDTO] = []
@@ -127,7 +133,6 @@ async def unified_home_search(
                 LocationModel.deleted_at.is_(None),
                 or_(
                     LocationModel.name.ilike(term),
-                    LocationModel.path.ilike(term),
                     LocationModel.description.ilike(term)
                 )
             )
@@ -140,8 +145,8 @@ async def unified_home_search(
                     id=l.id,
                     domain="LOCATION",
                     title=l.name,
-                    subtitle=f"Path: {l.path} • Type: {l.location_type}",
-                    location_path=l.path,
+                    subtitle=f"Type: {l.location_type}",
+                    location_path=l.name,
                     status="ACTIVE",
                     relevance=0.8,
                     navigation_target=f"/locations/{l.id}"
@@ -164,17 +169,17 @@ async def unified_home_search(
         )
         shop_items = (await db.execute(shop_q)).scalars().all()
         for s in shop_items:
-            check_str = "Purchased" if s.is_checked else "To Buy"
+            check_str = "Purchased" if getattr(s, "status", "") == "PURCHASED" else "To Buy"
             results.append(
                 SearchResultItemDTO(
                     id=s.id,
                     domain="PURCHASE",
                     title=s.name,
-                    subtitle=f"{s.quantity} {s.unit} • Priority: {s.priority}",
+                    subtitle=f"{s.quantity} {s.unit}",
                     status=check_str,
                     relevance=0.7,
                     navigation_target="/purchase-list",
-                    meta_info={"is_checked": s.is_checked, "priority": s.priority}
+                    meta_info={"status": s.status}
                 )
             )
         domain_counts["PURCHASE"] = len(shop_items)
@@ -183,7 +188,6 @@ async def unified_home_search(
     if not domain or domain == "TASK":
         task_q = (
             select(TaskModel)
-            .options(selectinload(TaskModel.assignee))
             .where(
                 TaskModel.home_id == home_ctx.home_id,
                 TaskModel.deleted_at.is_(None),
@@ -197,13 +201,12 @@ async def unified_home_search(
         task_items = (await db.execute(task_q)).scalars().all()
         for t in task_items:
             due_str = f" • Due: {t.due_date}" if t.due_date else ""
-            assignee_str = f" • Assigned: {t.assignee.profile.display_name}" if t.assignee and t.assignee.profile else ""
             results.append(
                 SearchResultItemDTO(
                     id=t.id,
                     domain="TASK",
                     title=t.title,
-                    subtitle=f"Status: {t.status}{due_str}{assignee_str}",
+                    subtitle=f"Status: {t.status}{due_str}",
                     status=t.status,
                     relevance=0.7,
                     navigation_target=f"/tasks/{t.id}",
@@ -213,7 +216,7 @@ async def unified_home_search(
         domain_counts["TASK"] = len(task_items)
 
     # 6. Search Bills & Financial Records
-    if not domain or domain == "BILL":
+    if (not domain or domain == "BILL") and has_permission(home_ctx.role, "bills:view"):
         bill_q = (
             select(BillModel)
             .where(

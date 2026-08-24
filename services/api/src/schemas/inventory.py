@@ -120,7 +120,7 @@ class LocationTreeDTO(LocationDTO):
 class CreateLocationRequest(BaseModel):
     parent_id: Optional[UUID] = None
     name: str = Field(..., min_length=1, max_length=120)
-    location_type: str = Field(default="ZONE", max_length=32)
+    location_type: str = Field(default="ZONE", max_length=64)
     description: Optional[str] = Field(None, max_length=1000)
     icon: Optional[str] = Field(None, max_length=50)
     sort_order: int = Field(default=0, ge=0)
@@ -129,7 +129,7 @@ class CreateLocationRequest(BaseModel):
 class UpdateLocationRequest(BaseModel):
     parent_id: Optional[UUID] = None
     name: Optional[str] = Field(None, min_length=1, max_length=120)
-    location_type: Optional[str] = Field(None, max_length=32)
+    location_type: Optional[str] = Field(None, max_length=64)
     description: Optional[str] = Field(None, max_length=1000)
     icon: Optional[str] = Field(None, max_length=50)
     sort_order: Optional[int] = Field(None, ge=0)
@@ -167,6 +167,26 @@ class InventoryItemDTO(BaseModel):
     status: str = "GOOD"  # GOOD, LOW, OUT_OF_STOCK
     expiry_status: str = "NORMAL"  # NORMAL, EXPIRING_SOON, EXPIRED
     notes: Optional[str] = None
+
+    # Extended Asset Tracking & Home Memory
+    brand: Optional[str] = None
+    model_number: Optional[str] = None
+    serial_number: Optional[str] = None
+    barcode: Optional[str] = None
+    qr_code_identifier: Optional[str] = None
+    purchase_date: Optional[date] = None
+    purchase_price: Optional[Decimal] = None
+    purchase_store: Optional[str] = None
+    warranty_expiry_date: Optional[date] = None
+    warranty_status: Optional[str] = "NO_WARRANTY"  # ACTIVE, EXPIRING_SOON, EXPIRED, NO_WARRANTY
+    warranty_notes: Optional[str] = None
+    photo_url: Optional[str] = None
+    receipt_url: Optional[str] = None
+    manual_url: Optional[str] = None
+    last_serviced_at: Optional[date] = None
+    next_service_due_at: Optional[date] = None
+    service_notes: Optional[str] = None
+
     created_by: Optional[UUID] = None
     created_at: datetime
     updated_at: datetime
@@ -187,6 +207,24 @@ class CreateInventoryItemRequest(BaseModel):
     condition: Optional[str] = Field(None, max_length=32)
     expiry_date: Optional[date] = None
     notes: Optional[str] = Field(None, max_length=1000)
+
+    # Extended Asset Tracking & Home Memory
+    brand: Optional[str] = Field(None, max_length=100)
+    model_number: Optional[str] = Field(None, max_length=100)
+    serial_number: Optional[str] = Field(None, max_length=120)
+    barcode: Optional[str] = Field(None, max_length=100)
+    qr_code_identifier: Optional[str] = Field(None, max_length=120)
+    purchase_date: Optional[date] = None
+    purchase_price: Optional[Decimal] = Field(None, ge=0)
+    purchase_store: Optional[str] = Field(None, max_length=150)
+    warranty_expiry_date: Optional[date] = None
+    warranty_notes: Optional[str] = Field(None, max_length=1000)
+    photo_url: Optional[str] = Field(None, max_length=512)
+    receipt_url: Optional[str] = Field(None, max_length=512)
+    manual_url: Optional[str] = Field(None, max_length=512)
+    last_serviced_at: Optional[date] = None
+    next_service_due_at: Optional[date] = None
+    service_notes: Optional[str] = Field(None, max_length=1000)
 
     @field_validator("name")
     @classmethod
@@ -211,6 +249,36 @@ class UpdateInventoryItemRequest(BaseModel):
     condition: Optional[str] = Field(None, max_length=32)
     expiry_date: Optional[date] = None
     notes: Optional[str] = Field(None, max_length=1000)
+
+    # Extended Asset Tracking & Home Memory
+    brand: Optional[str] = Field(None, max_length=100)
+    model_number: Optional[str] = Field(None, max_length=100)
+    serial_number: Optional[str] = Field(None, max_length=120)
+    barcode: Optional[str] = Field(None, max_length=100)
+    qr_code_identifier: Optional[str] = Field(None, max_length=120)
+    purchase_date: Optional[date] = None
+    purchase_price: Optional[Decimal] = Field(None, ge=0)
+    purchase_store: Optional[str] = Field(None, max_length=150)
+    warranty_expiry_date: Optional[date] = None
+    warranty_notes: Optional[str] = Field(None, max_length=1000)
+    photo_url: Optional[str] = Field(None, max_length=512)
+    receipt_url: Optional[str] = Field(None, max_length=512)
+    manual_url: Optional[str] = Field(None, max_length=512)
+    last_serviced_at: Optional[date] = None
+    next_service_due_at: Optional[date] = None
+    service_notes: Optional[str] = Field(None, max_length=1000)
+
+
+class QRLabelResponse(BaseModel):
+    item_id: UUID
+    home_id: UUID
+    item_name: str
+    item_type: str
+    location_path: Optional[str] = None
+    serial_number: Optional[str] = None
+    barcode: Optional[str] = None
+    qr_payload: str
+    generated_at: datetime
 
 
 # ==============================================================================

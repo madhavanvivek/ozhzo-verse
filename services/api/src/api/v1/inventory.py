@@ -1,8 +1,7 @@
-import math
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import List, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
@@ -41,7 +40,8 @@ from src.schemas.inventory import (
     StockMovementDTO,
     StockMovementRequest,
     UpdateCategoryRequest,
-    UpdateInventoryItemRequest
+    UpdateInventoryItemRequest,
+    QRLabelResponse
 )
 
 router = APIRouter(prefix="/homes/{home_id}/inventory", tags=["Inventory & Assets"])
@@ -64,6 +64,71 @@ def calculate_expiry_status(expiry_date: Optional[date]) -> str:
     if expiry_date <= today + timedelta(days=7):
         return "EXPIRING_SOON"
     return "NORMAL"
+
+
+def calculate_warranty_status(warranty_expiry_date: Optional[date]) -> str:
+    if not warranty_expiry_date:
+        return "NO_WARRANTY"
+    today = date.today()
+    if warranty_expiry_date < today:
+        return "EXPIRED"
+    if warranty_expiry_date <= today + timedelta(days=30):
+        return "EXPIRING_SOON"
+    return "ACTIVE"
+
+
+def to_inventory_item_dto(item: InventoryItemModel, path_map: Optional[dict] = None, cat_name: Optional[str] = None) -> InventoryItemDTO:
+    loc_path = path_map.get(item.location_id) if (path_map and item.location_id) else item.location_path
+    resolved_cat_name = cat_name or (item.category.name if getattr(item, "category", None) else None)
+    now = datetime.now(timezone.utc)
+    return InventoryItemDTO(
+        id=item.id or uuid4(),
+        home_id=item.home_id,
+        template_id=item.template_id,
+        category_id=item.category_id,
+        category_name=resolved_cat_name,
+        location_id=item.location_id,
+        location_path=loc_path,
+        item_type=item.item_type or "CONSUMABLE",
+        name=item.name,
+        description=item.description,
+        quantity=item.quantity if item.quantity is not None else Decimal("1.000"),
+        unit=item.unit or "pcs",
+        min_threshold=item.min_threshold,
+        preferred_quantity=item.preferred_quantity,
+        max_quantity=item.max_quantity,
+        condition=item.condition,
+        asset_status=item.asset_status or "AVAILABLE",
+        current_holder_name=item.current_holder_name,
+        current_holder_user_id=item.current_holder_user_id,
+        last_seen_at=item.last_seen_at,
+        last_seen_by=item.last_seen_by,
+        last_seen_location_id=item.last_seen_location_id,
+        expiry_date=item.expiry_date,
+        status=item.status or "GOOD",
+        expiry_status=item.expiry_status or "NORMAL",
+        notes=item.notes,
+        brand=item.brand,
+        model_number=item.model_number,
+        serial_number=item.serial_number,
+        barcode=item.barcode,
+        qr_code_identifier=item.qr_code_identifier,
+        purchase_date=item.purchase_date,
+        purchase_price=item.purchase_price,
+        purchase_store=item.purchase_store,
+        warranty_expiry_date=item.warranty_expiry_date,
+        warranty_status=calculate_warranty_status(item.warranty_expiry_date),
+        warranty_notes=item.warranty_notes,
+        photo_url=item.photo_url,
+        receipt_url=item.receipt_url,
+        manual_url=item.manual_url,
+        last_serviced_at=item.last_serviced_at,
+        next_service_due_at=item.next_service_due_at,
+        service_notes=item.service_notes,
+        created_by=item.created_by,
+        created_at=item.created_at or now,
+        updated_at=item.updated_at or now
+    )
 
 
 # ==============================================================================
@@ -152,6 +217,7 @@ async def create_category(
 
 
 # ==============================================================================
+# ==============================================================================
 # Items & Assets API
 # ==============================================================================
 
@@ -162,6 +228,8 @@ async def list_inventory_items(
     location_id: Optional[UUID] = Query(None),
     status: Optional[str] = Query(None),
     asset_status: Optional[str] = Query(None),
+    barcode: Optional[str] = Query(None),
+    serial_number: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
     sort_by: str = Query("name", pattern="^(name|quantity|expiry_date|created_at)$"),
     order: str = Query("asc", pattern="^(asc|desc)$"),
@@ -185,6 +253,10 @@ async def list_inventory_items(
         filters.append(InventoryItemModel.status == status.upper())
     if asset_status:
         filters.append(InventoryItemModel.asset_status == asset_status.upper())
+    if barcode:
+        filters.append(InventoryItemModel.barcode == barcode.strip())
+    if serial_number:
+        filters.append(InventoryItemModel.serial_number == serial_number.strip())
     if search:
         s = f"%{search.strip()}%"
         filters.append(
@@ -193,7 +265,11 @@ async def list_inventory_items(
                 InventoryItemModel.description.ilike(s),
                 InventoryItemModel.location_path.ilike(s),
                 InventoryItemModel.current_holder_name.ilike(s),
-                InventoryItemModel.notes.ilike(s)
+                InventoryItemModel.notes.ilike(s),
+                InventoryItemModel.brand.ilike(s),
+                InventoryItemModel.model_number.ilike(s),
+                InventoryItemModel.serial_number.ilike(s),
+                InventoryItemModel.barcode.ilike(s),
             )
         )
 
@@ -218,37 +294,7 @@ async def list_inventory_items(
     path_map = await build_location_path_map(db, home_ctx.home_id)
 
     item_dtos = [
-        InventoryItemDTO(
-            id=i.id,
-            home_id=i.home_id,
-            template_id=i.template_id,
-            category_id=i.category_id,
-            category_name=i.category.name if i.category else None,
-            location_id=i.location_id,
-            location_path=path_map.get(i.location_id) if i.location_id else None,
-            item_type=i.item_type,
-            name=i.name,
-            description=i.description,
-            quantity=i.quantity,
-            unit=i.unit,
-            min_threshold=i.min_threshold,
-            preferred_quantity=i.preferred_quantity,
-            max_quantity=i.max_quantity,
-            condition=i.condition,
-            asset_status=i.asset_status,
-            current_holder_name=i.current_holder_name,
-            current_holder_user_id=i.current_holder_user_id,
-            last_seen_at=i.last_seen_at,
-            last_seen_by=i.last_seen_by,
-            last_seen_location_id=i.last_seen_location_id,
-            expiry_date=i.expiry_date,
-            status=i.status,
-            expiry_status=i.expiry_status,
-            notes=i.notes,
-            created_by=i.created_by,
-            created_at=i.created_at,
-            updated_at=i.updated_at
-        )
+        to_inventory_item_dto(i, path_map)
         for i in items
     ]
 
@@ -312,6 +358,23 @@ async def create_inventory_item(
         status=computed_status,
         expiry_status=computed_expiry,
         notes=payload.notes,
+        # Extended Asset Tracking & Home Memory
+        brand=payload.brand,
+        model_number=payload.model_number,
+        serial_number=payload.serial_number,
+        barcode=payload.barcode,
+        qr_code_identifier=payload.qr_code_identifier,
+        purchase_date=payload.purchase_date,
+        purchase_price=payload.purchase_price,
+        purchase_store=payload.purchase_store,
+        warranty_expiry_date=payload.warranty_expiry_date,
+        warranty_notes=payload.warranty_notes,
+        photo_url=payload.photo_url,
+        receipt_url=payload.receipt_url,
+        manual_url=payload.manual_url,
+        last_serviced_at=payload.last_serviced_at,
+        next_service_due_at=payload.next_service_due_at,
+        service_notes=payload.service_notes,
         created_by=home_ctx.user.id
     )
     db.add(new_item)
@@ -354,37 +417,7 @@ async def create_inventory_item(
             cat_name = cat.name
 
     return ApiSuccessResponse(
-        data=InventoryItemDTO(
-            id=new_item.id,
-            home_id=new_item.home_id,
-            template_id=new_item.template_id,
-            category_id=new_item.category_id,
-            category_name=cat_name,
-            location_id=new_item.location_id,
-            location_path=new_item.location_path,
-            item_type=new_item.item_type,
-            name=new_item.name,
-            description=new_item.description,
-            quantity=new_item.quantity,
-            unit=new_item.unit,
-            min_threshold=new_item.min_threshold,
-            preferred_quantity=new_item.preferred_quantity,
-            max_quantity=new_item.max_quantity,
-            condition=new_item.condition,
-            asset_status=new_item.asset_status,
-            current_holder_name=new_item.current_holder_name,
-            current_holder_user_id=new_item.current_holder_user_id,
-            last_seen_at=new_item.last_seen_at,
-            last_seen_by=new_item.last_seen_by,
-            last_seen_location_id=new_item.last_seen_location_id,
-            expiry_date=new_item.expiry_date,
-            status=new_item.status,
-            expiry_status=new_item.expiry_status,
-            notes=new_item.notes,
-            created_by=new_item.created_by,
-            created_at=new_item.created_at,
-            updated_at=new_item.updated_at
-        )
+        data=to_inventory_item_dto(new_item, {new_item.location_id: loc_path} if new_item.location_id else None, cat_name)
     )
 
 
@@ -413,38 +446,41 @@ async def get_inventory_item(
         raise HTTPException(status_code=404, detail="Inventory item not found.")
 
     path_map = await build_location_path_map(db, home_ctx.home_id)
+    return ApiSuccessResponse(data=to_inventory_item_dto(item, path_map))
+
+
+@router.get("/items/{item_id}/qr-label", response_model=ApiSuccessResponse[QRLabelResponse])
+async def get_item_qr_label(
+    item_id: UUID,
+    home_ctx: HomeContext = Depends(require_home_permission("inventory:view")),
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(InventoryItemModel).where(
+        InventoryItemModel.id == item_id,
+        InventoryItemModel.home_id == home_ctx.home_id,
+        InventoryItemModel.deleted_at == None
+    )
+    result = await db.execute(query)
+    item = result.scalar_one_or_none()
+
+    if not item:
+        raise HTTPException(status_code=404, detail="Inventory item not found.")
+
+    path_map = await build_location_path_map(db, home_ctx.home_id)
+    loc_path = path_map.get(item.location_id) if item.location_id else "Unassigned"
+    qr_payload = item.qr_code_identifier or f"OZHZO:ASSET:{home_ctx.home_id}:{item.id}"
 
     return ApiSuccessResponse(
-        data=InventoryItemDTO(
-            id=item.id,
+        data=QRLabelResponse(
+            item_id=item.id,
             home_id=item.home_id,
-            template_id=item.template_id,
-            category_id=item.category_id,
-            category_name=item.category.name if item.category else None,
-            location_id=item.location_id,
-            location_path=path_map.get(item.location_id) if item.location_id else None,
+            item_name=item.name,
             item_type=item.item_type,
-            name=item.name,
-            description=item.description,
-            quantity=item.quantity,
-            unit=item.unit,
-            min_threshold=item.min_threshold,
-            preferred_quantity=item.preferred_quantity,
-            max_quantity=item.max_quantity,
-            condition=item.condition,
-            asset_status=item.asset_status,
-            current_holder_name=item.current_holder_name,
-            current_holder_user_id=item.current_holder_user_id,
-            last_seen_at=item.last_seen_at,
-            last_seen_by=item.last_seen_by,
-            last_seen_location_id=item.last_seen_location_id,
-            expiry_date=item.expiry_date,
-            status=item.status,
-            expiry_status=item.expiry_status,
-            notes=item.notes,
-            created_by=item.created_by,
-            created_at=item.created_at,
-            updated_at=item.updated_at
+            location_path=loc_path,
+            serial_number=item.serial_number,
+            barcode=item.barcode,
+            qr_payload=qr_payload,
+            generated_at=datetime.now(timezone.utc)
         )
     )
 
@@ -490,6 +526,40 @@ async def update_inventory_item(
     if payload.notes is not None:
         item.notes = payload.notes
 
+    # Extended Asset Tracking & Home Memory
+    if payload.brand is not None:
+        item.brand = payload.brand
+    if payload.model_number is not None:
+        item.model_number = payload.model_number
+    if payload.serial_number is not None:
+        item.serial_number = payload.serial_number
+    if payload.barcode is not None:
+        item.barcode = payload.barcode
+    if payload.qr_code_identifier is not None:
+        item.qr_code_identifier = payload.qr_code_identifier
+    if payload.purchase_date is not None:
+        item.purchase_date = payload.purchase_date
+    if payload.purchase_price is not None:
+        item.purchase_price = payload.purchase_price
+    if payload.purchase_store is not None:
+        item.purchase_store = payload.purchase_store
+    if payload.warranty_expiry_date is not None:
+        item.warranty_expiry_date = payload.warranty_expiry_date
+    if payload.warranty_notes is not None:
+        item.warranty_notes = payload.warranty_notes
+    if payload.photo_url is not None:
+        item.photo_url = payload.photo_url
+    if payload.receipt_url is not None:
+        item.receipt_url = payload.receipt_url
+    if payload.manual_url is not None:
+        item.manual_url = payload.manual_url
+    if payload.last_serviced_at is not None:
+        item.last_serviced_at = payload.last_serviced_at
+    if payload.next_service_due_at is not None:
+        item.next_service_due_at = payload.next_service_due_at
+    if payload.service_notes is not None:
+        item.service_notes = payload.service_notes
+
     # If quantity is updated directly, create ADJUST movement
     if payload.quantity is not None and payload.quantity != item.quantity:
         delta = payload.quantity - item.quantity
@@ -519,39 +589,7 @@ async def update_inventory_item(
         if cat:
             cat_name = cat.name
 
-    return ApiSuccessResponse(
-        data=InventoryItemDTO(
-            id=item.id,
-            home_id=item.home_id,
-            template_id=item.template_id,
-            category_id=item.category_id,
-            category_name=cat_name,
-            location_id=item.location_id,
-            location_path=path_map.get(item.location_id) if item.location_id else None,
-            item_type=item.item_type,
-            name=item.name,
-            description=item.description,
-            quantity=item.quantity,
-            unit=item.unit,
-            min_threshold=item.min_threshold,
-            preferred_quantity=item.preferred_quantity,
-            max_quantity=item.max_quantity,
-            condition=item.condition,
-            asset_status=item.asset_status,
-            current_holder_name=item.current_holder_name,
-            current_holder_user_id=item.current_holder_user_id,
-            last_seen_at=item.last_seen_at,
-            last_seen_by=item.last_seen_by,
-            last_seen_location_id=item.last_seen_location_id,
-            expiry_date=item.expiry_date,
-            status=item.status,
-            expiry_status=item.expiry_status,
-            notes=item.notes,
-            created_by=item.created_by,
-            created_at=item.created_at,
-            updated_at=item.updated_at
-        )
-    )
+    return ApiSuccessResponse(data=to_inventory_item_dto(item, path_map, cat_name))
 
 
 @router.delete("/items/{item_id}", response_model=ApiSuccessResponse[MessageResponse])
@@ -649,38 +687,7 @@ async def move_inventory_item(
         if cat:
             cat_name = cat.name
 
-    return ApiSuccessResponse(
-        data=InventoryItemDTO(
-            id=item.id,
-            home_id=item.home_id,
-            category_id=item.category_id,
-            category_name=cat_name,
-            location_id=item.location_id,
-            location_path=item.location_path,
-            item_type=item.item_type,
-            name=item.name,
-            description=item.description,
-            quantity=item.quantity,
-            unit=item.unit,
-            min_threshold=item.min_threshold,
-            preferred_quantity=item.preferred_quantity,
-            max_quantity=item.max_quantity,
-            condition=item.condition,
-            asset_status=item.asset_status,
-            current_holder_name=item.current_holder_name,
-            current_holder_user_id=item.current_holder_user_id,
-            last_seen_at=item.last_seen_at,
-            last_seen_by=item.last_seen_by,
-            last_seen_location_id=item.last_seen_location_id,
-            expiry_date=item.expiry_date,
-            status=item.status,
-            expiry_status=item.expiry_status,
-            notes=item.notes,
-            created_by=item.created_by,
-            created_at=item.created_at,
-            updated_at=item.updated_at
-        )
-    )
+    return ApiSuccessResponse(data=to_inventory_item_dto(item, path_map, cat_name))
 
 
 @router.get("/items/{item_id}/location-history", response_model=ApiSuccessResponse[List[LocationMovementDTO]])

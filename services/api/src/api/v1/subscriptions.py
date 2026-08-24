@@ -138,6 +138,9 @@ async def bootstrap_default_subscription_data(db: AsyncSession) -> SubscriptionP
     return plan
 
 
+get_or_create_default_plan = bootstrap_default_subscription_data
+
+
 async def get_or_init_home_subscription(home_id: UUID, db: AsyncSession) -> SubscriptionModel:
     query = (
         select(SubscriptionModel)

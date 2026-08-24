@@ -371,6 +371,73 @@ async def mark_item_as_purchased(
     )
 
 
+@router.post("/purchase-list/{item_id}/restore", response_model=ApiSuccessResponse[PurchaseItemDTO])
+async def restore_purchased_item(
+    item_id: UUID,
+    home_ctx: HomeContext = Depends(require_home_permission("shopping:check")),
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis_client),
+):
+    """
+    Restore a PURCHASED item back to PENDING (To Buy) on the active Shopping List.
+    Preserves item identity, notes, quantity, unit, and timestamps.
+    """
+    query = select(PurchaseItemModel).where(
+        PurchaseItemModel.id == item_id,
+        PurchaseItemModel.home_id == home_ctx.home_id,
+        PurchaseItemModel.deleted_at == None
+    )
+    item = (await db.execute(query)).scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Purchase item not found.")
+
+    if item.status == "PENDING":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Item is already active on the shopping list."
+        )
+
+    now = datetime.now(timezone.utc)
+    item.status = "PENDING"
+    item.purchased_by = None
+    item.purchased_at = None
+    item.restocked_to_inventory = False
+    item.version += 1
+    item.updated_at = now
+
+    await db.commit()
+    await db.refresh(item)
+
+    try:
+        await redis_client.publish(
+            f"home:{home_ctx.home_id}:purchase_list",
+            f'{{"event":"ITEM_RESTORED","item_id":"{item.id}","name":"{item.name}"}}'
+        )
+    except Exception:
+        pass
+
+    return ApiSuccessResponse(
+        data=PurchaseItemDTO(
+            id=item.id,
+            home_id=item.home_id,
+            inventory_item_id=item.inventory_item_id,
+            name=item.name,
+            quantity=item.quantity,
+            unit=item.unit,
+            notes=item.notes,
+            status=item.status,
+            added_by=item.added_by,
+            purchased_by=None,
+            purchased_at=None,
+            restocked_to_inventory=False,
+            version=item.version,
+            created_at=item.created_at,
+            updated_at=item.updated_at
+        ),
+        message=f"'{item.name}' has been restored to your shopping list."
+    )
+
+
 # ==============================================================================
 # Purchase History & Suggestions
 # ==============================================================================

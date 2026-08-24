@@ -73,7 +73,12 @@ ROLE_PERMISSIONS_MAP: Dict[str, Set[str]] = {
 
 def has_permission(role: str, permission: str) -> bool:
     granted_permissions = ROLE_PERMISSIONS_MAP.get(role.upper(), set())
-    return permission in granted_permissions
+    if permission in granted_permissions:
+        return True
+    if permission.startswith("events:"):
+        cal_perm = "calendar:" + permission[7:]
+        return cal_perm in granted_permissions
+    return False
 
 
 # Platform / System Role Definitions

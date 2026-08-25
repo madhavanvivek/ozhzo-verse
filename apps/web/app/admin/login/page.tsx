@@ -62,8 +62,13 @@ function AdminLoginForm() {
       }
 
       // 3. Authorized Super Admin -> redirect to Platform Console
-      router.replace(redirectTarget);
+      if (typeof window !== 'undefined') {
+        window.location.href = redirectTarget;
+      } else {
+        router.replace(redirectTarget);
+      }
     } catch (err: any) {
+      console.error('Admin login exception:', err);
       const msg = err?.message || '';
       if (
         msg.includes('401') ||

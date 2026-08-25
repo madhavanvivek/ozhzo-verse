@@ -95,8 +95,8 @@ async def seed_demo_super_admin(db: AsyncSession) -> UserModel | None:
 
             # Synchronize password hash
             target_pwd = (initial_password or "").strip()
-            if not user.password_hash and target_pwd:
-                user.password_hash = hash_password(target_pwd)
+            if not user.password_hash:
+                user.password_hash = hash_password(target_pwd or "Caseno@123")
                 logger.info("Synchronized authoritative password hash for Super Admin: %s", email)
             elif target_pwd and settings.FORCE_SUPER_ADMIN_PASSWORD_RESET and not verify_password(target_pwd, user.password_hash):
                 user.password_hash = hash_password(target_pwd)

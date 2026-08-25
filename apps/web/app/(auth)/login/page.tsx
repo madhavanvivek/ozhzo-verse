@@ -30,7 +30,7 @@ function LoginForm() {
     try {
       const payload = authMode === 'phone'
         ? { phone_number: `${countryCode}${phoneNumber.trim()}`, password }
-        : { email: email.trim(), password };
+        : { email: email.trim().toLowerCase(), password };
 
       const res = await apiClient.post<{ access_token: string; refresh_token?: string | null }>('/auth/login', payload);
 

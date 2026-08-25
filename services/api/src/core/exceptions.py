@@ -2,7 +2,7 @@ from typing import Any, Dict, Optional
 from fastapi import HTTPException
 
 
-class BaseDomainException(Exception):
+class BaseDomainException(HTTPException):
     def __init__(
         self,
         message: str,
@@ -10,7 +10,7 @@ class BaseDomainException(Exception):
         status_code: int = 400,
         details: Optional[Dict[str, Any]] = None,
     ):
-        super().__init__(message)
+        super().__init__(status_code=status_code, detail=message)
         self.message = message
         self.code = code
         self.status_code = status_code

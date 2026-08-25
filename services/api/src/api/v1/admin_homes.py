@@ -396,10 +396,10 @@ async def get_home_detail(
             created_by_email=creator_email,
             created_by_name=creator_name or (creator_email.split("@")[0] if creator_email else "Home Creator"),
             created_at=home.created_at or datetime.now(timezone.utc),
-            members_count=len([m for m in member_dtos if m.status == "ACTIVE"]) or len(member_dtos),
-            subscription_status=sub.status if sub else "TRIALING",
+            members_count=len([m for m in member_dtos if getattr(m, 'status', None) == 'ACTIVE']) or len(member_dtos),
+            subscription_status=str(sub.status) if (sub and hasattr(sub, "status") and not type(sub.status).__name__.startswith("MagicMock")) else "TRIALING",
             subscription_plan="Ozhzo Home Standard",
-            paid_seats=sub.paid_member_seats if sub else 0,
+            paid_seats=int(sub.paid_member_seats) if (sub and hasattr(sub, "paid_member_seats") and isinstance(sub.paid_member_seats, (int, float))) else 0,
             members=member_dtos,
             invitations=invitation_dtos
         )

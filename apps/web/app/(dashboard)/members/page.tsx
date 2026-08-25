@@ -92,6 +92,9 @@ export default function MembersPage() {
   const [newSelectedRole, setNewSelectedRole] = useState<string>('MEMBER');
   const [isSavingRole, setIsSavingRole] = useState(false);
 
+  // New Invite Showcase Modal State
+  const [createdInviteModal, setCreatedInviteModal] = useState<InvitationItem | null>(null);
+
   const loadData = async (showLoading = true) => {
     if (showLoading) setIsLoading(true);
     setError(null);
@@ -182,12 +185,14 @@ export default function MembersPage() {
       };
 
       const newInvite = await apiClient.post<InvitationItem>(`/homes/${activeHomeId}/invitations`, payload);
-      setPendingInvites(prev => [newInvite, ...prev]);
+      setCreatedInviteModal(newInvite);
+      setPendingInvites(prev => [newInvite, ...prev.filter(i => i.id !== newInvite.id)]);
       setInviteEmail('');
       setInvitePhone('');
-      const codeMsg = newInvite.invitation_code ? ` (Code: ${newInvite.invitation_code})` : '';
+      const inviteCode = newInvite.invitation_code || (newInvite as any).invite_code || (newInvite as any).code;
+      const codeMsg = inviteCode ? ` (Code: ${inviteCode})` : '';
       setInviteSuccess(`Invitation created successfully${codeMsg}. Share the link or code below with your family member.`);
-      setTimeout(() => setInviteSuccess(null), 6000);
+      setTimeout(() => setInviteSuccess(null), 8000);
       loadData(false);
     } catch (err: any) {
       console.error('Failed to create invitation:', err);
@@ -496,103 +501,211 @@ export default function MembersPage() {
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-            {pendingInvites.map((inv) => (
-              <div
-                key={inv.id}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '14px 16px',
-                  backgroundColor: 'var(--color-surface-subtle)',
-                  borderRadius: 'var(--radius-md)',
-                  flexWrap: 'wrap',
-                  gap: '12px'
-                }}
-              >
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
-                    {inv.email || inv.phone_number || 'Family Member Invitation'}
+            {pendingInvites.map((inv) => {
+              const code = inv.invitation_code || (inv as any).invite_code || (inv as any).code;
+              return (
+                <div
+                  key={inv.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '14px 16px',
+                    backgroundColor: 'var(--color-surface-subtle)',
+                    borderRadius: 'var(--radius-md)',
+                    flexWrap: 'wrap',
+                    gap: '12px'
+                  }}
+                >
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
+                      {inv.email || inv.phone_number || 'Family Member Invitation'}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <Badge variant={getRoleBadgeVariant(inv.role)}>
+                        {getRoleDisplayName(inv.role)}
+                      </Badge>
+                      <Badge variant="low-stock">
+                        {inv.status}
+                      </Badge>
+                      {code && (
+                        <span
+                          style={{
+                            fontSize: '13px',
+                            fontWeight: 700,
+                            backgroundColor: '#f0fdf4',
+                            padding: '3px 10px',
+                            borderRadius: '6px',
+                            border: '1px solid #bbf7d0',
+                            fontFamily: 'monospace',
+                            color: '#166534',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px'
+                          }}
+                        >
+                          <KeyRound size={13} />
+                          <span>Code:</span>
+                          <strong style={{ letterSpacing: '0.05em', fontSize: '13px' }}>{code}</strong>
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>
+                      Expires: {new Date(inv.expires_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </div>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                    <Badge variant={getRoleBadgeVariant(inv.role)}>
-                      {getRoleDisplayName(inv.role)}
-                    </Badge>
-                    <Badge variant="low-stock">
-                      {inv.status}
-                    </Badge>
-                    {inv.invitation_code && (
-                      <span
-                        style={{
-                          fontSize: '12px',
-                          fontWeight: 700,
-                          backgroundColor: 'var(--color-surface-card)',
-                          padding: '2px 8px',
-                          borderRadius: '4px',
-                          border: '1px solid var(--color-border-subtle)',
-                          fontFamily: 'monospace',
-                          color: 'var(--color-primary-900)'
-                        }}
-                      >
-                        Code: {inv.invitation_code}
-                      </span>
-                    )}
-                  </div>
-                  <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '2px' }}>
-                    Expires: {new Date(inv.expires_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
-                  </div>
-                </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                  {inv.invitation_code && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    {code && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => handleCopyCode(code)}
+                        style={{ minHeight: '38px', padding: '0 12px', fontSize: '12px', fontWeight: 600 }}
+                        title="Copy Invitation Code"
+                      >
+                        {copiedCode === code ? <Check size={14} color="var(--status-in-stock)" /> : <KeyRound size={14} />}
+                        <span>{copiedCode === code ? 'Code Copied' : 'Copy Code'}</span>
+                      </Button>
+                    )}
+
                     <Button
                       size="sm"
                       variant="secondary"
-                      onClick={() => handleCopyCode(inv.invitation_code!)}
-                      style={{ minHeight: '40px', padding: '0 10px', fontSize: '12px' }}
-                      title="Copy Invitation Code"
+                      onClick={() => handleCopyLink(inv.token)}
+                      style={{ minHeight: '38px', padding: '0 12px', fontSize: '12px', fontWeight: 600 }}
+                      title="Copy Invitation Link"
                     >
-                      {copiedCode === inv.invitation_code ? <Check size={14} color="var(--status-in-stock)" /> : <KeyRound size={14} />}
-                      <span>{copiedCode === inv.invitation_code ? 'Code Copied' : 'Copy Code'}</span>
+                      {copiedToken === inv.token ? <Check size={14} color="var(--status-in-stock)" /> : <Copy size={14} />}
+                      <span>{copiedToken === inv.token ? 'Link Copied' : 'Copy Link'}</span>
                     </Button>
-                  )}
 
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => handleResendInvite(inv.id)}
+                      disabled={actionInProgressId === inv.id}
+                      style={{ minHeight: '38px', padding: '0 8px' }}
+                      title="Resend / Extend Invitation"
+                    >
+                      <RefreshCw size={14} className={actionInProgressId === inv.id ? 'animate-spin' : ''} />
+                    </Button>
+
+                    <button
+                      onClick={() => handleCancelInvite(inv.id)}
+                      disabled={actionInProgressId === inv.id}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--status-overdue)', padding: '8px', minWidth: '38px', minHeight: '38px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                      aria-label="Revoke invitation"
+                      title="Revoke Invitation"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
+      {/* New Created Invitation Showcase Modal */}
+      {createdInviteModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Invitation Created"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.6)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1100,
+            padding: '16px'
+          }}
+        >
+          <Card style={{ maxWidth: '480px', width: '100%', padding: '24px', position: 'relative', border: '2px solid var(--color-primary-900)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div style={{ width: '32px', height: '32px', borderRadius: '50%', backgroundColor: '#f0fdf4', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#16a34a' }}>
+                  <Check size={18} />
+                </div>
+                <h3 style={{ fontSize: '17px', fontWeight: 700, color: 'var(--color-primary-900)' }}>
+                  Invitation Created!
+                </h3>
+              </div>
+              <button
+                onClick={() => setCreatedInviteModal(null)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px' }}
+                aria-label="Close modal"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '16px', lineHeight: 1.5 }}>
+              Share this invitation code or direct link with <strong>{createdInviteModal.email || createdInviteModal.phone_number || 'your family member'}</strong> so they can join your home workspace.
+            </p>
+
+            {/* Prominent Code Box */}
+            <div
+              style={{
+                backgroundColor: 'var(--color-surface-subtle)',
+                border: '2px dashed var(--color-border-strong)',
+                borderRadius: '8px',
+                padding: '16px',
+                textAlign: 'center',
+                marginBottom: '16px'
+              }}
+            >
+              <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '6px' }}>
+                Invitation Code
+              </div>
+              <div
+                style={{
+                  fontSize: '24px',
+                  fontWeight: 800,
+                  fontFamily: 'monospace',
+                  letterSpacing: '0.15em',
+                  color: 'var(--color-primary-900)',
+                  marginBottom: '12px'
+                }}
+              >
+                {createdInviteModal.invitation_code || (createdInviteModal as any).invite_code || (createdInviteModal as any).code || 'OZ-PENDING'}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'center', gap: '8px' }}>
+                {(createdInviteModal.invitation_code || (createdInviteModal as any).invite_code || (createdInviteModal as any).code) && (
                   <Button
                     size="sm"
                     variant="secondary"
-                    onClick={() => handleCopyLink(inv.token)}
-                    style={{ minHeight: '40px', padding: '0 10px', fontSize: '12px' }}
-                    title="Copy Invitation Link"
+                    onClick={() => handleCopyCode((createdInviteModal.invitation_code || (createdInviteModal as any).invite_code || (createdInviteModal as any).code)!)}
+                    style={{ minHeight: '38px', padding: '0 14px', fontSize: '13px', fontWeight: 600 }}
                   >
-                    {copiedToken === inv.token ? <Check size={14} color="var(--status-in-stock)" /> : <Copy size={14} />}
-                    <span>{copiedToken === inv.token ? 'Link Copied' : 'Copy Link'}</span>
+                    {copiedCode === (createdInviteModal.invitation_code || (createdInviteModal as any).invite_code || (createdInviteModal as any).code) ? <Check size={15} color="var(--status-in-stock)" /> : <KeyRound size={15} />}
+                    <span>{copiedCode === (createdInviteModal.invitation_code || (createdInviteModal as any).invite_code || (createdInviteModal as any).code) ? 'Code Copied' : 'Copy Code'}</span>
                   </Button>
+                )}
 
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => handleResendInvite(inv.id)}
-                    disabled={actionInProgressId === inv.id}
-                    style={{ minHeight: '40px', padding: '0 8px' }}
-                    title="Resend / Extend Invitation"
-                  >
-                    <RefreshCw size={14} className={actionInProgressId === inv.id ? 'animate-spin' : ''} />
-                  </Button>
-
-                  <button
-                    onClick={() => handleCancelInvite(inv.id)}
-                    disabled={actionInProgressId === inv.id}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--status-overdue)', padding: '8px', minWidth: '40px', minHeight: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                    aria-label="Revoke invitation"
-                    title="Revoke Invitation"
-                  >
-                    <X size={16} />
-                  </button>
-                </div>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={() => handleCopyLink(createdInviteModal.token)}
+                  style={{ minHeight: '38px', padding: '0 14px', fontSize: '13px', fontWeight: 600 }}
+                >
+                  {copiedToken === createdInviteModal.token ? <Check size={15} /> : <Copy size={15} />}
+                  <span>{copiedToken === createdInviteModal.token ? 'Link Copied' : 'Copy Link'}</span>
+                </Button>
               </div>
-            ))}
-          </div>
-        </Card>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <Button onClick={() => setCreatedInviteModal(null)} style={{ minHeight: '40px' }}>
+                Done
+              </Button>
+            </div>
+          </Card>
+        </div>
       )}
 
       {/* Change Member Role Modal */}

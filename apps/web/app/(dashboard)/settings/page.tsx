@@ -68,6 +68,9 @@ export default function HomeSettingsPage() {
     };
 
     loadHomeSettings();
+    const handleHomeChanged = () => loadHomeSettings();
+    window.addEventListener('home-changed', handleHomeChanged);
+    return () => window.removeEventListener('home-changed', handleHomeChanged);
   }, []);
 
   const handleSave = async (e: React.FormEvent) => {
@@ -119,7 +122,8 @@ export default function HomeSettingsPage() {
     }
   };
 
-  const isOwnerOrAdmin = homeDetail?.role === 'OWNER' || homeDetail?.role === 'HOME_ADMIN';
+  const roleUpper = (homeDetail?.role || '').toUpperCase();
+  const isOwnerOrAdmin = ['OWNER', 'HOME_ADMIN', 'ADMIN'].includes(roleUpper);
 
   if (isLoading) {
     return (

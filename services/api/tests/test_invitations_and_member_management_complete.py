@@ -544,8 +544,8 @@ async def test_17_super_admin_inspects_home_invitations():
     db.execute.side_effect = [
         mock_home_res,
         mock_mem_res,
-        mock_inv_res,
         mock_sub_res,
+        mock_inv_res,
     ]
 
     res = await get_home_detail(home_id=home_id, super_admin=super_admin, db=db)

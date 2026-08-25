@@ -49,8 +49,8 @@ def generate_invitation_code() -> str:
 
 async def check_home_member_seat_limit(home_id: UUID, db: AsyncSession):
     """Enforce member seat limits based on subscription plan allowance."""
-    # 1. Count active members
-    active_count = 0
+    # 1. Count active members and pending invitations
+    allocated_count = 0
     try:
         active_count_query = select(func.count(HomeMemberModel.id)).where(
             HomeMemberModel.home_id == home_id,
@@ -59,9 +59,18 @@ async def check_home_member_seat_limit(home_id: UUID, db: AsyncSession):
         cnt_res = await db.execute(active_count_query)
         val = cnt_res.scalar() if hasattr(cnt_res, "scalar") else getattr(cnt_res, "scalar_one", lambda: 0)()
         if isinstance(val, int):
-            active_count = val
+            allocated_count += val
+
+        pending_count_query = select(func.count(InvitationModel.id)).where(
+            InvitationModel.home_id == home_id,
+            InvitationModel.status == "PENDING"
+        )
+        p_res = await db.execute(pending_count_query)
+        p_val = p_res.scalar() if hasattr(p_res, "scalar") else getattr(p_res, "scalar_one", lambda: 0)()
+        if isinstance(p_val, int):
+            allocated_count += p_val
     except Exception:
-        active_count = 0
+        allocated_count = 0
 
     # 2. Query subscription if any
     sub_query = (
@@ -85,7 +94,7 @@ async def check_home_member_seat_limit(home_id: UUID, db: AsyncSession):
         # Default Free Tier allowance
         total_allowed = 5
 
-    if active_count >= total_allowed:
+    if allocated_count >= total_allowed:
         from src.core.exceptions import TierLimitExceededException
         raise TierLimitExceededException(
             resource="members",

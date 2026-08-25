@@ -787,7 +787,7 @@ async def get_calendar_projection(
         end_d = end_date.date()
         task_query = (
             select(TaskModel)
-            .options(selectinload(TaskModel.category), selectinload(TaskModel.assignee))
+            .options(selectinload(TaskModel.category))
             .where(
                 TaskModel.home_id == home_ctx.home_id,
                 TaskModel.deleted_at.is_(None),

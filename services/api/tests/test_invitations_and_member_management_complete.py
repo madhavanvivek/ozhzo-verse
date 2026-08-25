@@ -111,6 +111,8 @@ async def test_02_home_admin_creates_invitation(mock_admin_ctx):
 
     mock_count_res = MagicMock()
     mock_count_res.scalar.return_value = 2
+    mock_pending_res = MagicMock()
+    mock_pending_res.scalar.return_value = 0
     mock_sub_res = MagicMock()
     mock_sub_res.scalar_one_or_none.return_value = None
     mock_user_res = MagicMock()
@@ -118,6 +120,7 @@ async def test_02_home_admin_creates_invitation(mock_admin_ctx):
 
     db.execute.side_effect = [
         mock_count_res,
+        mock_pending_res,
         mock_sub_res,
         mock_user_res,
         mock_user_res,
@@ -157,6 +160,8 @@ async def test_03_existing_ozhzo_user_receives_in_app_notification(mock_admin_ct
 
     mock_count_res = MagicMock()
     mock_count_res.scalar.return_value = 2
+    mock_pending_res = MagicMock()
+    mock_pending_res.scalar.return_value = 0
     mock_sub_res = MagicMock()
     mock_sub_res.scalar_one_or_none.return_value = None
     mock_mem_res = MagicMock()
@@ -166,6 +171,7 @@ async def test_03_existing_ozhzo_user_receives_in_app_notification(mock_admin_ct
 
     db.execute.side_effect = [
         mock_count_res,
+        mock_pending_res,
         mock_sub_res,
         mock_mem_res,
         mock_user_res,

@@ -248,7 +248,7 @@ async def list_subscription_plans(
                 code=pf.feature.code,
                 name=pf.feature.name,
                 description=pf.feature.description,
-                is_enabled=pf.is_included
+                is_enabled=pf.is_enabled
             )
             for pf in getattr(p, "plan_features", []) if getattr(pf, "feature", None)
         ]

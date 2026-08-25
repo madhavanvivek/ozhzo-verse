@@ -28,7 +28,7 @@ function AdminLoginForm() {
       // 1. Authenticate using the single centralized auth endpoint
       const response = await apiClient.post<any>('/auth/login', {
         email: email.trim().toLowerCase(),
-        password: password
+        password: password.trim()
       });
 
       const accessToken = response?.access_token || response?.token;

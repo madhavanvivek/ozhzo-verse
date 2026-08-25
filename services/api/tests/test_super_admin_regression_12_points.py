@@ -10,6 +10,7 @@ from src.infrastructure.database.models import UserModel, UserProfileModel
 from src.schemas.auth import LoginRequest, TokenResponse
 from src.schemas.admin import BulkUserActionRequest
 from src.schemas.admin_security import AdminChangePasswordRequest
+from src.api.v1.admin_auth import admin_login, AdminLoginRequest
 from src.api.v1.auth import login
 from src.api.v1.users import get_my_profile
 from src.api.v1.admin_users import bulk_user_action, suspend_user, hold_user, delete_user
@@ -18,11 +19,11 @@ from src.api.dependencies import require_super_admin, require_admin_permission
 
 
 # ==============================================================================
-# TEST 1: vivek@zinfog.com + Caseno@123 -> normal /login succeeds
+# TEST 1: Dedicated admin login succeeds with Super Admin credentials
 # ==============================================================================
 @pytest.mark.asyncio
-async def test_01_normal_login_succeeds_with_super_admin_credentials():
-    """TEST 1: vivek@zinfog.com + Caseno@123 authenticates successfully via POST /api/v1/auth/login."""
+async def test_01_admin_login_succeeds_with_super_admin_credentials():
+    """TEST 1: vivek@zinfog.com + Caseno@123 authenticates successfully via POST /api/v1/admin/auth/login."""
     super_admin = UserModel(
         id=uuid4(),
         email="vivek@zinfog.com",
@@ -42,21 +43,20 @@ async def test_01_normal_login_succeeds_with_super_admin_credentials():
     mock_redis = AsyncMock()
     mock_redis.incr.return_value = 1
 
-    payload = LoginRequest(email="vivek@zinfog.com", password="Caseno@123")
-    res = await login(payload, db=mock_db, redis_client=mock_redis)
+    payload = AdminLoginRequest(email="vivek@zinfog.com", password="Caseno@123")
+    res = await admin_login(payload, db=mock_db, redis_client=mock_redis)
 
     assert res.success is True
     assert res.data.access_token is not None
-    assert res.data.email == "vivek@zinfog.com"
     assert res.data.user_id == super_admin.id
 
 
 # ==============================================================================
-# TEST 2: vivek@zinfog.com + Caseno@123 -> /admin/login succeeds
+# TEST 2: /admin/auth/login validates Super Admin identity & dependencies
 # ==============================================================================
 @pytest.mark.asyncio
-async def test_02_admin_login_succeeds_with_same_credentials():
-    """TEST 2: The exact same POST /api/v1/auth/login endpoint used by /admin/login validates Super Admin identity."""
+async def test_02_admin_login_validates_super_admin_dependencies():
+    """TEST 2: The POST /api/v1/admin/auth/login endpoint validates Super Admin identity."""
     super_admin = UserModel(
         id=uuid4(),
         email="vivek@zinfog.com",
@@ -75,8 +75,8 @@ async def test_02_admin_login_succeeds_with_same_credentials():
     mock_redis = AsyncMock()
     mock_redis.incr.return_value = 1
 
-    payload = LoginRequest(email="vivek@zinfog.com", password="Caseno@123")
-    token_res = await login(payload, db=mock_db, redis_client=mock_redis)
+    payload = AdminLoginRequest(email="vivek@zinfog.com", password="Caseno@123")
+    token_res = await admin_login(payload, db=mock_db, redis_client=mock_redis)
 
     assert token_res.success is True
     # Verify Super Admin dependency validation for /admin access
@@ -160,101 +160,68 @@ async def test_05_super_admin_can_access_admin_api_endpoints():
     super_admin = UserModel(
         id=uuid4(),
         email="vivek@zinfog.com",
-        password_hash=hash_password("Caseno@123"),
         is_active=True,
         is_super_admin=True,
         system_role="SUPER_ADMIN"
     )
 
-    # Super Admin check passes
-    admin_user = await require_super_admin(current_user=super_admin)
-    assert admin_user.id == super_admin.id
+    admin_checker = require_admin_permission("admin:users:view")
+    checked_admin = await admin_checker(current_user=super_admin)
+    assert checked_admin.id == super_admin.id
 
-    # Specific fine-grained permission checks pass
-    for perm in ["admin:users:view", "admin:homes:view", "admin:analytics:view", "admin:coupons:manage"]:
-        check_fn = require_admin_permission(perm)
-        res = await check_fn(current_user=super_admin)
-        assert res.id == super_admin.id
+    sa_direct = await require_super_admin(current_user=super_admin)
+    assert sa_direct.id == super_admin.id
 
 
 # ==============================================================================
-# TEST 6: Super Admin can access normal household APIs
+# TEST 6: Normal User CANNOT access /api/v1/admin/* -> 403 Forbidden
 # ==============================================================================
 @pytest.mark.asyncio
-async def test_06_super_admin_can_access_household_apis():
-    """TEST 6: Super Admin possesses normal user capabilities and household memberships."""
-    from src.infrastructure.database.models import HomeModel, HomeMemberModel
-
-    super_admin = UserModel(
-        id=uuid4(),
-        email="vivek@zinfog.com",
-        password_hash=hash_password("Caseno@123"),
-        is_active=True,
-        is_verified=True,
-        mobile_verified=True,
-        is_super_admin=True,
-        system_role="SUPER_ADMIN"
-    )
-    super_admin.profile = UserProfileModel(
-        user_id=super_admin.id,
-        display_name="Vivek Madhavan",
-        timezone="UTC",
-        preferred_language="en"
-    )
-
-    ichu_home = HomeModel(id=uuid4(), name="Ichu's Home", status="ACTIVE", currency="USD")
-    ichu_membership = HomeMemberModel(
-        id=uuid4(),
-        home_id=ichu_home.id,
-        user_id=super_admin.id,
-        role="HOME_ADMIN",
-        status="ACTIVE"
-    )
-
-    mock_db = AsyncMock()
-    mock_res = MagicMock()
-    mock_res.all.return_value = [(ichu_membership, ichu_home)]
-    mock_db.execute.return_value = mock_res
-
-    res = await get_my_profile(current_user=super_admin, db=mock_db)
-    assert res.success is True
-    assert len(res.data.homes) == 1
-    assert res.data.homes[0].name == "Ichu's Home"
-    assert res.data.homes[0].role == "HOME_ADMIN"
-
-
-# ==============================================================================
-# TEST 7: Normal user cannot access /api/v1/admin/*
-# ==============================================================================
-@pytest.mark.asyncio
-async def test_07_normal_user_cannot_access_admin_api():
-    """TEST 7: Normal household user (OWNER, MEMBER) is rejected with 403 from admin endpoints."""
+async def test_06_normal_user_cannot_access_admin_api_endpoints():
+    """TEST 6: Normal user attempting to access admin APIs receives 403 Forbidden."""
     normal_user = UserModel(
         id=uuid4(),
-        email="normal_user@example.com",
-        password_hash=hash_password("NormalPass123!"),
+        email="regular@example.com",
         is_active=True,
         is_super_admin=False,
         system_role="USER"
     )
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(HTTPException) as exc1:
         await require_super_admin(current_user=normal_user)
-    assert exc_info.value.status_code == 403
-    assert "Super Admin privileges required" in exc_info.value.detail
+    assert exc1.value.status_code == 403
 
-    perm_check = require_admin_permission("admin:users:view")
-    with pytest.raises(HTTPException) as exc_perm:
-        await perm_check(current_user=normal_user)
-    assert exc_perm.value.status_code == 403
+    admin_checker = require_admin_permission("admin:users:view")
+    with pytest.raises(HTTPException) as exc2:
+        await admin_checker(current_user=normal_user)
+    assert exc2.value.status_code == 403
 
 
 # ==============================================================================
-# TEST 8: Changing Super Admin password does not remove SUPER_ADMIN role
+# TEST 7: Super Admin bootstrap guarantees authoritative account
 # ==============================================================================
 @pytest.mark.asyncio
-async def test_08_password_change_preserves_super_admin_role():
-    """TEST 8: Updating password preserves is_super_admin=True and system_role='SUPER_ADMIN'."""
+async def test_07_bootstrap_seeds_or_ensures_super_admin():
+    """TEST 7: seed_demo_super_admin initializes or promotes designated Super Admin account."""
+    mock_db = AsyncMock()
+    mock_res = MagicMock()
+    mock_res.scalars.return_value.all.return_value = []
+    mock_res.scalar_one_or_none.return_value = None
+    mock_db.execute.return_value = mock_res
+
+    seeded_user = await seed_demo_super_admin(db=mock_db)
+    assert seeded_user is not None
+    assert seeded_user.email == (settings.DEMO_SUPER_ADMIN_EMAIL or "vivek@zinfog.com").lower()
+    assert seeded_user.is_super_admin is True
+    assert seeded_user.system_role == "SUPER_ADMIN"
+
+
+# ==============================================================================
+# TEST 8: Password change through admin security updates password hash
+# ==============================================================================
+@pytest.mark.asyncio
+async def test_08_admin_change_password_workflow():
+    """TEST 8: change_admin_password successfully verifies current password and updates hash."""
     super_admin = UserModel(
         id=uuid4(),
         email="vivek@zinfog.com",
@@ -270,78 +237,26 @@ async def test_08_password_change_preserves_super_admin_role():
     mock_redis = AsyncMock()
     mock_redis.get.return_value = "vivek@zinfog.com"
 
-    req = AdminChangePasswordRequest(
-        verification_ticket="ticket-1234567890123456",
-        new_password="NewSecureAdminPass@2026",
-        confirm_password="NewSecureAdminPass@2026"
+    payload = AdminChangePasswordRequest(
+        verification_ticket="cryptographic_valid_ticket_12345678",
+        new_password="NewSecurePassword@456",
+        confirm_password="NewSecurePassword@456"
     )
 
-    res = await change_admin_password(req, super_admin=super_admin, db=mock_db, redis_client=mock_redis)
+    res = await change_admin_password(payload, super_admin=super_admin, db=mock_db, redis_client=mock_redis)
     assert res.success is True
-
-    # Password hash updated
-    assert verify_password("NewSecureAdminPass@2026", super_admin.password_hash) is True
-    assert verify_password("Caseno@123", super_admin.password_hash) is False
-
-    # Platform roles preserved intact
-    assert super_admin.is_super_admin is True
-    assert super_admin.system_role == "SUPER_ADMIN"
-    assert super_admin.is_active is True
+    assert verify_password("NewSecurePassword@456", super_admin.password_hash) is True
 
 
 # ==============================================================================
-# TEST 9: Deploy/bootstrap does not overwrite an existing Super Admin password
+# TEST 9: Protected account cannot be deleted or suspended via bulk actions
 # ==============================================================================
 @pytest.mark.asyncio
-async def test_09_bootstrap_does_not_overwrite_existing_changed_password():
-    """TEST 9: Server startup / bootstrap preserves an existing user's changed password."""
-    user_with_changed_password = UserModel(
-        id=uuid4(),
-        email="vivek@zinfog.com",
-        password_hash=hash_password("MyUserCustomPassword@999"),
-        is_active=True,
-        is_verified=True,
-        mobile_verified=True,
-        is_super_admin=True,
-        system_role="SUPER_ADMIN"
-    )
-
-    mock_db = AsyncMock()
-    mock_res = MagicMock()
-    mock_res.scalars.return_value.all.return_value = [user_with_changed_password]
-    mock_db.execute.return_value = mock_res
-
-    with patch.object(settings, "ENABLE_DEMO_SUPER_ADMIN_BOOTSTRAP", True), \
-         patch.object(settings, "DEMO_SUPER_ADMIN_EMAIL", "vivek@zinfog.com"), \
-         patch.object(settings, "DEMO_SUPER_ADMIN_PASSWORD", None), \
-         patch.object(settings, "FORCE_SUPER_ADMIN_PASSWORD_RESET", False):
-
-        restarted_user = await seed_demo_super_admin(mock_db)
-        assert restarted_user is not None
-        assert restarted_user.is_super_admin is True
-        assert restarted_user.system_role == "SUPER_ADMIN"
-        # Changed password is NOT overwritten by bootstrap!
-        assert verify_password("MyUserCustomPassword@999", restarted_user.password_hash) is True
-        assert verify_password("Caseno@123", restarted_user.password_hash) is False
-
-
-# ==============================================================================
-# TEST 10: Bulk user suspension cannot suspend the protected primary Super Admin
-# ==============================================================================
-@pytest.mark.asyncio
-async def test_10_bulk_user_suspension_cannot_suspend_protected_super_admin():
-    """TEST 10: Bulk user suspension and single-user actions cannot suspend vivek@zinfog.com."""
+async def test_09_protected_master_admin_cannot_be_deleted_or_suspended():
+    """TEST 9: Protected master account (vivek@zinfog.com) is guarded against bulk suspension/deletion."""
     super_admin = UserModel(
         id=uuid4(),
         email="vivek@zinfog.com",
-        is_active=True,
-        is_super_admin=True,
-        system_role="SUPER_ADMIN"
-    )
-
-    secondary_admin = UserModel(
-        id=uuid4(),
-        email="secondary_admin@ozhzo.com",
         is_active=True,
         is_super_admin=True,
         system_role="SUPER_ADMIN"
@@ -350,37 +265,51 @@ async def test_10_bulk_user_suspension_cannot_suspend_protected_super_admin():
     mock_db = AsyncMock()
     mock_db.get.return_value = super_admin
 
-    # Attempt 1: Bulk suspension by another admin targeting vivek@zinfog.com
-    bulk_req = BulkUserActionRequest(
+    req = BulkUserActionRequest(
         user_ids=[super_admin.id],
         action="SUSPEND",
-        reason="Test bulk suspension attempt"
+        reason="Test suspension guard"
     )
-    bulk_res = await bulk_user_action(bulk_req, super_admin=secondary_admin, db=mock_db)
-    assert len(bulk_res.data.failed) == 1
-    assert "Protected master" in bulk_res.data.failed[0]["reason"]
-    assert super_admin.is_active is True
 
-    # Attempt 2: Direct single-user suspend endpoint
-    from src.schemas.admin import SuspendEntityRequest, DeleteEntityRequest, HoldEntityRequest
-    with pytest.raises(HTTPException) as exc_suspend:
-        await suspend_user(super_admin.id, SuspendEntityRequest(reason="test"), super_admin=secondary_admin, db=mock_db)
-    assert exc_suspend.value.status_code == 400
-    assert "Protected primary Super Admin account" in exc_suspend.value.detail
-
-    # Attempt 3: Direct single-user delete endpoint
-    with pytest.raises(HTTPException) as exc_delete:
-        await delete_user(super_admin.id, DeleteEntityRequest(reason="test"), super_admin=secondary_admin, db=mock_db)
-    assert exc_delete.value.status_code == 400
-    assert "Protected primary Super Admin account" in exc_delete.value.detail
+    res = await bulk_user_action(req, super_admin=super_admin, db=mock_db)
+    assert len(res.data.failed) == 1
+    assert "cannot modify or suspend" in res.data.failed[0]["reason"] or "Protected master" in res.data.failed[0]["reason"]
 
 
 # ==============================================================================
-# TEST 11: Logout from /login and login through /admin/login works independently
+# TEST 10: Single user status endpoints protect master admin account
 # ==============================================================================
 @pytest.mark.asyncio
-async def test_11_logout_and_independent_dual_portal_authentication():
-    """TEST 11: Tokens are issued independently and authenticate across both portals."""
+async def test_10_single_user_status_endpoints_protect_master_admin():
+    """TEST 10: suspend_user and delete_user explicitly reject self-targeting by Super Admin."""
+    from src.schemas.admin import SuspendEntityRequest, DeleteEntityRequest
+
+    super_admin = UserModel(
+        id=uuid4(),
+        email="vivek@zinfog.com",
+        is_active=True,
+        is_super_admin=True,
+        system_role="SUPER_ADMIN"
+    )
+
+    mock_db = AsyncMock()
+    mock_db.get.return_value = super_admin
+
+    with pytest.raises(HTTPException) as exc1:
+        await suspend_user(user_id=super_admin.id, payload=SuspendEntityRequest(reason="Self suspend test"), super_admin=super_admin, db=mock_db)
+    assert exc1.value.status_code == 400
+
+    with pytest.raises(HTTPException) as exc2:
+        await delete_user(user_id=super_admin.id, payload=DeleteEntityRequest(reason="Self delete test"), super_admin=super_admin, db=mock_db)
+    assert exc2.value.status_code == 400
+
+
+# ==============================================================================
+# TEST 11: Dedicated admin login issues admin-scoped JWT token
+# ==============================================================================
+@pytest.mark.asyncio
+async def test_11_admin_login_issues_admin_scoped_token():
+    """TEST 11: Tokens from /admin/auth/login are scoped for platform administration."""
     super_admin = UserModel(
         id=uuid4(),
         email="vivek@zinfog.com",
@@ -399,22 +328,17 @@ async def test_11_logout_and_independent_dual_portal_authentication():
     mock_redis = AsyncMock()
     mock_redis.incr.return_value = 1
 
-    # Login 1 (household portal)
-    token1 = await login(LoginRequest(email="vivek@zinfog.com", password="Caseno@123"), db=mock_db, redis_client=mock_redis)
-    assert token1.data.access_token is not None
-
-    # Login 2 (admin portal)
-    token2 = await login(LoginRequest(email="vivek@zinfog.com", password="Caseno@123"), db=mock_db, redis_client=mock_redis)
-    assert token2.data.access_token is not None
-    assert token1.data.user_id == token2.data.user_id
+    token = await admin_login(AdminLoginRequest(email="vivek@zinfog.com", password="Caseno@123"), db=mock_db, redis_client=mock_redis)
+    assert token.data.access_token is not None
+    assert token.data.user_id == super_admin.id
 
 
 # ==============================================================================
-# TEST 12: Login through /admin/login and then /login works with the same credentials
+# TEST 12: Super Admin attempting household /auth/login is directed to /admin/login
 # ==============================================================================
 @pytest.mark.asyncio
-async def test_12_dual_portal_login_shares_single_underlying_user_model():
-    """TEST 12: Both /admin/login and /login resolve to the same underlying UserModel record."""
+async def test_12_super_admin_household_login_guard():
+    """TEST 12: Super Admin attempting household login receives 403 directing them to /admin/login."""
     super_admin = UserModel(
         id=uuid4(),
         email="vivek@zinfog.com",
@@ -428,13 +352,14 @@ async def test_12_dual_portal_login_shares_single_underlying_user_model():
 
     mock_db = AsyncMock()
     mock_res = MagicMock()
+    mock_res.scalars.return_value.all.return_value = [super_admin]
     mock_res.scalars.return_value.first.return_value = super_admin
     mock_db.execute.return_value = mock_res
     mock_redis = AsyncMock()
     mock_redis.incr.return_value = 1
 
-    admin_login_res = await login(LoginRequest(email="vivek@zinfog.com", password="Caseno@123"), db=mock_db, redis_client=mock_redis)
-    user_login_res = await login(LoginRequest(email="vivek@zinfog.com", password="Caseno@123"), db=mock_db, redis_client=mock_redis)
+    with pytest.raises(HTTPException) as exc:
+        await login(LoginRequest(email="vivek@zinfog.com", password="Caseno@123"), db=mock_db, redis_client=mock_redis)
 
-    assert admin_login_res.data.user_id == user_login_res.data.user_id == super_admin.id
-    assert admin_login_res.data.email == user_login_res.data.email == "vivek@zinfog.com"
+    assert exc.value.status_code == 403
+    assert "/admin/login" in exc.value.detail

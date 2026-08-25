@@ -60,9 +60,26 @@ async def get_analytics_summary(
     """
     Analytics foundation metrics summary for Super Admin dashboard with real DB counts.
     """
-    # Total & active users (non-deleted)
-    tot_users = (await db.execute(select(func.count(UserModel.id)).where(UserModel.deleted_at == None))).scalar() or 0
-    act_users = (await db.execute(select(func.count(UserModel.id)).where(UserModel.is_active == True, UserModel.deleted_at == None))).scalar() or 0
+    # Total & active normal platform users (excluding platform Super Admins)
+    tot_users = (
+        await db.execute(
+            select(func.count(UserModel.id)).where(
+                UserModel.deleted_at == None,
+                UserModel.is_super_admin == False,
+                UserModel.system_role != "SUPER_ADMIN"
+            )
+        )
+    ).scalar() or 0
+    act_users = (
+        await db.execute(
+            select(func.count(UserModel.id)).where(
+                UserModel.is_active == True,
+                UserModel.deleted_at == None,
+                UserModel.is_super_admin == False,
+                UserModel.system_role != "SUPER_ADMIN"
+            )
+        )
+    ).scalar() or 0
     sus_users = max(0, tot_users - act_users)
 
     # Total & active homes (non-deleted)

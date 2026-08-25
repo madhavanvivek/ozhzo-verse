@@ -25,11 +25,20 @@ function AdminLoginForm() {
     setIsAccessDenied(false);
 
     try {
-      // 1. Authenticate using the single centralized auth endpoint
-      const response = await apiClient.post<any>('/auth/login', {
-        email: email.trim().toLowerCase(),
-        password: password.trim()
-      });
+      // 1. Authenticate using the dedicated platform admin auth endpoint
+      let response: any;
+      try {
+        response = await apiClient.post<any>('/admin/auth/login', {
+          email: email.trim().toLowerCase(),
+          password: password.trim()
+        });
+      } catch (adminErr: any) {
+        // Fallback to alias if needed
+        response = await apiClient.post<any>('/admin/login', {
+          email: email.trim().toLowerCase(),
+          password: password.trim()
+        });
+      }
 
       const accessToken = response?.access_token || response?.token;
       const refreshToken = response?.refresh_token;

@@ -16,6 +16,7 @@ from src.infrastructure.database.models import (
     HomeMemberModel,
     InventoryCategoryModel,
     InventoryItemModel,
+    SubscriptionModel,
     TaskModel,
     UserModel
 )
@@ -78,16 +79,32 @@ async def create_home(
     if not current_user.mobile_verified:
         raise MobileVerificationRequiredException()
 
-    # Check free tier limit (1 active owned home for regular users)
-    if not getattr(current_user, "is_super_admin", False):
-        query = select(HomeModel).where(
-            HomeModel.created_by == current_user.id,
-            HomeModel.deleted_at == None
+    # Check free tier limit (1 active owned home for regular users without paid subscription)
+    query = select(HomeModel).where(
+        HomeModel.created_by == current_user.id,
+        HomeModel.deleted_at == None
+    )
+    existing_result = await db.execute(query)
+    existing_homes = existing_result.scalars().all()
+    if len(existing_homes) >= 1:
+        home_ids = [h.id for h in existing_homes]
+        sub_query = select(SubscriptionModel).where(
+            SubscriptionModel.home_id.in_(home_ids),
+            SubscriptionModel.status.in_(["ACTIVE", "TRIALING"])
         )
-        existing_result = await db.execute(query)
-        existing_homes = existing_result.scalars().all()
-        if len(existing_homes) >= 1:
-            raise TierLimitExceededException(resource="homes", limit=1)
+        sub_res = await db.execute(sub_query)
+        active_sub = sub_res.scalars().first()
+        has_active_sub = (
+            active_sub is not None and
+            isinstance(active_sub, SubscriptionModel) and
+            getattr(active_sub, "status", None) in ["ACTIVE", "TRIALING"]
+        )
+        if not has_active_sub:
+            raise TierLimitExceededException(
+                resource="homes",
+                limit=1,
+                detail="Your free plan includes one Home. Upgrade your subscription to create another Home."
+            )
 
     # 1. Create Home record
     new_home = HomeModel(

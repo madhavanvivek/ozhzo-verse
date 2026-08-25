@@ -222,21 +222,53 @@ async def register(
     )
 
 
+async def enforce_auth_rate_limit(
+    redis_client: redis.Redis,
+    identifier: str,
+    action: str,
+    max_requests: int = 10,
+    window_seconds: int = 60
+):
+    try:
+        key = f"rate_limit:{action}:{identifier}"
+        count = await redis_client.incr(key)
+        if count == 1:
+            await redis_client.expire(key, window_seconds)
+        if count > max_requests:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many authentication requests. Please try again later."
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+
+
 def _extract_authenticated_user(result: Any) -> UserModel | None:
     if result is None:
         return None
     try:
-        if hasattr(result, "scalars"):
-            first_user = result.scalars().first()
-            if first_user and isinstance(first_user, UserModel):
-                return first_user
+        if hasattr(result, "scalar_one_or_none"):
+            u = result.scalar_one_or_none()
+            if u is not None and isinstance(u, UserModel):
+                return u
     except Exception:
         pass
     try:
-        if hasattr(result, "scalar_one_or_none"):
-            u = result.scalar_one_or_none()
-            if u and isinstance(u, UserModel):
-                return u
+        if hasattr(result, "scalars"):
+            scalars_obj = result.scalars()
+            if hasattr(scalars_obj, "all"):
+                users = scalars_obj.all()
+                if isinstance(users, list) and users:
+                    for u in users:
+                        if getattr(u, "is_active", True) and not getattr(u, "deleted_at", None):
+                            return u
+                    return users[0]
+            if hasattr(scalars_obj, "first"):
+                first = scalars_obj.first()
+                if first is not None and isinstance(first, UserModel):
+                    return first
     except Exception:
         pass
     return None
@@ -248,6 +280,10 @@ async def login(
     db: AsyncSession = Depends(get_db),
     redis_client: redis.Redis = Depends(get_redis_client)
 ):
+    """
+    Standard authentication endpoint exclusively for normal Ozhzo household users.
+    Platform Super Admins must authenticate via /admin/auth/login.
+    """
     user = None
     # 1. Lookup by phone number
     if payload.phone_number:
@@ -258,7 +294,7 @@ async def login(
             UserModel.phone_number == normalized_phone,
             UserModel.is_active == True,
             UserModel.deleted_at == None
-        ).order_by(UserModel.is_super_admin.desc(), UserModel.created_at.asc())
+        ).order_by(UserModel.created_at.asc())
         result = await db.execute(query)
         user = _extract_authenticated_user(result)
 
@@ -267,48 +303,13 @@ async def login(
         normalized_email = payload.email.lower().strip()
         await enforce_auth_rate_limit(redis_client, normalized_email, "login", max_requests=10, window_seconds=60)
         
-        sa_email_aliases = {
-            (settings.DEMO_SUPER_ADMIN_EMAIL or "vivek@zinfog.com").strip().lower(),
-            "vivek@zinfog.com",
-            "vivek@zinfog.in",
-            "vivek.madhavan@zinfog.com",
-            "madhavanvivek@gmail.com"
-        }
-
-        if normalized_email in sa_email_aliases:
-            query = select(UserModel).where(
-                UserModel.is_super_admin == True,
-                UserModel.deleted_at == None
-            ).order_by(UserModel.created_at.asc())
-            result = await db.execute(query)
-            user = _extract_authenticated_user(result)
-            if not user:
-                query = select(UserModel).where(
-                    func.lower(UserModel.email) == "vivek@zinfog.com"
-                ).order_by(UserModel.created_at.asc())
-                result = await db.execute(query)
-                user = _extract_authenticated_user(result)
-        else:
-            query = select(UserModel).where(
-                func.lower(UserModel.email) == normalized_email,
-                UserModel.is_active == True,
-                UserModel.deleted_at == None
-            ).order_by(UserModel.is_super_admin.desc(), UserModel.created_at.asc())
-            result = await db.execute(query)
-            user = _extract_authenticated_user(result)
-
-        # Authoritative self-healing for designated Super Admin if ever marked inactive
-        sa_email = (settings.DEMO_SUPER_ADMIN_EMAIL or "vivek@zinfog.com").strip().lower()
-        if not user and normalized_email in sa_email_aliases:
-            sa_query = select(UserModel).where(func.lower(UserModel.email) == sa_email).order_by(UserModel.created_at.asc())
-            sa_res = await db.execute(sa_query)
-            user = _extract_authenticated_user(sa_res)
-            if user:
-                user.is_active = True
-                user.deleted_at = None
-                user.is_super_admin = True
-                user.system_role = "SUPER_ADMIN"
-                await db.commit()
+        query = select(UserModel).where(
+            func.lower(UserModel.email) == normalized_email,
+            UserModel.is_active == True,
+            UserModel.deleted_at == None
+        ).order_by(UserModel.created_at.asc())
+        result = await db.execute(query)
+        user = _extract_authenticated_user(result)
 
     else:
         raise HTTPException(
@@ -316,75 +317,39 @@ async def login(
             detail="Please provide a phone number or email address to sign in."
         )
 
-    # 3. Verify via Password or OTP
-    authenticated = False
-    if user:
-        if payload.password:
-            if user.password_hash:
-                authenticated = verify_password(payload.password, user.password_hash)
-            
-            # Authoritative permanent guarantee for designated Super Admin
-            sa_email = (settings.DEMO_SUPER_ADMIN_EMAIL or "vivek@zinfog.com").strip().lower()
-            sa_default_pwd = (settings.DEMO_SUPER_ADMIN_PASSWORD or "Caseno@123").strip()
-            is_sa_account = (
-                (user.email and user.email.lower() in sa_email_aliases) or
-                user.is_super_admin is True or
-                user.system_role == "SUPER_ADMIN" or
-                (user.phone_number and user.phone_number in ["+918129035737", "8129035737"])
-            )
-            if not authenticated and is_sa_account:
-                submitted_pwd = (payload.password or "").strip()
-                allowed_sa_pwds = {
-                    sa_default_pwd,
-                    sa_default_pwd.lower(),
-                    "Caseno@123",
-                    "caseno@123",
-                    "Caseno123",
-                    "caseno123",
-                    "CaseNo@123",
-                    "Caseno@1234",
-                    "caseno@1234",
-                    "Caseno#123",
-                    "Caseno$123",
-                    "Caseno",
-                    "caseno",
-                    "Zinfog@123",
-                    "zinfog@123",
-                    "Admin@123",
-                    "admin@123",
-                    "Admin123",
-                    "admin123",
-                    "Password@123",
-                    "password@123"
-                }
-                if (
-                    submitted_pwd in allowed_sa_pwds or
-                    submitted_pwd.lower() in {p.lower() for p in allowed_sa_pwds} or
-                    submitted_pwd.lower() == sa_default_pwd.lower()
-                ):
-                    authenticated = True
-                    # Self-heal password hash & verify Super Admin role
-                    user.password_hash = hash_password(sa_default_pwd)
-                    user.is_super_admin = True
-                    user.system_role = "SUPER_ADMIN"
-                    user.is_active = True
-                    user.is_verified = True
-                    await db.commit()
-        elif payload.otp_code and payload.phone_number:
-            otp_service = OTPService()
-            try:
-                await otp_service.verify_otp(db, user.phone_number, payload.otp_code, "LOGIN")
-                authenticated = True
-            except Exception:
-                authenticated = False
-
-    if not user or not authenticated:
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials or verification code."
+            detail="Invalid email, phone number, or password."
         )
 
-    # 4. Issue token pair
+    # Guard: Direct Super Admins to the Administrator Operations Console
+    if user.is_super_admin is True or user.system_role in ["SUPER_ADMIN", "PLATFORM_ADMIN"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Platform administrator accounts must sign in through the Administrator Console at /admin/login."
+        )
+
+    # 3. Verify password or OTP
+    authenticated = False
+    if payload.password:
+        if user.password_hash:
+            authenticated = verify_password(payload.password.strip(), user.password_hash)
+    elif payload.otp_code and payload.phone_number:
+        otp_service = OTPService()
+        try:
+            await otp_service.verify_otp(db, user.phone_number, payload.otp_code, "LOGIN")
+            authenticated = True
+        except Exception:
+            authenticated = False
+
+    if not authenticated:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email, phone number, or password."
+        )
+
+    # 4. Issue standard user token pair
     access_token = create_access_token(subject=str(user.id))
     refresh_token = create_refresh_token(subject=str(user.id))
 

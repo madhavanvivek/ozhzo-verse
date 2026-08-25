@@ -18,6 +18,7 @@ from src.core.email_service import (
 from src.core.exceptions import MobileVerificationRequiredException
 from src.core.security import hash_password, verify_password, create_access_token, create_refresh_token
 from src.infrastructure.database.models import UserModel, UserProfileModel, HomeModel, HomeMemberModel, AuditLogModel
+from src.api.v1.admin_auth import admin_login, AdminLoginRequest
 from src.api.v1.auth import login
 from src.api.v1.users import get_my_profile
 from src.api.v1.homes import create_home
@@ -79,20 +80,30 @@ async def test_b_c_d_same_credentials_for_household_and_admin_login():
         system_role="SUPER_ADMIN"
     )
 
-    # 1. Household /login flow
+    # 1. Dedicated /admin/auth/login flow
     mock_db = AsyncMock()
     mock_redis = AsyncMock()
     mock_redis.incr.return_value = 1
     mock_res = MagicMock()
-    mock_res.scalar_one_or_none.return_value = user
+    mock_res.scalars.return_value.first.return_value = user
     mock_db.execute.return_value = mock_res
 
-    req = LoginRequest(email="vivek@zinfog.com", password=temp_password)
-    res = await login(req, db=mock_db, redis_client=mock_redis)
+    req = AdminLoginRequest(email="vivek@zinfog.com", password=temp_password)
+    res = await admin_login(req, db=mock_db, redis_client=mock_redis)
     assert res.success is True
     assert res.data.access_token is not None
 
-    # 2. Platform /admin/login authorization check
+    # 2. Household /auth/login directs super admin to /admin/login (403 Forbidden)
+    mock_res2 = MagicMock()
+    mock_res2.scalars.return_value.all.return_value = [user]
+    mock_res2.scalars.return_value.first.return_value = user
+    mock_db.execute.return_value = mock_res2
+    with pytest.raises(HTTPException) as exc:
+        await login(LoginRequest(email="vivek@zinfog.com", password=temp_password), db=mock_db, redis_client=mock_redis)
+    assert exc.value.status_code == 403
+    assert "/admin/login" in exc.value.detail
+
+    # 3. Platform /admin/login authorization check
     assert verify_password(temp_password, user.password_hash) is True
     assert (user.is_super_admin is True or user.system_role == "SUPER_ADMIN")
 
@@ -280,6 +291,10 @@ async def test_m_n_super_admin_mobile_verification_enforcement():
         is_super_admin=True,
         system_role="SUPER_ADMIN"
     )
+    mock_homes_res = MagicMock()
+    mock_homes_res.scalars.return_value.all.return_value = []
+    mock_db.execute.return_value = mock_homes_res
+
     home_res = await create_home(req, current_user=verified_super_admin, db=mock_db, redis_client=mock_redis)
     assert home_res.success is True
     assert home_res.data.name == "New Home"

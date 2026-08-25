@@ -49,7 +49,9 @@ function LoginForm() {
       router.push(redirectUrl);
     } catch (err: any) {
       const msg = err?.message || '';
-      if (
+      if (msg.includes('Platform administrator') || msg.includes('/admin/login')) {
+        setError('Platform administrator accounts must sign in through the Administrator Console at /admin/login.');
+      } else if (
         msg.includes('401') ||
         msg.includes('Invalid') ||
         msg.includes('credentials') ||

@@ -148,10 +148,14 @@ async def list_and_search_users(
         .scalar_subquery()
     )
 
+    # Base user query - strictly exclude platform Super Admin accounts from normal User Management
     stmt = select(
         UserModel,
         display_name_subq.label("display_name"),
         homes_count_subq.label("homes_count")
+    ).where(
+        UserModel.is_super_admin == False,
+        UserModel.system_role != "SUPER_ADMIN"
     )
 
     # Status handling
@@ -182,11 +186,7 @@ async def list_and_search_users(
 
     if role_str:
         norm_role = role_str.upper().strip()
-        if norm_role == "SUPER_ADMIN":
-            stmt = stmt.where(or_(UserModel.system_role == "SUPER_ADMIN", UserModel.is_super_admin == True))
-        elif norm_role == "USER":
-            stmt = stmt.where(UserModel.system_role == "USER", UserModel.is_super_admin == False)
-        else:
+        if norm_role != "ALL":
             stmt = stmt.where(UserModel.system_role == norm_role)
 
     # Safe sorting

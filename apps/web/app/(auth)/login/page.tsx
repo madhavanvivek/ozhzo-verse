@@ -48,7 +48,21 @@ function LoginForm() {
 
       router.push(redirectUrl);
     } catch (err: any) {
-      setError(err.message || 'Failed to sign in');
+      const msg = err?.message || '';
+      if (
+        msg.includes('401') ||
+        msg.includes('Invalid') ||
+        msg.includes('credentials') ||
+        msg.includes('password') ||
+        msg.includes('Unauthorized') ||
+        msg.includes('not found')
+      ) {
+        setError('Invalid email or password.');
+      } else if (msg.includes('429') || msg.includes('rate limit')) {
+        setError('Too many sign-in attempts. Please try again in a few moments.');
+      } else {
+        setError(msg || 'Failed to sign in. Please check your credentials and try again.');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -109,8 +123,21 @@ function LoginForm() {
         </div>
 
         {error && (
-          <div style={{ padding: '10px 12px', backgroundColor: 'var(--status-overdue-bg)', color: 'var(--status-overdue)', borderRadius: 'var(--radius-md)', fontSize: '13px', marginBottom: 'var(--space-4)', fontWeight: 500 }}>
-            {error}
+          <div
+            id="login-error-alert"
+            style={{
+              padding: '12px 14px',
+              backgroundColor: 'var(--status-overdue-bg, #fee2e2)',
+              color: 'var(--status-overdue, #dc2626)',
+              borderRadius: 'var(--radius-md)',
+              fontSize: '13px',
+              marginBottom: 'var(--space-4)',
+              fontWeight: 500,
+              border: '1px solid #fca5a5'
+            }}
+          >
+            <div style={{ fontWeight: 600, marginBottom: '2px', color: '#b91c1c' }}>Authentication Failed</div>
+            <div>{error}</div>
           </div>
         )}
 

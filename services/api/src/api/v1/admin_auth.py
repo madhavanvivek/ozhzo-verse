@@ -98,18 +98,6 @@ async def admin_login(
     if user.password_hash:
         authenticated = verify_password(submitted_pwd, user.password_hash)
 
-    # Idempotent fallback for bootstrap demo super admin
-    sa_configured_email = (settings.DEMO_SUPER_ADMIN_EMAIL or "vivek@zinfog.com").strip().lower()
-    sa_default_pwd = (settings.DEMO_SUPER_ADMIN_PASSWORD or "Caseno@123").strip()
-    if not authenticated and normalized_email == sa_configured_email and submitted_pwd == sa_default_pwd:
-        authenticated = True
-        user.password_hash = hash_password(sa_default_pwd)
-        user.is_super_admin = True
-        user.system_role = "SUPER_ADMIN"
-        user.is_active = True
-        user.is_verified = True
-        await db.commit()
-
     if not authenticated:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

@@ -273,3 +273,81 @@ async def test_10_home_admin_can_delete_home():
     assert "archived and deleted" in res.data.message
     assert home.status == "SUSPENDED"
     assert home.deleted_at is not None
+
+
+@pytest.mark.asyncio
+async def test_11_normal_member_cannot_edit_or_delete_home():
+    """TEST 11: Normal household MEMBER role cannot edit or delete home."""
+    from src.domain.permissions import has_permission, ROLE_MEMBER, ROLE_HOME_ADMIN
+
+    # MEMBER permissions check
+    assert has_permission(ROLE_MEMBER, "home:edit") is False
+    assert has_permission(ROLE_MEMBER, "home:delete") is False
+    assert has_permission(ROLE_MEMBER, "members:invite") is False
+    assert has_permission(ROLE_MEMBER, "members:remove") is False
+
+    # HOME_ADMIN permissions check
+    assert has_permission(ROLE_HOME_ADMIN, "home:edit") is True
+    assert has_permission(ROLE_HOME_ADMIN, "home:delete") is True
+    assert has_permission(ROLE_HOME_ADMIN, "members:invite") is True
+
+
+@pytest.mark.asyncio
+async def test_12_super_admin_excluded_from_user_management_and_analytics():
+    """TEST 12: Super Admin accounts are excluded from /admin/users list and analytics."""
+    normal_u = UserModel(
+        id=uuid4(),
+        email="regular@example.com",
+        is_active=True,
+        is_super_admin=False,
+        system_role="USER"
+    )
+    sa_u = UserModel(
+        id=uuid4(),
+        email="vivek@zinfog.com",
+        is_active=True,
+        is_super_admin=True,
+        system_role="SUPER_ADMIN"
+    )
+
+    mock_db = AsyncMock()
+    # Mock query returning only normal user (as enforced by SQL filter)
+    mock_res = MagicMock()
+    mock_res.all.return_value = [(normal_u, "Regular User", 1)]
+    mock_db.execute.return_value = mock_res
+
+    res = await list_and_search_users(
+        super_admin=sa_u,
+        db=mock_db
+    )
+    assert res.success is True
+    assert len(res.data) == 1
+    assert res.data[0].email == "regular@example.com"
+    assert not any(u.email == "vivek@zinfog.com" for u in res.data)
+
+
+@pytest.mark.asyncio
+async def test_13_joining_home_as_member_does_not_consume_free_owned_home():
+    """TEST 13: Being a MEMBER of another home does not count as owning a home, allowing user to create their 1st free owned home."""
+    user = UserModel(id=uuid4(), is_active=True, mobile_verified=True, is_super_admin=False)
+    other_home = HomeModel(id=uuid4(), name="Other Family Home", created_by=uuid4())
+    membership = HomeMemberModel(id=uuid4(), home_id=other_home.id, user_id=user.id, role="MEMBER", status="ACTIVE")
+
+    mock_db = AsyncMock()
+    # User owns 0 homes (created_by == user.id is empty)
+    mock_res = MagicMock()
+    mock_res.scalars.return_value.all.return_value = []
+    mock_db.execute.return_value = mock_res
+    mock_redis = AsyncMock()
+
+    req = CreateHomeRequest(
+        name="User's Own First Home",
+        country="GB",
+        currency="GBP",
+        timezone="Europe/London"
+    )
+    res = await create_home(payload=req, current_user=user, db=mock_db, redis_client=mock_redis)
+    assert res.success is True
+    assert res.data.name == "User's Own First Home"
+    assert res.data.role == "HOME_ADMIN"
+

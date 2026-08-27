@@ -49,12 +49,9 @@ async def enforce_auth_rate_limit(
     window_seconds: int = 60
 ):
     try:
-        # Exclude Super Admin from rate limits so administrator is never locked out
-        sa_email = (settings.DEMO_SUPER_ADMIN_EMAIL or "vivek@zinfog.com").strip().lower()
-        if identifier and identifier.lower() in [sa_email, "+918129035737", "8129035737", "+91 8129035737"]:
+        if not identifier:
             return
-
-        key = f"rate_limit:{action}:{identifier}"
+        key = f"rate_limit:{action}:{identifier.lower().strip()}"
         count = await redis_client.incr(key)
         if count == 1:
             await redis_client.expire(key, window_seconds)

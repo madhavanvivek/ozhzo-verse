@@ -229,11 +229,11 @@ export default function BillsPage() {
   const myResponsibleBills = activeBills.filter(b => b.responsible_member_name === currentUser?.display_name);
   const paidBills = bills.filter(b => b.status === 'PAID');
 
-  const totalUnpaidAmount = activeBills.reduce((sum, b) => sum + (b.remaining_balance || b.expected_amount || 0), 0);
-  const dueTodayAmount = dueTodayBills.reduce((sum, b) => sum + (b.remaining_balance || b.expected_amount || 0), 0);
-  const overdueAmount = overdueBills.reduce((sum, b) => sum + (b.remaining_balance || b.expected_amount || 0), 0);
-  const upcomingAmount = upcomingBills.reduce((sum, b) => sum + (b.remaining_balance || b.expected_amount || 0), 0);
-  const paidThisMonthAmount = paidBills.reduce((sum, b) => sum + (b.amount_paid || 0), 0);
+  const totalUnpaidAmount = activeBills.reduce((sum, b) => sum + (Number(b.remaining_balance ?? b.expected_amount ?? 0) || 0), 0);
+  const dueTodayAmount = dueTodayBills.reduce((sum, b) => sum + (Number(b.remaining_balance ?? b.expected_amount ?? 0) || 0), 0);
+  const overdueAmount = overdueBills.reduce((sum, b) => sum + (Number(b.remaining_balance ?? b.expected_amount ?? 0) || 0), 0);
+  const upcomingAmount = upcomingBills.reduce((sum, b) => sum + (Number(b.remaining_balance ?? b.expected_amount ?? 0) || 0), 0);
+  const paidThisMonthAmount = paidBills.reduce((sum, b) => sum + (Number(b.amount_paid ?? 0) || 0), 0);
 
   const filteredBills = bills.filter(b => {
     if (activeTab === 'PAID') return b.status === 'PAID';

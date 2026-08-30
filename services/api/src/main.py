@@ -59,6 +59,18 @@ async def lifespan(app: FastAPI):
                     await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {col_type};"))
                 except Exception:
                     pass
+
+            # 3. Idempotently relax legacy NOT NULL constraints on evolved tables
+            relax_constraints = [
+                "ALTER TABLE bills ALTER COLUMN category DROP NOT NULL;",
+                "ALTER TABLE bills ALTER COLUMN amount DROP NOT NULL;",
+                "ALTER TABLE bills ALTER COLUMN recurrence_interval DROP NOT NULL;"
+            ]
+            for stmt in relax_constraints:
+                try:
+                    await conn.execute(text(stmt))
+                except Exception:
+                    pass
         logger.info("Database schema synchronization completed successfully.")
     except Exception as e:
         logger.warning(f"Database schema sync warning: {e}")

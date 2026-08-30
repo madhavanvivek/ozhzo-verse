@@ -71,6 +71,18 @@ async def lifespan(app: FastAPI):
                     await conn.execute(text(stmt))
                 except Exception:
                     pass
+
+            # 4. Idempotently ensure composite performance indexes
+            indexes_to_ensure = [
+                "CREATE INDEX IF NOT EXISTS idx_tasks_home_status_due ON tasks (home_id, status, due_date);",
+                "CREATE INDEX IF NOT EXISTS idx_bills_home_status_due ON bills (home_id, status, due_date);",
+                "CREATE INDEX IF NOT EXISTS idx_sub_audit_time ON subscription_audit_logs (created_at DESC);"
+            ]
+            for idx_stmt in indexes_to_ensure:
+                try:
+                    await conn.execute(text(idx_stmt))
+                except Exception:
+                    pass
         logger.info("Database schema synchronization completed successfully.")
     except Exception as e:
         logger.warning(f"Database schema sync warning: {e}")

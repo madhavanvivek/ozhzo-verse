@@ -90,19 +90,30 @@ export default function CalendarPage() {
   const loadData = async (showLoading = false) => {
     if (showLoading) setIsLoading(true);
     try {
-      const homeId = await apiClient.getValidActiveHome();
+      const initialHomeId = apiClient.getActiveHomeId();
+      const start = new Date(Date.now() - 86400000 * 60).toISOString();
+      const end = new Date(Date.now() + 86400000 * 90).toISOString();
+      const queryParams = `?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}`;
+
+      const [homeIdRes, initialProjRes] = await Promise.allSettled([
+        apiClient.getValidActiveHome(),
+        initialHomeId ? apiClient.get<CalendarProjectionResponse>(`/homes/${initialHomeId}/calendar/projection${queryParams}`) : Promise.resolve(null)
+      ]);
+
+      const homeId = homeIdRes.status === 'fulfilled' ? homeIdRes.value : null;
       setActiveHomeId(homeId);
 
       if (homeId) {
-        // Fetch 60 days before and 90 days after for complete calendar context
-        const start = new Date(Date.now() - 86400000 * 60).toISOString();
-        const end = new Date(Date.now() + 86400000 * 90).toISOString();
-
-        const projection = await apiClient.get<CalendarProjectionResponse>(
-          `/homes/${homeId}/calendar/projection?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}`
-        );
-
-        setItems(projection?.timeline_items || []);
+        if (homeId === initialHomeId && initialProjRes.status === 'fulfilled' && initialProjRes.value) {
+          setItems(initialProjRes.value.timeline_items || []);
+        } else {
+          try {
+            const projection = await apiClient.get<CalendarProjectionResponse>(`/homes/${homeId}/calendar/projection${queryParams}`);
+            setItems(projection?.timeline_items || []);
+          } catch {
+            setItems([]);
+          }
+        }
       }
     } catch (err) {
       console.error('Failed to load calendar projection:', err);

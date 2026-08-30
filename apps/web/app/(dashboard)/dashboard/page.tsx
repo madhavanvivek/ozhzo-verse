@@ -133,10 +133,13 @@ function DashboardPageContent() {
     setIsLoading(true);
     setError(null);
     try {
-      // 1. Fetch user profile and accessible homes from backend in parallel
-      const [profileRes, homesRes] = await Promise.allSettled([
+      const initialHomeId = apiClient.getActiveHomeId();
+
+      // 1. Fetch user profile, accessible homes, and dashboard data in parallel
+      const [profileRes, homesRes, initialDashboardRes] = await Promise.allSettled([
         apiClient.get<any>('/users/me'),
-        apiClient.get<Array<{ id: string; name: string; role: string }>>('/homes')
+        apiClient.get<Array<{ id: string; name: string; role: string }>>('/homes'),
+        initialHomeId ? apiClient.get<any>(`/homes/${initialHomeId}/dashboard`) : Promise.resolve(null)
       ]);
 
       if (profileRes.status === 'rejected') {
@@ -170,9 +173,15 @@ function DashboardPageContent() {
         return;
       }
 
-      // Fetch Home-scoped dashboard data
+      // Fetch or use parallel home-scoped dashboard data
       try {
-        const res = await apiClient.get<any>(`/homes/${resolvedHomeId}/dashboard`);
+        let res: any = null;
+        if (resolvedHomeId === initialHomeId && initialDashboardRes.status === 'fulfilled' && initialDashboardRes.value) {
+          res = initialDashboardRes.value;
+        } else {
+          res = await apiClient.get<any>(`/homes/${resolvedHomeId}/dashboard`);
+        }
+
         if (res) {
           const currentHome = accessibleHomes.find((h) => h.id === resolvedHomeId);
           const normalizedData: DashboardData = {

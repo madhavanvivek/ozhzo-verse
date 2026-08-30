@@ -48,16 +48,30 @@ export default function HomeSettingsPage() {
       setIsLoading(true);
       setError(null);
       try {
-        const homeId = await apiClient.getValidActiveHome();
+        const initialHomeId = apiClient.getActiveHomeId();
+        const [homeIdRes, initialHomeDetailRes] = await Promise.allSettled([
+          apiClient.getValidActiveHome(),
+          initialHomeId ? apiClient.get<HomeDetailDTO>(`/homes/${initialHomeId}`) : Promise.resolve(null)
+        ]);
+
+        const homeId = homeIdRes.status === 'fulfilled' ? homeIdRes.value : null;
         setActiveHomeId(homeId);
 
         if (homeId) {
-          const data = await apiClient.get<HomeDetailDTO>(`/homes/${homeId}`);
-          setHomeDetail(data);
-          setHomeName(data.name || '');
-          setCurrency(data.currency || 'USD');
-          setTimezone(data.timezone || 'UTC');
-          setAddress(data.address || '');
+          let data: HomeDetailDTO | null = null;
+          if (homeId === initialHomeId && initialHomeDetailRes.status === 'fulfilled' && initialHomeDetailRes.value) {
+            data = initialHomeDetailRes.value;
+          } else {
+            data = await apiClient.get<HomeDetailDTO>(`/homes/${homeId}`);
+          }
+
+          if (data) {
+            setHomeDetail(data);
+            setHomeName(data.name || '');
+            setCurrency(data.currency || 'USD');
+            setTimezone(data.timezone || 'UTC');
+            setAddress(data.address || '');
+          }
         }
       } catch (err: any) {
         console.error('Failed to load home settings:', err);

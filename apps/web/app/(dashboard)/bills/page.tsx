@@ -88,30 +88,49 @@ export default function BillsPage() {
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const userRes = await apiClient.get<UserProfile>('/users/me');
-      setCurrentUser(userRes);
+      const initialHomeId = apiClient.getActiveHomeId();
 
-      const homeId = await apiClient.getValidActiveHome();
+      const [userRes, homeIdRes, initialBillsRes, initialMembersRes] = await Promise.allSettled([
+        apiClient.get<UserProfile>('/users/me'),
+        apiClient.getValidActiveHome(),
+        initialHomeId ? apiClient.get<{ items: BillItem[] }>(`/homes/${initialHomeId}/bills`) : Promise.resolve(null),
+        initialHomeId ? apiClient.get<HomeMemberSummary[]>(`/homes/${initialHomeId}/members`) : Promise.resolve(null)
+      ]);
+
+      if (userRes.status === 'fulfilled' && userRes.value) {
+        setCurrentUser(userRes.value);
+      }
+
+      const homeId = homeIdRes.status === 'fulfilled' ? homeIdRes.value : null;
       setActiveHomeId(homeId);
 
       if (homeId) {
-        const [billsRes, membersRes] = await Promise.allSettled([
-          apiClient.get<{ items: BillItem[] }>(`/homes/${homeId}/bills`),
-          apiClient.get<HomeMemberSummary[]>(`/homes/${homeId}/members`)
-        ]);
-
-        if (billsRes.status === 'fulfilled' && billsRes.value?.items) {
-          setBills(billsRes.value.items);
+        if (homeId === initialHomeId && initialBillsRes.status === 'fulfilled' && initialBillsRes.value?.items) {
+          setBills(initialBillsRes.value.items);
         } else {
-          setBills([]);
+          try {
+            const freshBills = await apiClient.get<{ items: BillItem[] }>(`/homes/${homeId}/bills`);
+            setBills(freshBills?.items || []);
+          } catch {
+            setBills([]);
+          }
         }
 
-        if (membersRes.status === 'fulfilled' && membersRes.value) {
-          setMembers(membersRes.value);
-          if (membersRes.value.length > 0) {
-            setNewResponsible(membersRes.value[0].display_name);
-            setPayPayer(membersRes.value[0].display_name);
+        let resolvedMembers: HomeMemberSummary[] = [];
+        if (homeId === initialHomeId && initialMembersRes.status === 'fulfilled' && initialMembersRes.value) {
+          resolvedMembers = initialMembersRes.value;
+        } else {
+          try {
+            resolvedMembers = await apiClient.get<HomeMemberSummary[]>(`/homes/${homeId}/members`) || [];
+          } catch {
+            resolvedMembers = [];
           }
+        }
+
+        setMembers(resolvedMembers);
+        if (resolvedMembers.length > 0) {
+          setNewResponsible(resolvedMembers[0].display_name);
+          setPayPayer(resolvedMembers[0].display_name);
         }
       }
     } catch (err) {

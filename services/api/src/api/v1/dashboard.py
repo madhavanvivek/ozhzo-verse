@@ -117,7 +117,7 @@ async def get_home_dashboard(
         time_period=time_period
     )
 
-    # 3. Status KPI Counts
+    # 3. Consolidated Status KPI Counts
     async def _safe_execute(query):
         try:
             return await db.execute(query)
@@ -134,79 +134,66 @@ async def get_home_dashboard(
             return Decimal(str(val))
         return default
 
-    task_res = await _safe_execute(
-        select(func.count()).select_from(TaskModel).where(
-            TaskModel.home_id == eff_home_id, TaskModel.status.in_(["TODO", "IN_PROGRESS"]), TaskModel.deleted_at.is_(None)
-        )
-    )
-    active_tasks_count = _extract_int(task_res.scalar_one() if (task_res and hasattr(task_res, "scalar_one")) else getattr(task_res, "scalar", lambda: 0)(), 0)
+    active_tasks_count = 0
+    low_stock_count = 0
+    unpaid_bills_count = 0
+    unpaid_bills_sum = Decimal("0.00")
+    members_count = 0
+    borrowed_assets_count = 0
+    purchase_items_count = 0
+    upcoming_events_count = 0
 
-    inv_res = await _safe_execute(
-        select(func.count()).select_from(InventoryItemModel).where(
-            InventoryItemModel.home_id == eff_home_id,
-            InventoryItemModel.item_type == "CONSUMABLE",
-            InventoryItemModel.deleted_at.is_(None),
-            InventoryItemModel.quantity <= InventoryItemModel.min_threshold
-        )
-    )
-    low_stock_count = _extract_int(inv_res.scalar_one() if (inv_res and hasattr(inv_res, "scalar_one")) else getattr(inv_res, "scalar", lambda: 0)(), 0)
-
-    bills_res = await _safe_execute(
-        select(func.count(), func.coalesce(func.sum(BillModel.expected_amount - BillModel.amount_paid), Decimal("0.00")))
-        .where(
-            BillModel.home_id == eff_home_id,
-            BillModel.deleted_at.is_(None),
-            BillModel.status.in_(["UNPAID", "PARTIALLY_PAID"])
-        )
-    )
-    if bills_res:
-        raw_bills = bills_res.first() if hasattr(bills_res, "first") else (bills_res.one() if hasattr(bills_res, "one") else None)
-        if raw_bills and isinstance(raw_bills, (tuple, list)):
-            unpaid_bills_count = _extract_int(raw_bills[0], 0)
-            unpaid_bills_sum = _extract_dec(raw_bills[1], Decimal("0.00"))
-        else:
-            unpaid_bills_count = _extract_int(getattr(raw_bills, "scalar", lambda: 0)(), 0)
-            unpaid_bills_sum = Decimal("0.00")
-    else:
-        unpaid_bills_count = 0
-        unpaid_bills_sum = Decimal("0.00")
-
-    mem_res = await _safe_execute(
-        select(func.count()).select_from(HomeMemberModel).where(
-            HomeMemberModel.home_id == eff_home_id, HomeMemberModel.status == "ACTIVE"
-        )
-    )
-    members_count = _extract_int(mem_res.scalar_one() if (mem_res and hasattr(mem_res, "scalar_one")) else getattr(mem_res, "scalar", lambda: 0)(), 0)
-
-    if role in ("CHILD", "GUEST"):
-        unpaid_bills_count = 0
-        unpaid_bills_sum = Decimal("0.00")
-        borrowed_assets_count = 0
-    else:
-        asset_res = await _safe_execute(
+    try:
+        kpi_stmt = select(
+            select(func.count()).select_from(TaskModel).where(
+                TaskModel.home_id == eff_home_id, TaskModel.status.in_(["TODO", "IN_PROGRESS"]), TaskModel.deleted_at.is_(None)
+            ).scalar_subquery().label("active_tasks"),
+            select(func.count()).select_from(InventoryItemModel).where(
+                InventoryItemModel.home_id == eff_home_id,
+                InventoryItemModel.item_type == "CONSUMABLE",
+                InventoryItemModel.deleted_at.is_(None),
+                InventoryItemModel.quantity <= InventoryItemModel.min_threshold
+            ).scalar_subquery().label("low_stock"),
+            select(func.count()).select_from(HomeMemberModel).where(
+                HomeMemberModel.home_id == eff_home_id, HomeMemberModel.status == "ACTIVE"
+            ).scalar_subquery().label("members"),
+            select(func.count()).select_from(PurchaseItemModel).where(
+                PurchaseItemModel.home_id == eff_home_id,
+                PurchaseItemModel.status == "PENDING",
+                PurchaseItemModel.deleted_at.is_(None)
+            ).scalar_subquery().label("purchases"),
+            select(func.count()).select_from(EventModel).where(
+                EventModel.home_id == eff_home_id,
+                EventModel.start_time >= now - timedelta(hours=2),
+                EventModel.deleted_at.is_(None)
+            ).scalar_subquery().label("events"),
+            select(func.count()).select_from(BillModel).where(
+                BillModel.home_id == eff_home_id,
+                BillModel.deleted_at.is_(None),
+                BillModel.status.in_(["UNPAID", "PARTIALLY_PAID"])
+            ).scalar_subquery().label("unpaid_bills"),
+            select(func.coalesce(func.sum(BillModel.expected_amount - BillModel.amount_paid), Decimal("0.00"))).select_from(BillModel).where(
+                BillModel.home_id == eff_home_id,
+                BillModel.deleted_at.is_(None),
+                BillModel.status.in_(["UNPAID", "PARTIALLY_PAID"])
+            ).scalar_subquery().label("unpaid_sum"),
             select(func.count()).select_from(AssetLoanModel).where(
                 AssetLoanModel.home_id == eff_home_id, AssetLoanModel.loan_status == "ACTIVE"
-            )
+            ).scalar_subquery().label("assets"),
         )
-        borrowed_assets_count = _extract_int(asset_res.scalar_one() if (asset_res and hasattr(asset_res, "scalar_one")) else getattr(asset_res, "scalar", lambda: 0)(), 0)
-
-    pur_res = await _safe_execute(
-        select(func.count()).select_from(PurchaseItemModel).where(
-            PurchaseItemModel.home_id == eff_home_id,
-            PurchaseItemModel.status == "PENDING",
-            PurchaseItemModel.deleted_at.is_(None)
-        )
-    )
-    purchase_items_count = _extract_int(pur_res.scalar_one() if (pur_res and hasattr(pur_res, "scalar_one")) else getattr(pur_res, "scalar", lambda: 0)(), 0)
-
-    evt_res = await _safe_execute(
-        select(func.count()).select_from(EventModel).where(
-            EventModel.home_id == eff_home_id,
-            EventModel.start_time >= now - timedelta(hours=2),
-            EventModel.deleted_at.is_(None)
-        )
-    )
-    upcoming_events_count = _extract_int(evt_res.scalar_one() if (evt_res and hasattr(evt_res, "scalar_one")) else getattr(evt_res, "scalar", lambda: 0)(), 0)
+        kpi_row = (await db.execute(kpi_stmt)).first()
+        if kpi_row:
+            active_tasks_count = _extract_int(kpi_row[0], 0)
+            low_stock_count = _extract_int(kpi_row[1], 0)
+            members_count = _extract_int(kpi_row[2], 0)
+            purchase_items_count = _extract_int(kpi_row[3], 0)
+            upcoming_events_count = _extract_int(kpi_row[4], 0)
+            if role not in ("CHILD", "GUEST"):
+                unpaid_bills_count = _extract_int(kpi_row[5], 0)
+                unpaid_bills_sum = _extract_dec(kpi_row[6], Decimal("0.00"))
+                borrowed_assets_count = _extract_int(kpi_row[7], 0)
+    except Exception:
+        pass
 
     summary_dto = DashboardSummaryDTO(
         home_id=home.id,

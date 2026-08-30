@@ -507,6 +507,7 @@ class TaskModel(Base):
     __table_args__ = (
         Index("idx_tasks_home_status", "home_id", "status"),
         Index("idx_tasks_home_due", "home_id", "due_date"),
+        Index("idx_tasks_home_status_due", "home_id", "status", "due_date"),
         Index("idx_tasks_home_search", "home_id", "title"),
         Index("idx_tasks_home_assigned", "home_id", "assigned_to", "status"),
         Index("idx_tasks_home_bill", "home_id", "bill_id"),
@@ -604,6 +605,7 @@ class BillModel(Base):
     __table_args__ = (
         Index("idx_bills_home_status", "home_id", "status"),
         Index("idx_bills_home_due", "home_id", "due_date"),
+        Index("idx_bills_home_status_due", "home_id", "status", "due_date"),
         Index("idx_bills_home_search", "home_id", "title"),
         Index("idx_bills_home_responsible", "home_id", "responsible_member_id", "status"),
     )

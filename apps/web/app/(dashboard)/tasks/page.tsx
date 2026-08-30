@@ -75,26 +75,43 @@ export default function TasksPage() {
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const userRes = await apiClient.get<UserProfile>('/users/me');
-      setCurrentUser(userRes);
+      const initialHomeId = apiClient.getActiveHomeId();
 
-      const homeId = await apiClient.getValidActiveHome();
+      const [userRes, homeIdRes, initialTasksRes, initialMembersRes] = await Promise.allSettled([
+        apiClient.get<UserProfile>('/users/me'),
+        apiClient.getValidActiveHome(),
+        initialHomeId ? apiClient.get<{ items: TaskItem[] }>(`/homes/${initialHomeId}/tasks`) : Promise.resolve(null),
+        initialHomeId ? apiClient.get<HomeMemberSummary[]>(`/homes/${initialHomeId}/members`) : Promise.resolve(null)
+      ]);
+
+      if (userRes.status === 'fulfilled' && userRes.value) {
+        setCurrentUser(userRes.value);
+      }
+
+      const homeId = homeIdRes.status === 'fulfilled' ? homeIdRes.value : null;
       setActiveHomeId(homeId);
 
       if (homeId) {
-        const [tasksRes, membersRes] = await Promise.allSettled([
-          apiClient.get<{ items: TaskItem[] }>(`/homes/${homeId}/tasks`),
-          apiClient.get<HomeMemberSummary[]>(`/homes/${homeId}/members`)
-        ]);
-
-        if (tasksRes.status === 'fulfilled' && tasksRes.value?.items) {
-          setTasks(tasksRes.value.items);
+        if (homeId === initialHomeId && initialTasksRes.status === 'fulfilled' && initialTasksRes.value?.items) {
+          setTasks(initialTasksRes.value.items);
         } else {
-          setTasks([]);
+          try {
+            const freshTasks = await apiClient.get<{ items: TaskItem[] }>(`/homes/${homeId}/tasks`);
+            setTasks(freshTasks?.items || []);
+          } catch {
+            setTasks([]);
+          }
         }
 
-        if (membersRes.status === 'fulfilled' && membersRes.value) {
-          setMembers(membersRes.value);
+        if (homeId === initialHomeId && initialMembersRes.status === 'fulfilled' && initialMembersRes.value) {
+          setMembers(initialMembersRes.value);
+        } else {
+          try {
+            const freshMembers = await apiClient.get<HomeMemberSummary[]>(`/homes/${homeId}/members`);
+            setMembers(freshMembers || []);
+          } catch {
+            setMembers([]);
+          }
         }
       }
     } catch (err) {

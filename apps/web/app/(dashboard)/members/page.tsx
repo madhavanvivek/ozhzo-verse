@@ -99,28 +99,43 @@ export default function MembersPage() {
     if (showLoading) setIsLoading(true);
     setError(null);
     try {
-      const userRes = await apiClient.get<UserProfile>('/users/me');
-      setCurrentUser(userRes);
+      const initialHomeId = apiClient.getActiveHomeId();
 
-      const homeId = await apiClient.getValidActiveHome();
+      const [userRes, homeIdRes, initialMembersRes, initialInvitesRes] = await Promise.allSettled([
+        apiClient.get<UserProfile>('/users/me'),
+        apiClient.getValidActiveHome(),
+        initialHomeId ? apiClient.get<MemberItem[]>(`/homes/${initialHomeId}/members`) : Promise.resolve(null),
+        initialHomeId ? apiClient.get<InvitationItem[]>(`/homes/${initialHomeId}/invitations`) : Promise.resolve(null)
+      ]);
+
+      if (userRes.status === 'fulfilled' && userRes.value) {
+        setCurrentUser(userRes.value);
+      }
+
+      const homeId = homeIdRes.status === 'fulfilled' ? homeIdRes.value : null;
       setActiveHomeId(homeId);
 
       if (homeId) {
-        const [membersRes, invitesRes] = await Promise.allSettled([
-          apiClient.get<MemberItem[]>(`/homes/${homeId}/members`),
-          apiClient.get<InvitationItem[]>(`/homes/${homeId}/invitations`)
-        ]);
-
-        if (membersRes.status === 'fulfilled' && membersRes.value) {
-          setMembers(Array.isArray(membersRes.value) ? membersRes.value : []);
+        if (homeId === initialHomeId && initialMembersRes.status === 'fulfilled' && initialMembersRes.value) {
+          setMembers(Array.isArray(initialMembersRes.value) ? initialMembersRes.value : []);
         } else {
-          setMembers([]);
+          try {
+            const freshMembers = await apiClient.get<MemberItem[]>(`/homes/${homeId}/members`);
+            setMembers(Array.isArray(freshMembers) ? freshMembers : []);
+          } catch {
+            setMembers([]);
+          }
         }
 
-        if (invitesRes.status === 'fulfilled' && invitesRes.value) {
-          setPendingInvites(Array.isArray(invitesRes.value) ? invitesRes.value : []);
+        if (homeId === initialHomeId && initialInvitesRes.status === 'fulfilled' && initialInvitesRes.value) {
+          setPendingInvites(Array.isArray(initialInvitesRes.value) ? initialInvitesRes.value : []);
         } else {
-          setPendingInvites([]);
+          try {
+            const freshInvites = await apiClient.get<InvitationItem[]>(`/homes/${homeId}/invitations`);
+            setPendingInvites(Array.isArray(freshInvites) ? freshInvites : []);
+          } catch {
+            setPendingInvites([]);
+          }
         }
       }
     } catch (err: any) {

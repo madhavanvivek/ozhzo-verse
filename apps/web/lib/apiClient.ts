@@ -54,12 +54,30 @@ class ApiClient {
   private refreshToken: string | null = null;
   private activeHomeId: string | null = null;
   private refreshPromise: Promise<string | null> | null = null;
+  private inFlightRequests: Map<string, Promise<any>> = new Map();
+  private responseCache: Map<string, { timestamp: number; data: any }> = new Map();
+  private readonly CACHE_TTL_MS = 10000; // 10 seconds for stable read queries
 
   constructor() {
     if (typeof window !== 'undefined') {
       this.accessToken = localStorage.getItem('access_token');
       this.refreshToken = localStorage.getItem('refresh_token');
       this.activeHomeId = localStorage.getItem('active_home_id');
+    }
+  }
+
+  /**
+   * Clear in-memory response cache.
+   */
+  clearCache(pattern?: string) {
+    if (!pattern) {
+      this.responseCache.clear();
+      return;
+    }
+    for (const key of this.responseCache.keys()) {
+      if (key.includes(pattern)) {
+        this.responseCache.delete(key);
+      }
     }
   }
 
@@ -113,6 +131,8 @@ class ApiClient {
     this.accessToken = null;
     this.refreshToken = null;
     this.activeHomeId = null;
+    this.clearCache();
+    this.inFlightRequests.clear();
 
     if (typeof window !== 'undefined') {
       try {
@@ -370,13 +390,43 @@ class ApiClient {
     return data as T;
   }
 
-  get<T>(endpoint: string) {
-    return this.request<T>(endpoint, {
-      method: 'GET'
-    });
+  get<T>(endpoint: string, options?: { skipCache?: boolean }): Promise<T> {
+    const token = this.getAccessToken() || '';
+    const cleanEndpoint = endpoint.trim().split('?')[0];
+    const cacheKey = `${endpoint}::${token}`;
+    const isCacheable = (cleanEndpoint === '/users/me' || cleanEndpoint === '/homes') && !options?.skipCache;
+
+    // 1. Return fresh cached response if available
+    if (isCacheable) {
+      const cached = this.responseCache.get(cacheKey);
+      if (cached && (Date.now() - cached.timestamp < this.CACHE_TTL_MS)) {
+        return Promise.resolve(cached.data as T);
+      }
+    }
+
+    // 2. Coalesce concurrent in-flight requests
+    const existingInFlight = this.inFlightRequests.get(cacheKey);
+    if (existingInFlight) {
+      return existingInFlight as Promise<T>;
+    }
+
+    const requestPromise = this.request<T>(endpoint, { method: 'GET' })
+      .then((data) => {
+        if (isCacheable) {
+          this.responseCache.set(cacheKey, { timestamp: Date.now(), data });
+        }
+        return data;
+      })
+      .finally(() => {
+        this.inFlightRequests.delete(cacheKey);
+      });
+
+    this.inFlightRequests.set(cacheKey, requestPromise);
+    return requestPromise;
   }
 
   post<T>(endpoint: string, body?: unknown) {
+    this.clearCache();
     return this.request<T>(endpoint, {
       method: 'POST',
       body: body !== undefined ? JSON.stringify(body) : undefined
@@ -384,6 +434,7 @@ class ApiClient {
   }
 
   patch<T>(endpoint: string, body?: unknown) {
+    this.clearCache();
     return this.request<T>(endpoint, {
       method: 'PATCH',
       body: body !== undefined ? JSON.stringify(body) : undefined
@@ -391,6 +442,7 @@ class ApiClient {
   }
 
   delete<T>(endpoint: string) {
+    this.clearCache();
     return this.request<T>(endpoint, {
       method: 'DELETE'
     });

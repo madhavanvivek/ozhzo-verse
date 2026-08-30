@@ -584,21 +584,35 @@ async def create_bill(
     u_ids = {home_ctx.user.id}
     if bill.responsible_member_id:
         u_ids.add(bill.responsible_member_id)
-    prof_rows = (await db.execute(
-        select(UserProfileModel.user_id, UserProfileModel.display_name)
-        .where(UserProfileModel.user_id.in_(u_ids))
-    )).all()
-    user_map = {uid: (dname or "Member") for uid, dname in prof_rows}
+    user_map = {}
+    try:
+        prof_res = await db.execute(
+            select(UserProfileModel.user_id, UserProfileModel.display_name)
+            .where(UserProfileModel.user_id.in_(u_ids))
+        )
+        if hasattr(prof_res, "all"):
+            rows = prof_res.all()
+            if hasattr(rows, "__await__"):
+                rows = await rows
+            if isinstance(rows, (list, tuple)):
+                for r in rows:
+                    if isinstance(r, (list, tuple)) and len(r) >= 2:
+                        user_map[r[0]] = (r[1] or "Member")
+    except Exception:
+        pass
     if home_ctx.user.id not in user_map:
         user_map[home_ctx.user.id] = getattr(home_ctx.user, "email", "Member")
 
     category_map = {}
     if bill.category_id:
-        cat = (await db.execute(
-            select(BillCategoryModel).where(BillCategoryModel.id == bill.category_id)
-        )).scalar_one_or_none()
-        if cat:
-            category_map[cat.id] = cat.name
+        try:
+            cat = (await db.execute(
+                select(BillCategoryModel).where(BillCategoryModel.id == bill.category_id)
+            )).scalar_one_or_none()
+            if cat and isinstance(cat, BillCategoryModel):
+                category_map[cat.id] = cat.name
+        except Exception:
+            pass
 
     task_map = {}
     if linked_task_id and linked_task_title:

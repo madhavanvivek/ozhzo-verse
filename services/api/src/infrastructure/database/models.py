@@ -34,6 +34,24 @@ class UserModel(Base):
     memberships = relationship("HomeMemberModel", back_populates="user", cascade="all, delete-orphan")
     notifications = relationship("NotificationModel", back_populates="user", cascade="all, delete-orphan")
 
+    @property
+    def display_name(self) -> str:
+        if self.profile and self.profile.display_name:
+            return self.profile.display_name
+        return self.email or "Member"
+
+    @property
+    def first_name(self) -> str:
+        if self.profile:
+            return self.profile.first_name
+        return (self.email or "Member").split("@")[0]
+
+    @property
+    def last_name(self) -> str:
+        if self.profile:
+            return self.profile.last_name
+        return ""
+
 
 class UserProfileModel(Base):
     __tablename__ = "user_profiles"
@@ -49,6 +67,16 @@ class UserProfileModel(Base):
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
     user = relationship("UserModel", back_populates="profile")
+
+    @property
+    def first_name(self) -> str:
+        parts = (self.display_name or "").strip().split(" ", 1)
+        return parts[0] if parts else "Member"
+
+    @property
+    def last_name(self) -> str:
+        parts = (self.display_name or "").strip().split(" ", 1)
+        return parts[1] if len(parts) > 1 else ""
 
 
 class OTPVerificationModel(Base):

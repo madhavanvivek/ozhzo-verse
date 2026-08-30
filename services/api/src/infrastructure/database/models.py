@@ -34,39 +34,6 @@ class UserModel(Base):
     memberships = relationship("HomeMemberModel", back_populates="user", cascade="all, delete-orphan")
     notifications = relationship("NotificationModel", back_populates="user", cascade="all, delete-orphan")
 
-    @property
-    def display_name(self) -> str:
-        from sqlalchemy import inspect
-        try:
-            ins = inspect(self)
-            if "profile" in ins.dict and ins.dict["profile"]:
-                return ins.dict["profile"].display_name
-        except Exception:
-            pass
-        return self.email or "Member"
-
-    @property
-    def first_name(self) -> str:
-        from sqlalchemy import inspect
-        try:
-            ins = inspect(self)
-            if "profile" in ins.dict and ins.dict["profile"]:
-                return ins.dict["profile"].first_name
-        except Exception:
-            pass
-        return (self.email or "Member").split("@")[0]
-
-    @property
-    def last_name(self) -> str:
-        from sqlalchemy import inspect
-        try:
-            ins = inspect(self)
-            if "profile" in ins.dict and ins.dict["profile"]:
-                return ins.dict["profile"].last_name
-        except Exception:
-            pass
-        return ""
-
 
 class UserProfileModel(Base):
     __tablename__ = "user_profiles"

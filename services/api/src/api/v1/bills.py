@@ -581,15 +581,16 @@ async def create_bill(
     await db.commit()
     await db.refresh(bill)
 
-    user_prof = getattr(home_ctx.user, "profile", None)
-    creator_name = (user_prof.display_name if user_prof and hasattr(user_prof, "display_name") else None) or getattr(home_ctx.user, "email", "Member")
-    user_map = {home_ctx.user.id: creator_name or "Member"}
-    if bill.responsible_member_id and bill.responsible_member_id != home_ctx.user.id:
-        resp_user = (await db.execute(
-            select(UserProfileModel).where(UserProfileModel.user_id == bill.responsible_member_id)
-        )).scalar_one_or_none()
-        if resp_user and hasattr(resp_user, "display_name"):
-            user_map[bill.responsible_member_id] = resp_user.display_name or "Member"
+    u_ids = {home_ctx.user.id}
+    if bill.responsible_member_id:
+        u_ids.add(bill.responsible_member_id)
+    prof_rows = (await db.execute(
+        select(UserProfileModel.user_id, UserProfileModel.display_name)
+        .where(UserProfileModel.user_id.in_(u_ids))
+    )).all()
+    user_map = {uid: (dname or "Member") for uid, dname in prof_rows}
+    if home_ctx.user.id not in user_map:
+        user_map[home_ctx.user.id] = getattr(home_ctx.user, "email", "Member")
 
     category_map = {}
     if bill.category_id:
@@ -794,9 +795,10 @@ async def update_bill(
     await db.commit()
     await db.refresh(bill)
 
-    user_prof = getattr(home_ctx.user, "profile", None)
-    creator_name = (user_prof.display_name if user_prof and hasattr(user_prof, "display_name") else None) or getattr(home_ctx.user, "email", "Member")
-    user_map = {home_ctx.user.id: creator_name or "Member"}
+    prof_row = (await db.execute(
+        select(UserProfileModel.display_name).where(UserProfileModel.user_id == home_ctx.user.id)
+    )).scalar_one_or_none()
+    user_map = {home_ctx.user.id: prof_row or getattr(home_ctx.user, "email", "Member")}
     category_map = {}
     if bill.category_id:
         cat = (await db.execute(select(BillCategoryModel).where(BillCategoryModel.id == bill.category_id))).scalar_one_or_none()
@@ -992,9 +994,10 @@ async def record_bill_payment(
     await db.commit()
     await db.refresh(bill)
 
-    user_prof = getattr(home_ctx.user, "profile", None)
-    creator_name = (user_prof.display_name if user_prof and hasattr(user_prof, "display_name") else None) or getattr(home_ctx.user, "email", "Member")
-    user_map = {home_ctx.user.id: creator_name or "Member"}
+    prof_row = (await db.execute(
+        select(UserProfileModel.display_name).where(UserProfileModel.user_id == home_ctx.user.id)
+    )).scalar_one_or_none()
+    user_map = {home_ctx.user.id: prof_row or getattr(home_ctx.user, "email", "Member")}
     category_map = {}
     if bill.category_id:
         cat = (await db.execute(select(BillCategoryModel).where(BillCategoryModel.id == bill.category_id))).scalar_one_or_none()

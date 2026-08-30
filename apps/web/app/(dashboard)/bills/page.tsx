@@ -38,6 +38,8 @@ interface BillItem {
   remaining_balance: number;
   responsible_member_id?: string | null;
   responsible_member_name?: string | null;
+  linked_task_id?: string | null;
+  linked_task_title?: string | null;
   notes?: string | null;
   payments: PaymentRecord[];
 }
@@ -149,8 +151,8 @@ export default function BillsPage() {
       expected_amount: amt,
       currency: 'INR',
       due_date: due,
-      recurrence_type: newRecurrenceType,
-      responsible_member_id: matchedMember ? matchedMember.id : undefined,
+      recurrence_type: newRecurrenceType === 'ONE_OFF' ? 'NONE' : newRecurrenceType,
+      responsible_member_id: matchedMember ? (matchedMember.user_id || matchedMember.id) : undefined,
       notes: newNotes.trim() || undefined
     };
 
@@ -162,9 +164,9 @@ export default function BillsPage() {
       setNewDueDate('');
       setNewNotes('');
       setIsDetailOpen(false);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to add bill:', err);
-      alert('Failed to save bill to backend.');
+      alert(err?.message || 'Unable to save bill. Please try again.');
     }
   };
 
@@ -190,6 +192,7 @@ export default function BillsPage() {
       amount_paid: pAmt,
       paid_date: payDate,
       payment_method: payMethod,
+      paid_by: matchedPayer ? (matchedPayer.user_id || matchedPayer.id) : undefined,
       paid_by_member_id: matchedPayer ? matchedPayer.id : undefined,
       notes: payNotes.trim() || undefined
     };
@@ -197,11 +200,11 @@ export default function BillsPage() {
     try {
       await apiClient.post(`/homes/${activeHomeId}/bills/${payingBill.id}/payments`, payload);
       // Reload bills
-      loadData();
+      await loadData();
       setPayingBill(null);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to record payment:', err);
-      alert('Failed to record payment.');
+      alert(err?.message || 'Unable to record payment.');
     }
   };
 
@@ -212,9 +215,9 @@ export default function BillsPage() {
     try {
       await apiClient.delete(`/homes/${activeHomeId}/bills/${id}`);
       setBills(bills.filter(b => b.id !== id));
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to delete bill:', err);
-      alert('Failed to delete bill.');
+      alert(err?.message || 'Unable to delete bill.');
     }
   };
 
@@ -583,6 +586,13 @@ export default function BillsPage() {
                   <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
                     {bill.category_name} • Due: <strong>{new Date(bill.due_date).toLocaleDateString([], { month: 'short', day: 'numeric' })}</strong> • Responsible: <strong>{bill.responsible_member_name || 'Unassigned'}</strong>
                   </div>
+                  {bill.linked_task_title && (
+                    <div style={{ marginTop: '2px' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--color-surface-subtle)', color: 'var(--color-primary-900)', border: '1px solid var(--color-border)' }}>
+                        Linked Task: {bill.linked_task_title}
+                      </span>
+                    </div>
+                  )}
                   {bill.notes && (
                     <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>
                       Note: {bill.notes}

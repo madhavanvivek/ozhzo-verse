@@ -91,6 +91,8 @@ class BillDTO(BaseModel):
     remaining_balance: Decimal = Decimal("0.00")
     responsible_member_id: Optional[UUID] = None
     responsible_member_name: Optional[str] = None
+    linked_task_id: Optional[UUID] = None
+    linked_task_title: Optional[str] = None
     notes: Optional[str] = None
     version: int = 1
     created_by: UUID
@@ -117,14 +119,17 @@ class CreateBillRequest(BaseModel):
     amount: Optional[Decimal] = Field(None, gt=0)
     currency: Optional[str] = Field(default="INR", min_length=3, max_length=3)
     due_date: date
-    recurrence_type: Optional[str] = Field(default="NONE", pattern="^(NONE|MONTHLY|QUARTERLY|HALF_YEARLY|YEARLY|CUSTOM_DAYS)$")
+    recurrence_type: Optional[str] = Field(default="NONE", pattern="^(NONE|DAILY|WEEKLY|MONTHLY|QUARTERLY|HALF_YEARLY|YEARLY|CUSTOM_DAYS)$")
     recurrence_interval: Optional[str] = None
     recurrence_interval_days: Optional[int] = None
     recurrence_strategy: Optional[str] = Field(default="SCHEDULED_DATE", pattern="^(SCHEDULED_DATE|PAYMENT_DATE)$")
     category_id: Optional[UUID] = None
     category: Optional[str] = None
+    category_name: Optional[str] = None
     template_id: Optional[UUID] = None
     responsible_member_id: Optional[UUID] = None
+    task_id: Optional[UUID] = None
+    create_linked_task: Optional[bool] = False
     notes: Optional[str] = Field(None, max_length=2000)
     reminder_days_before: Optional[List[int]] = None
 
@@ -136,6 +141,8 @@ class CreateBillRequest(BaseModel):
                 data["expected_amount"] = data["amount"]
             if ("recurrence_type" not in data or data.get("recurrence_type") is None) and "recurrence_interval" in data:
                 data["recurrence_type"] = data["recurrence_interval"]
+            if ("category_name" not in data or data.get("category_name") is None) and "category" in data:
+                data["category_name"] = data["category"]
         return data
 
     @field_validator("title")
@@ -155,16 +162,33 @@ class CreateBillRequest(BaseModel):
 class UpdateBillRequest(BaseModel):
     title: Optional[str] = Field(None, min_length=2, max_length=160)
     expected_amount: Optional[Decimal] = Field(None, gt=0)
+    amount: Optional[Decimal] = Field(None, gt=0)
     currency: Optional[str] = Field(None, min_length=3, max_length=3)
     due_date: Optional[date] = None
-    recurrence_type: Optional[str] = Field(None, pattern="^(NONE|MONTHLY|QUARTERLY|HALF_YEARLY|YEARLY|CUSTOM_DAYS)$")
+    recurrence_type: Optional[str] = Field(None, pattern="^(NONE|DAILY|WEEKLY|MONTHLY|QUARTERLY|HALF_YEARLY|YEARLY|CUSTOM_DAYS)$")
+    recurrence_interval: Optional[str] = None
     recurrence_interval_days: Optional[int] = None
     recurrence_strategy: Optional[str] = Field(None, pattern="^(SCHEDULED_DATE|PAYMENT_DATE)$")
     category_id: Optional[UUID] = None
+    category: Optional[str] = None
+    category_name: Optional[str] = None
     responsible_member_id: Optional[UUID] = None
+    task_id: Optional[UUID] = None
     status: Optional[str] = Field(None, pattern="^(UNPAID|PARTIALLY_PAID|PAID|CANCELLED)$")
     notes: Optional[str] = None
     version: Optional[int] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_update_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if ("expected_amount" not in data or data.get("expected_amount") is None) and "amount" in data:
+                data["expected_amount"] = data["amount"]
+            if ("recurrence_type" not in data or data.get("recurrence_type") is None) and "recurrence_interval" in data:
+                data["recurrence_type"] = data["recurrence_interval"]
+            if ("category_name" not in data or data.get("category_name") is None) and "category" in data:
+                data["category_name"] = data["category"]
+        return data
 
 
 class RecordPaymentRequest(BaseModel):
@@ -172,10 +196,19 @@ class RecordPaymentRequest(BaseModel):
     currency: Optional[str] = Field(default=None, min_length=3, max_length=3)
     paid_date: Optional[date] = None
     paid_by: Optional[UUID] = None
+    paid_by_member_id: Optional[UUID] = None
     payment_method: Optional[str] = Field(default="UPI", pattern="^(CASH|BANK_TRANSFER|UPI|CARD|ONLINE|OTHER)$")
     receipt_url: Optional[str] = None
     notes: Optional[str] = Field(None, max_length=500)
     version: Optional[int] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_payment_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if ("paid_by" not in data or data.get("paid_by") is None) and "paid_by_member_id" in data:
+                data["paid_by"] = data["paid_by_member_id"]
+        return data
 
     @field_validator("currency")
     @classmethod

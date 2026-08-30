@@ -51,7 +51,8 @@ async def lifespan(app: FastAPI):
                 ("users", "system_role", "VARCHAR DEFAULT 'USER'"),
                 ("users", "mobile_verified", "BOOLEAN DEFAULT FALSE"),
                 ("invitations", "invitation_code", "VARCHAR(32)"),
-                ("invitations", "revoked_at", "TIMESTAMP WITH TIME ZONE")
+                ("invitations", "revoked_at", "TIMESTAMP WITH TIME ZONE"),
+                ("tasks", "bill_id", "UUID")
             ]
             for table, col, col_type in columns_to_ensure:
                 try:

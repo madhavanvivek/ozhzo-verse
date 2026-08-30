@@ -48,6 +48,14 @@ class CreateTaskTemplateRequest(BaseModel):
     sort_order: Optional[int] = 0
 
 
+from datetime import date, datetime
+from decimal import Decimal
+from typing import List, Optional
+from uuid import UUID
+from pydantic import BaseModel, Field, field_validator, model_validator
+from typing import Any
+
+
 class TaskDTO(BaseModel):
     id: UUID
     home_id: UUID
@@ -67,6 +75,12 @@ class TaskDTO(BaseModel):
     parent_recurring_task_id: Optional[UUID] = None
     assigned_to: Optional[UUID] = None
     assigned_to_name: Optional[str] = None
+    bill_id: Optional[UUID] = None
+    bill_title: Optional[str] = None
+    bill_amount: Optional[Decimal] = None
+    bill_currency: Optional[str] = None
+    bill_status: Optional[str] = None
+    bill_due_date: Optional[date] = None
     created_by: UUID
     created_by_name: Optional[str] = None
     completed_by: Optional[UUID] = None
@@ -87,6 +101,7 @@ class CreateTaskRequest(BaseModel):
     priority: Optional[str] = Field(default="NORMAL", pattern="^(LOW|NORMAL|MEDIUM|HIGH|URGENT)$")
     category_id: Optional[UUID] = None
     category: Optional[str] = None
+    category_name: Optional[str] = None
     template_id: Optional[UUID] = None
     template: Optional[str] = None
     assigned_to: Optional[UUID] = None
@@ -95,6 +110,15 @@ class CreateTaskRequest(BaseModel):
     recurrence_rule: Optional[str] = None
     recurrence_interval_days: Optional[int] = None
     recurrence_strategy: Optional[str] = Field(default="SCHEDULED_DATE", pattern="^(SCHEDULED_DATE|COMPLETION_DATE)$")
+    bill_id: Optional[UUID] = None
+    create_bill: Optional[bool] = False
+    bill_amount: Optional[Decimal] = Field(None, gt=0)
+    bill_due_date: Optional[date] = None
+    bill_category: Optional[str] = None
+    bill_category_id: Optional[UUID] = None
+    bill_recurrence_type: Optional[str] = None
+    bill_currency: Optional[str] = None
+    bill_notes: Optional[str] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -102,6 +126,8 @@ class CreateTaskRequest(BaseModel):
         if isinstance(data, dict):
             if ("recurrence_type" not in data or data.get("recurrence_type") is None) and "recurrence_rule" in data:
                 data["recurrence_type"] = data["recurrence_rule"]
+            if ("category_name" not in data or data.get("category_name") is None) and "category" in data:
+                data["category_name"] = data["category"]
             if data.get("priority") == "MEDIUM":
                 data["priority"] = "NORMAL"
         return data
@@ -121,12 +147,23 @@ class UpdateTaskRequest(BaseModel):
     priority: Optional[str] = Field(None, pattern="^(LOW|NORMAL|HIGH)$")
     status: Optional[str] = Field(None, pattern="^(TODO|IN_PROGRESS|COMPLETED|CANCELLED)$")
     category_id: Optional[UUID] = None
+    category: Optional[str] = None
+    category_name: Optional[str] = None
     assigned_to: Optional[UUID] = None
+    bill_id: Optional[UUID] = None
     due_date: Optional[datetime] = None
     recurrence_type: Optional[str] = Field(None, pattern="^(NONE|DAILY|WEEKLY|MONTHLY|YEARLY|CUSTOM_DAYS)$")
     recurrence_interval_days: Optional[int] = None
     recurrence_strategy: Optional[str] = Field(None, pattern="^(SCHEDULED_DATE|COMPLETION_DATE)$")
     version: Optional[int] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_update_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if ("category_name" not in data or data.get("category_name") is None) and "category" in data:
+                data["category_name"] = data["category"]
+        return data
 
 
 class CompleteTaskRequest(BaseModel):

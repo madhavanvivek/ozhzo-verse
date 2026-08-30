@@ -28,6 +28,12 @@ interface TaskItem {
   recurrence_type?: string;
   recurrence_interval_days?: number | null;
   recurrence_strategy?: string;
+  bill_id?: string | null;
+  bill_title?: string | null;
+  bill_amount?: number | null;
+  bill_currency?: string | null;
+  bill_status?: string | null;
+  bill_due_date?: string | null;
   completed_by_name?: string | null;
   completed_at?: string | null;
 }
@@ -63,6 +69,8 @@ export default function TasksPage() {
   const [newRecurrenceType, setNewRecurrenceType] = useState('NONE');
   const [newIntervalDays, setNewIntervalDays] = useState('30');
   const [newCategory, setNewCategory] = useState('Maintenance');
+  const [hasBill, setHasBill] = useState(false);
+  const [billAmount, setBillAmount] = useState('');
 
   const loadData = async () => {
     setIsLoading(true);
@@ -106,7 +114,7 @@ export default function TasksPage() {
     { title: 'Service AC', cat: 'Maintenance', prio: 'NORMAL', rec: 'CUSTOM_DAYS', interval: 180 },
     { title: 'Change Bedsheets', cat: 'Cleaning', prio: 'NORMAL', rec: 'WEEKLY', interval: 7 },
     { title: 'Car Service', cat: 'Vehicle', prio: 'NORMAL', rec: 'CUSTOM_DAYS', interval: 180 },
-    { title: 'Pay Utility Bill', cat: 'Bills', prio: 'HIGH', rec: 'MONTHLY', interval: 30 },
+    { title: 'Pay Utility Bill', cat: 'Bills', prio: 'HIGH', rec: 'MONTHLY', interval: 30, billAmount: 3500 },
     { title: 'Water Garden Plants', cat: 'Garden', prio: 'NORMAL', rec: 'DAILY', interval: 1 },
   ];
 
@@ -121,11 +129,13 @@ export default function TasksPage() {
       description: newDesc.trim() || undefined,
       category_name: newCategory,
       priority: newPriority,
-      assigned_to: matchedMember ? matchedMember.user_id : undefined,
+      assigned_to: matchedMember ? (matchedMember.user_id || matchedMember.id) : undefined,
       due_date: newDueDate ? `${newDueDate}T18:00:00Z` : undefined,
       recurrence_type: newRecurrenceType,
       recurrence_interval_days: newRecurrenceType === 'CUSTOM_DAYS' ? parseInt(newIntervalDays) : undefined,
-      recurrence_strategy: 'SCHEDULED_DATE'
+      recurrence_strategy: 'SCHEDULED_DATE',
+      bill_amount: hasBill && billAmount ? parseFloat(billAmount) : undefined,
+      create_bill: hasBill && Boolean(billAmount)
     };
 
     try {
@@ -135,10 +145,12 @@ export default function TasksPage() {
       setNewDesc('');
       setNewDueDate('');
       setNewAssignee('');
+      setHasBill(false);
+      setBillAmount('');
       setIsDetailOpen(false);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to create task:', err);
-      alert('Failed to save task to backend.');
+      alert(err?.message || 'Failed to save task to backend.');
     }
   };
 
@@ -324,6 +336,13 @@ export default function TasksPage() {
                   setNewPriority(t.prio as any);
                   setNewRecurrenceType(t.rec);
                   if (t.interval) setNewIntervalDays(t.interval.toString());
+                  if (t.billAmount) {
+                    setHasBill(true);
+                    setBillAmount(t.billAmount.toString());
+                  } else {
+                    setHasBill(false);
+                    setBillAmount('');
+                  }
                   setIsDetailOpen(true);
                 }}
                 style={{
@@ -426,6 +445,26 @@ export default function TasksPage() {
                   />
                 </div>
               )}
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <input
+                    type="checkbox"
+                    checked={hasBill}
+                    onChange={(e) => setHasBill(e.target.checked)}
+                  />
+                  <span>Attach Bill / Expense Obligation</span>
+                </label>
+                {hasBill && (
+                  <input
+                    type="number"
+                    placeholder="Bill Amount (₹)"
+                    value={billAmount}
+                    onChange={(e) => setBillAmount(e.target.value)}
+                    style={{ height: '36px', padding: '0 8px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}
+                  />
+                )}
+              </div>
             </div>
           )}
         </form>
@@ -540,6 +579,11 @@ export default function TasksPage() {
                       {t.recurrence_type && t.recurrence_type !== 'NONE' && (
                         <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
                           • <Repeat size={12} /> {t.recurrence_type}
+                        </span>
+                      )}
+                      {t.bill_id && (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '2px 8px', borderRadius: '4px', backgroundColor: 'var(--color-surface-subtle)', color: 'var(--color-primary-900)', border: '1px solid var(--color-border)', fontWeight: 600, fontSize: '11px' }}>
+                          💳 Bill: ₹{t.bill_amount?.toLocaleString('en-IN')} ({t.bill_status || 'UNPAID'})
                         </span>
                       )}
                       {isCompleted && t.completed_by_name && (

@@ -484,6 +484,7 @@ class TaskModel(Base):
     recurrence_interval_days = Column(Integer, nullable=True)
     recurrence_strategy = Column(String(32), default="SCHEDULED_DATE", nullable=False)  # SCHEDULED_DATE, COMPLETION_DATE
     parent_recurring_task_id = Column(UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True)
+    bill_id = Column(UUID(as_uuid=True), ForeignKey("bills.id", ondelete="SET NULL"), nullable=True, index=True)
     assigned_to = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     completed_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -498,11 +499,13 @@ class TaskModel(Base):
         Index("idx_tasks_home_due", "home_id", "due_date"),
         Index("idx_tasks_home_search", "home_id", "title"),
         Index("idx_tasks_home_assigned", "home_id", "assigned_to", "status"),
+        Index("idx_tasks_home_bill", "home_id", "bill_id"),
     )
 
     home = relationship("HomeModel", back_populates="tasks")
     category = relationship("TaskCategoryModel", back_populates="tasks")
     template = relationship("TaskTemplateModel")
+    bill = relationship("BillModel", foreign_keys=[bill_id], back_populates="tasks")
 
     def __init__(self, **kwargs):
         if "category" in kwargs and isinstance(kwargs["category"], str):
@@ -595,6 +598,7 @@ class BillModel(Base):
     template = relationship("BillTemplateModel")
     reminders = relationship("BillReminderModel", back_populates="bill", cascade="all, delete-orphan")
     payments = relationship("BillPaymentModel", back_populates="bill", cascade="all, delete-orphan")
+    tasks = relationship("TaskModel", foreign_keys="TaskModel.bill_id", back_populates="bill")
 
     def __init__(self, **kwargs):
         if "amount" in kwargs and "expected_amount" not in kwargs:

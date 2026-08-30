@@ -1,5 +1,6 @@
 import math
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from typing import List, Optional
 from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -11,7 +12,10 @@ from src.api.dependencies import get_current_user, require_home_permission, Home
 from src.infrastructure.database.session import get_db
 from src.infrastructure.cache.redis_client import get_redis_client
 from src.infrastructure.database.models import (
+    BillCategoryModel,
+    BillModel,
     HomeMemberModel,
+    HomeModel,
     TaskCategoryModel,
     TaskModel,
     TaskTemplateModel,
@@ -96,6 +100,23 @@ async def map_task_dto(task: TaskModel, db: AsyncSession) -> TaskDTO:
         if isinstance(cat, TaskCategoryModel) and isinstance(cat.name, str):
             cat_name = cat.name
 
+    # Resolve linked bill details if present
+    bill_id = None
+    bill_title = None
+    bill_amount = None
+    bill_currency = None
+    bill_status = None
+    bill_due_date = None
+    if task.bill_id:
+        bill = await db.get(BillModel, task.bill_id)
+        if bill and not getattr(bill, "deleted_at", None):
+            bill_id = bill.id
+            bill_title = bill.title
+            bill_amount = bill.expected_amount
+            bill_currency = bill.currency
+            bill_status = bill.status
+            bill_due_date = bill.due_date
+
     return TaskDTO(
         id=task.id or uuid4(),
         home_id=task.home_id,
@@ -115,6 +136,12 @@ async def map_task_dto(task: TaskModel, db: AsyncSession) -> TaskDTO:
         parent_recurring_task_id=task.parent_recurring_task_id,
         assigned_to=task.assigned_to,
         assigned_to_name=assigned_name,
+        bill_id=bill_id,
+        bill_title=bill_title,
+        bill_amount=bill_amount,
+        bill_currency=bill_currency,
+        bill_status=bill_status,
+        bill_due_date=bill_due_date,
         created_by=task.created_by or uuid4(),
         created_by_name=created_name,
         completed_by=task.completed_by,
@@ -313,7 +340,8 @@ async def create_task(
                 detail="Assigned user is not an active member of this home."
             )
 
-    # Category verification: Category must belong to this home
+    # Category verification: Category must belong to this home or auto-create by name
+    resolved_category_id = None
     if payload.category_id:
         cat = await db.get(TaskCategoryModel, payload.category_id)
         if not cat or cat.home_id != home_ctx.home_id:
@@ -321,11 +349,83 @@ async def create_task(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid category for this home."
             )
+        resolved_category_id = cat.id
+    elif payload.category_name or payload.category:
+        cat_clean = (payload.category_name or payload.category).strip()
+        if cat_clean:
+            existing_cat = (await db.execute(
+                select(TaskCategoryModel).where(
+                    TaskCategoryModel.home_id == home_ctx.home_id,
+                    func.lower(TaskCategoryModel.name) == cat_clean.lower()
+                )
+            )).scalar_one_or_none()
+            if existing_cat:
+                resolved_category_id = existing_cat.id
+            else:
+                new_cat = TaskCategoryModel(
+                    home_id=home_ctx.home_id,
+                    name=cat_clean,
+                    sort_order=0
+                )
+                db.add(new_cat)
+                await db.flush()
+                resolved_category_id = new_cat.id
+
+    # Bill Integration: Associate with existing bill or create authoritative Bill record
+    resolved_bill_id = None
+    if payload.bill_id:
+        bill = await db.get(BillModel, payload.bill_id)
+        if bill and bill.home_id == home_ctx.home_id and not bill.deleted_at:
+            resolved_bill_id = bill.id
+    elif payload.bill_amount and payload.bill_amount > 0:
+        home = (await db.execute(select(HomeModel).where(HomeModel.id == home_ctx.home_id))).scalar_one_or_none()
+        curr = payload.bill_currency or (home.currency if home else "INR")
+        bill_due = payload.bill_due_date or (payload.due_date.date() if payload.due_date else date.today())
+        bill_rec = payload.bill_recurrence_type or payload.recurrence_type or "NONE"
+
+        bill_cat_name = (payload.bill_category or payload.category_name or payload.category or "Utilities").strip()
+        b_cat = (await db.execute(
+            select(BillCategoryModel).where(
+                BillCategoryModel.home_id == home_ctx.home_id,
+                func.lower(BillCategoryModel.name) == bill_cat_name.lower()
+            )
+        )).scalar_one_or_none()
+        b_cat_id = b_cat.id if b_cat else None
+        if not b_cat_id and bill_cat_name:
+            new_bcat = BillCategoryModel(
+                home_id=home_ctx.home_id,
+                name=bill_cat_name,
+                sort_order=0
+            )
+            db.add(new_bcat)
+            await db.flush()
+            b_cat_id = new_bcat.id
+
+        new_bill = BillModel(
+            home_id=home_ctx.home_id,
+            category_id=b_cat_id,
+            title=payload.title,
+            expected_amount=payload.bill_amount,
+            currency=curr,
+            due_date=bill_due,
+            recurrence_type=bill_rec,
+            recurrence_interval_days=payload.recurrence_interval_days,
+            recurrence_strategy=payload.recurrence_strategy or "SCHEDULED_DATE",
+            status="UNPAID",
+            amount_paid=Decimal("0.00"),
+            responsible_member_id=payload.assigned_to,
+            notes=payload.bill_notes or f"Created via Task: {payload.title}",
+            version=1,
+            created_by=home_ctx.user.id
+        )
+        db.add(new_bill)
+        await db.flush()
+        resolved_bill_id = new_bill.id
 
     task = TaskModel(
         home_id=home_ctx.home_id,
         template_id=payload.template_id,
-        category_id=payload.category_id,
+        category_id=resolved_category_id,
         title=payload.title,
         description=payload.description,
         priority=payload.priority or "NORMAL",
@@ -335,6 +435,7 @@ async def create_task(
         recurrence_interval_days=payload.recurrence_interval_days,
         recurrence_strategy=payload.recurrence_strategy or "SCHEDULED_DATE",
         assigned_to=payload.assigned_to,
+        bill_id=resolved_bill_id,
         created_by=home_ctx.user.id,
         version=1
     )
@@ -425,6 +526,35 @@ async def update_task(
                 detail="Invalid category for this home."
             )
         task.category_id = payload.category_id
+    elif payload.category_name or payload.category:
+        cat_clean = (payload.category_name or payload.category).strip()
+        if cat_clean:
+            existing_cat = (await db.execute(
+                select(TaskCategoryModel).where(
+                    TaskCategoryModel.home_id == home_ctx.home_id,
+                    func.lower(TaskCategoryModel.name) == cat_clean.lower()
+                )
+            )).scalar_one_or_none()
+            if existing_cat:
+                task.category_id = existing_cat.id
+            else:
+                new_cat = TaskCategoryModel(
+                    home_id=home_ctx.home_id,
+                    name=cat_clean,
+                    sort_order=0
+                )
+                db.add(new_cat)
+                await db.flush()
+                task.category_id = new_cat.id
+
+    if payload.bill_id is not None:
+        if payload.bill_id:
+            bill = await db.get(BillModel, payload.bill_id)
+            if bill and bill.home_id == home_ctx.home_id:
+                task.bill_id = bill.id
+        else:
+            task.bill_id = None
+
     if payload.due_date is not None:
         task.due_date = payload.due_date
     if payload.recurrence_type is not None:

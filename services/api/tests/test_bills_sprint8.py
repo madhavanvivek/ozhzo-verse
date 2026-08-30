@@ -74,12 +74,12 @@ async def test_record_payment_spawns_recurring_iteration():
         id=bill_id,
         home_id=home_id,
         title="Power Utility",
-        category="Utilities",
-        amount=Decimal("120.00"),
+        expected_amount=Decimal("120.00"),
         currency="USD",
         due_date=date(2026, 8, 20),
-        recurrence_interval="MONTHLY",
-        status="UNPAID"
+        recurrence_type="MONTHLY",
+        status="UNPAID",
+        version=1
     )
 
     mock_res = MagicMock()

@@ -400,12 +400,12 @@ async def list_bills(
     user_map = {}
     if user_ids:
         users = (await db.execute(
-            select(UserModel.id, UserProfileModel.first_name, UserProfileModel.last_name)
+            select(UserModel.id, UserProfileModel.display_name)
             .outerjoin(UserProfileModel, UserModel.id == UserProfileModel.user_id)
             .where(UserModel.id.in_(user_ids))
         )).all()
         for u in users:
-            name = f"{u.first_name or ''} {u.last_name or ''}".strip() or "Member"
+            name = (u.display_name or "").strip() or "Member"
             user_map[u.id] = name
 
     category_map = {}
@@ -588,14 +588,14 @@ async def create_bill(
     await db.refresh(bill)
 
     user_prof = getattr(home_ctx.user, "profile", None)
-    creator_name = f"{user_prof.first_name or ''} {user_prof.last_name or ''}".strip() if user_prof else getattr(home_ctx.user, "email", "Member")
+    creator_name = (user_prof.display_name if user_prof and hasattr(user_prof, "display_name") else None) or getattr(home_ctx.user, "email", "Member")
     user_map = {home_ctx.user.id: creator_name or "Member"}
     if bill.responsible_member_id and bill.responsible_member_id != home_ctx.user.id:
         resp_user = (await db.execute(
             select(UserProfileModel).where(UserProfileModel.user_id == bill.responsible_member_id)
         )).scalar_one_or_none()
-        if resp_user:
-            user_map[bill.responsible_member_id] = f"{resp_user.first_name or ''} {resp_user.last_name or ''}".strip() or "Member"
+        if resp_user and hasattr(resp_user, "display_name"):
+            user_map[bill.responsible_member_id] = resp_user.display_name or "Member"
 
     category_map = {}
     if bill.category_id:
@@ -642,11 +642,11 @@ async def get_bill_detail(
         user_ids.add(p.paid_by)
 
     users = (await db.execute(
-        select(UserModel.id, UserProfileModel.first_name, UserProfileModel.last_name)
+        select(UserModel.id, UserProfileModel.display_name)
         .outerjoin(UserProfileModel, UserModel.id == UserProfileModel.user_id)
         .where(UserModel.id.in_(user_ids))
     )).all()
-    user_map = {u.id: f"{u.first_name or ''} {u.last_name or ''}".strip() or "Member" for u in users}
+    user_map = {u.id: (u.display_name or "").strip() or "Member" for u in users}
 
     category_map = {}
     if bill.category_id:
@@ -800,7 +800,9 @@ async def update_bill(
     await db.commit()
     await db.refresh(bill)
 
-    user_map = {home_ctx.user.id: f"{home_ctx.user.first_name} {home_ctx.user.last_name}".strip()}
+    user_prof = getattr(home_ctx.user, "profile", None)
+    creator_name = (user_prof.display_name if user_prof and hasattr(user_prof, "display_name") else None) or getattr(home_ctx.user, "email", "Member")
+    user_map = {home_ctx.user.id: creator_name or "Member"}
     category_map = {}
     if bill.category_id:
         cat = (await db.execute(select(BillCategoryModel).where(BillCategoryModel.id == bill.category_id))).scalar_one_or_none()
@@ -997,7 +999,7 @@ async def record_bill_payment(
     await db.refresh(bill)
 
     user_prof = getattr(home_ctx.user, "profile", None)
-    creator_name = f"{user_prof.first_name or ''} {user_prof.last_name or ''}".strip() if user_prof else getattr(home_ctx.user, "email", "Member")
+    creator_name = (user_prof.display_name if user_prof and hasattr(user_prof, "display_name") else None) or getattr(home_ctx.user, "email", "Member")
     user_map = {home_ctx.user.id: creator_name or "Member"}
     category_map = {}
     if bill.category_id:
@@ -1028,12 +1030,12 @@ async def list_bill_payments(
     user_map = {}
     if user_ids:
         users = (await db.execute(
-            select(UserModel.id, UserProfileModel.first_name, UserProfileModel.last_name)
+            select(UserModel.id, UserProfileModel.display_name)
             .outerjoin(UserProfileModel, UserModel.id == UserProfileModel.user_id)
             .where(UserModel.id.in_(user_ids))
         )).all()
         for u in users:
-            user_map[u.id] = f"{u.first_name or ''} {u.last_name or ''}".strip() or "Member"
+            user_map[u.id] = (u.display_name or "").strip() or "Member"
 
     dtos = [
         BillPaymentDTO(

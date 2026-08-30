@@ -707,7 +707,7 @@ export default function AdminHomesPage() {
                             )}
                           </div>
                           <div style={{ fontSize: '12px', color: 'var(--color-text-secondary, #64748b)' }}>
-                            ID: {h.id.slice(0, 8)}... | Currency: {h.currency}
+                            {h.public_home_id ? <code style={{ fontWeight: 600, color: 'var(--color-primary-900, #0f172a)' }}>{h.public_home_id}</code> : `ID: ${h.id.slice(0, 8)}...`} | Currency: {h.currency}
                           </div>
                         </td>
 

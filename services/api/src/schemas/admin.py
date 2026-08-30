@@ -83,6 +83,9 @@ class AdminHomeInvitationItemDTO(BaseModel):
 class AdminHomeDetailDTO(BaseModel):
     id: UUID
     name: str
+    public_home_id: Optional[str] = None
+    home_qr_status: Optional[str] = "ACTIVE"
+    home_qr_version: Optional[int] = 1
     status: str  # ACTIVE, SUSPENDED
     currency: Optional[str] = "USD"
     timezone: Optional[str] = "UTC"
@@ -102,6 +105,9 @@ class AdminHomeDetailDTO(BaseModel):
 class AdminHomeListItemDTO(BaseModel):
     id: UUID
     name: str
+    public_home_id: Optional[str] = None
+    home_qr_status: Optional[str] = "ACTIVE"
+    home_qr_version: Optional[int] = 1
     status: str
     currency: Optional[str] = "USD"
     created_by_email: Optional[str] = None

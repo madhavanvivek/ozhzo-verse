@@ -59,6 +59,11 @@ class UpdateHomeRequest(BaseModel):
 class HomeDTO(BaseModel):
     id: UUID
     name: str
+    public_home_id: Optional[str] = None
+    home_qr_status: Optional[str] = "ACTIVE"
+    home_qr_version: Optional[int] = 1
+    home_qr_token: Optional[str] = None
+    home_qr_url: Optional[str] = None
     country: Optional[str] = None
     state_province: Optional[str] = None
     district_city: Optional[str] = None
@@ -77,6 +82,56 @@ class HomeDetailDTO(HomeDTO):
     member_count: int = 1
     inventory_count: int = 0
     active_chores_count: int = 0
+
+
+class HomeIdentityDTO(BaseModel):
+    home_id: UUID
+    name: str
+    public_home_id: str
+    qr_token: str
+    qr_status: str
+    qr_version: int
+    qr_url: str
+    qr_created_at: Optional[datetime] = None
+    qr_revoked_at: Optional[datetime] = None
+
+
+class HomePublicInfoDTO(BaseModel):
+    home_id: UUID
+    home_name: str
+    public_home_id: str
+    owner_name: Optional[str] = None
+    member_count: int = 1
+    qr_status: str = "ACTIVE"
+    is_active: bool = True
+    accepts_members: bool = True
+    is_already_member: bool = False
+    user_membership_status: Optional[str] = None
+    has_pending_join_request: bool = False
+
+
+class CreateJoinRequestInput(BaseModel):
+    message: Optional[str] = Field(None, max_length=300)
+
+
+class JoinRequestDTO(BaseModel):
+    id: UUID
+    home_id: UUID
+    home_name: Optional[str] = None
+    user_id: UUID
+    display_name: str
+    email: Optional[str] = None
+    avatar_url: Optional[str] = None
+    status: str
+    message: Optional[str] = None
+    created_at: datetime
+    reviewed_by: Optional[UUID] = None
+    reviewed_at: Optional[datetime] = None
+
+
+class ReviewJoinRequestInput(BaseModel):
+    action: str = Field(..., pattern="^(APPROVE|REJECT)$")
+    role: Optional[str] = Field("MEMBER", pattern="^(HOME_ADMIN|ADMIN|MEMBER|CHILD|GUEST)$")
 
 
 # Members & Invitations DTOs

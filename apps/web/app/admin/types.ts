@@ -68,6 +68,9 @@ export interface AdminUserDetail {
 export interface AdminHomeListItem {
   id: string;
   name: string;
+  public_home_id?: string | null;
+  home_qr_status?: string;
+  home_qr_version?: number;
   status: string;
   currency: string;
   created_by_email?: string | null;
@@ -103,6 +106,9 @@ export interface AdminHomeInvitationItem {
 export interface AdminHomeDetail {
   id: string;
   name: string;
+  public_home_id?: string | null;
+  home_qr_status?: string;
+  home_qr_version?: number;
   status: string;
   currency: string;
   timezone: string;

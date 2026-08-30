@@ -194,6 +194,9 @@ async def list_and_search_homes(
             AdminHomeListItemDTO(
                 id=h.id,
                 name=h.name,
+                public_home_id=h.public_home_id,
+                home_qr_status=getattr(h, "home_qr_status", "ACTIVE") or "ACTIVE",
+                home_qr_version=getattr(h, "home_qr_version", 1) or 1,
                 status=getattr(h, "status", "ACTIVE") or "ACTIVE",
                 currency=getattr(h, "currency", None) or "USD",
                 created_by_email=c_email,
@@ -388,6 +391,9 @@ async def get_home_detail(
         data=AdminHomeDetailDTO(
             id=home.id,
             name=home.name,
+            public_home_id=home.public_home_id,
+            home_qr_status=getattr(home, "home_qr_status", "ACTIVE") or "ACTIVE",
+            home_qr_version=getattr(home, "home_qr_version", 1) or 1,
             status=getattr(home, "status", "ACTIVE") or "ACTIVE",
             currency=home.currency or "USD",
             timezone=home.timezone or "UTC",

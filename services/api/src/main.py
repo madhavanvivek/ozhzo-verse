@@ -47,6 +47,12 @@ async def lifespan(app: FastAPI):
                 ("inventory_items", "next_service_due_at", "DATE"),
                 ("inventory_items", "service_notes", "VARCHAR"),
                 ("homes", "status", "VARCHAR DEFAULT 'ACTIVE'"),
+                ("homes", "public_home_id", "VARCHAR(16)"),
+                ("homes", "home_qr_token", "VARCHAR(128)"),
+                ("homes", "home_qr_status", "VARCHAR(32) DEFAULT 'ACTIVE'"),
+                ("homes", "home_qr_version", "INTEGER DEFAULT 1"),
+                ("homes", "home_qr_created_at", "TIMESTAMP WITH TIME ZONE DEFAULT NOW()"),
+                ("homes", "home_qr_revoked_at", "TIMESTAMP WITH TIME ZONE"),
                 ("users", "is_super_admin", "BOOLEAN DEFAULT FALSE"),
                 ("users", "system_role", "VARCHAR DEFAULT 'USER'"),
                 ("users", "mobile_verified", "BOOLEAN DEFAULT FALSE"),
@@ -76,13 +82,33 @@ async def lifespan(app: FastAPI):
             indexes_to_ensure = [
                 "CREATE INDEX IF NOT EXISTS idx_tasks_home_status_due ON tasks (home_id, status, due_date);",
                 "CREATE INDEX IF NOT EXISTS idx_bills_home_status_due ON bills (home_id, status, due_date);",
-                "CREATE INDEX IF NOT EXISTS idx_sub_audit_time ON subscription_audit_logs (created_at DESC);"
+                "CREATE INDEX IF NOT EXISTS idx_sub_audit_time ON subscription_audit_logs (created_at DESC);",
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_homes_public_home_id ON homes (public_home_id) WHERE public_home_id IS NOT NULL;",
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_homes_qr_token ON homes (home_qr_token) WHERE home_qr_token IS NOT NULL;"
             ]
             for idx_stmt in indexes_to_ensure:
                 try:
                     await conn.execute(text(idx_stmt))
                 except Exception:
                     pass
+
+            # 5. Backfill existing homes missing public_home_id or home_qr_token
+            try:
+                import secrets
+                res = await conn.execute(text("SELECT id FROM homes WHERE public_home_id IS NULL OR home_qr_token IS NULL;"))
+                unfilled_homes = res.fetchall()
+                for (h_id,) in unfilled_homes:
+                    chars = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+                    h_code = "OZH-" + "".join(secrets.choice(chars) for _ in range(6))
+                    qr_tok = secrets.token_urlsafe(32)
+                    await conn.execute(text(
+                        f"UPDATE homes SET public_home_id = COALESCE(public_home_id, '{h_code}'), "
+                        f"home_qr_token = COALESCE(home_qr_token, '{qr_tok}'), "
+                        f"home_qr_status = COALESCE(home_qr_status, 'ACTIVE'), "
+                        f"home_qr_version = COALESCE(home_qr_version, 1) WHERE id = '{h_id}';"
+                    ))
+            except Exception as bf_err:
+                logger.warning(f"Home identity backfill notice: {bf_err}")
         logger.info("Database schema synchronization completed successfully.")
     except Exception as e:
         logger.warning(f"Database schema sync warning: {e}")

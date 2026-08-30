@@ -314,9 +314,17 @@ export default function AdminHomeDetailPage() {
                   Suspended
                 </AdminBadge>
               )}
+              {home.public_home_id && (
+                <AdminBadge variant="info" size="md">
+                  {home.public_home_id}
+                </AdminBadge>
+              )}
+              <AdminBadge variant={home.home_qr_status === 'ACTIVE' ? 'success' : 'neutral'} size="md">
+                QR: {home.home_qr_status || 'ACTIVE'}
+              </AdminBadge>
             </div>
             <div style={{ fontSize: '13px', color: 'var(--color-text-secondary, #64748b)', marginTop: '4px' }}>
-              Home ID: <code>{home.id}</code>
+              Public ID: <code>{home.public_home_id || 'N/A'}</code> &bull; UUID: <code>{home.id}</code>
             </div>
           </div>
         </div>

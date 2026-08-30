@@ -91,6 +91,12 @@ class HomeModel(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(120), nullable=False)
+    public_home_id = Column(String(16), unique=True, index=True, nullable=True)
+    home_qr_token = Column(String(128), unique=True, index=True, nullable=True)
+    home_qr_status = Column(String(32), default="ACTIVE", nullable=False)  # ACTIVE, REVOKED, DISABLED
+    home_qr_version = Column(Integer, default=1, nullable=False)
+    home_qr_created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    home_qr_revoked_at = Column(DateTime(timezone=True), nullable=True)
     country = Column(String(8), nullable=True)
     state_province = Column(String(64), nullable=True)
     district_city = Column(String(64), nullable=True)
@@ -107,6 +113,7 @@ class HomeModel(Base):
 
     members = relationship("HomeMemberModel", back_populates="home", cascade="all, delete-orphan")
     invitations = relationship("InvitationModel", back_populates="home", cascade="all, delete-orphan")
+    join_requests = relationship("HomeJoinRequestModel", back_populates="home", cascade="all, delete-orphan")
     units = relationship("UnitModel", back_populates="home", cascade="all, delete-orphan")
     locations = relationship("LocationModel", back_populates="home", cascade="all, delete-orphan")
     inventory_items = relationship("InventoryItemModel", back_populates="home", cascade="all, delete-orphan")
@@ -125,6 +132,29 @@ class HomeModel(Base):
     event_categories = relationship("EventCategoryModel", back_populates="home", cascade="all, delete-orphan")
     events = relationship("EventModel", back_populates="home", cascade="all, delete-orphan")
     subscription = relationship("SubscriptionModel", back_populates="home", uselist=False, cascade="all, delete-orphan")
+
+
+class HomeJoinRequestModel(Base):
+    __tablename__ = "home_join_requests"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    home_id = Column(UUID(as_uuid=True), ForeignKey("homes.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    status = Column(String(32), default="PENDING", nullable=False)  # PENDING, APPROVED, REJECTED, CANCELLED
+    message = Column(Text, nullable=True)
+    reviewed_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    __table_args__ = (
+        Index("idx_join_requests_home_status", "home_id", "status"),
+        Index("idx_join_requests_user_status", "user_id", "status"),
+    )
+
+    home = relationship("HomeModel", back_populates="join_requests")
+    user = relationship("UserModel", foreign_keys=[user_id])
+    reviewer = relationship("UserModel", foreign_keys=[reviewed_by])
 
 
 class HomeMemberModel(Base):

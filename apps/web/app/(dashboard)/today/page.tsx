@@ -54,10 +54,21 @@ export default function TodayPage() {
     const loadTodayData = async () => {
       setIsLoading(true);
       try {
-        const homeId = await apiClient.getValidActiveHome();
+        const initialHomeId = apiClient.getActiveHomeId();
+        const [homeIdRes, initialDataRes] = await Promise.allSettled([
+          apiClient.getValidActiveHome(),
+          initialHomeId ? apiClient.get<TodayResponse>(`/homes/${initialHomeId}/today`) : Promise.resolve(null)
+        ]);
 
-        if (homeId) {
-          const res = await apiClient.get<TodayResponse>(`/homes/${homeId}/today`);
+        let finalHomeId = initialHomeId;
+        if (homeIdRes.status === 'fulfilled' && homeIdRes.value) {
+          finalHomeId = homeIdRes.value;
+        }
+
+        if (initialDataRes.status === 'fulfilled' && initialDataRes.value) {
+          setData(initialDataRes.value);
+        } else if (finalHomeId && finalHomeId !== initialHomeId) {
+          const res = await apiClient.get<TodayResponse>(`/homes/${finalHomeId}/today`);
           setData(res);
         } else {
           setData(null);

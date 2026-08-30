@@ -62,24 +62,35 @@ export default function ShoppingPage() {
   const loadData = async (showLoading = false) => {
     if (showLoading) setIsLoading(true);
     try {
-      const homeId = await apiClient.getValidActiveHome();
-      setActiveHomeId(homeId);
+      const initialHomeId = apiClient.getActiveHomeId();
+      const [homeIdRes, initialDataRes] = await Promise.allSettled([
+        apiClient.getValidActiveHome(),
+        initialHomeId ? apiClient.get<ShoppingItem[]>(`/homes/${initialHomeId}/purchase-list?status_filter=ALL`) : Promise.resolve(null)
+      ]);
 
-      if (homeId) {
-        const res = await apiClient.get<ShoppingItem[]>(`/homes/${homeId}/purchase-list?status_filter=ALL`);
-        if (Array.isArray(res)) {
-          setItems(res.map((i: any) => ({
-            id: i.id,
-            name: i.name,
-            quantity: parseFloat(i.quantity) || 1,
-            unit: i.unit || 'pcs',
-            notes: i.notes,
-            status: i.status || 'PENDING',
-            added_by_name: i.added_by_name,
-            purchased_by_name: i.purchased_by_name,
-            version: i.version || 1
-          })));
-        }
+      let finalHomeId = initialHomeId;
+      if (homeIdRes.status === 'fulfilled' && homeIdRes.value) {
+        finalHomeId = homeIdRes.value;
+      }
+      setActiveHomeId(finalHomeId);
+
+      let res = initialDataRes.status === 'fulfilled' ? initialDataRes.value : null;
+      if (finalHomeId && finalHomeId !== initialHomeId) {
+        res = await apiClient.get<ShoppingItem[]>(`/homes/${finalHomeId}/purchase-list?status_filter=ALL`);
+      }
+
+      if (Array.isArray(res)) {
+        setItems(res.map((i: any) => ({
+          id: i.id,
+          name: i.name,
+          quantity: parseFloat(i.quantity) || 1,
+          unit: i.unit || 'pcs',
+          notes: i.notes,
+          status: i.status || 'PENDING',
+          added_by_name: i.added_by_name,
+          purchased_by_name: i.purchased_by_name,
+          version: i.version || 1
+        })));
       }
     } catch (err) {
       console.error('Failed to load shopping list:', err);

@@ -16,20 +16,18 @@ export default function AdminLayout({
   const pathname = usePathname();
   const isLoginPage = pathname === '/admin/login' || pathname.startsWith('/admin/login');
 
-  const [user, setUser] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(!isLoginPage);
+  const [user, setUser] = useState<any>(() => apiClient.getUser());
+  const [isLoading, setIsLoading] = useState(() => !isLoginPage && !apiClient.hasToken());
   const [isForbidden, setIsForbidden] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
   const checkSuperAdminAuth = async () => {
     if (isLoginPage) return;
 
-    setIsLoading(true);
-    setIsForbidden(false);
-
     try {
       const token = apiClient.getAccessToken();
       if (!token) {
+        setIsLoading(true);
         router.replace(`/admin/login?redirect=${encodeURIComponent(pathname || '/admin')}`);
         return;
       }
@@ -42,14 +40,15 @@ export default function AdminLayout({
         return;
       }
 
+      apiClient.setUser(profile);
+      setUser(profile);
+
       // Check if user is Super Admin
       const isSuper = Boolean(profile.is_super_admin || profile.system_role === 'SUPER_ADMIN');
 
       if (!isSuper) {
         setIsForbidden(true);
-        setUser(profile);
       } else {
-        setUser(profile);
         setIsForbidden(false);
       }
     } catch (err: any) {
@@ -59,7 +58,6 @@ export default function AdminLayout({
       } else if (msg.includes('403') || msg.includes('privileges required')) {
         setIsForbidden(true);
       } else {
-        // Retry or assume not authenticated
         router.replace(`/admin/login?redirect=${encodeURIComponent(pathname || '/admin')}`);
       }
     } finally {
@@ -84,7 +82,7 @@ export default function AdminLayout({
     return <>{children}</>;
   }
 
-  // 1. Loading State
+  // 1. Loading State (Only when no cached token exists)
   if (isLoading) {
     return (
       <div

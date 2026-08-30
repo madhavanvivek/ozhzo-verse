@@ -124,6 +124,30 @@ class ApiClient {
     }
   }
 
+  getUser<T = any>(): T | null {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('user');
+      if (stored) {
+        try {
+          return JSON.parse(stored) as T;
+        } catch {
+          return null;
+        }
+      }
+    }
+    return null;
+  }
+
+  setUser(user: any) {
+    if (typeof window !== 'undefined') {
+      if (user) {
+        localStorage.setItem('user', JSON.stringify(user));
+      } else {
+        localStorage.removeItem('user');
+      }
+    }
+  }
+
   /**
    * Complete session wipe: clears tokens, active home, cached states, and local/session storage.
    */
@@ -138,6 +162,7 @@ class ApiClient {
       try {
         localStorage.removeItem('access_token');
         localStorage.removeItem('refresh_token');
+        localStorage.removeItem('user');
         localStorage.removeItem('active_home_id');
         sessionStorage.clear();
 

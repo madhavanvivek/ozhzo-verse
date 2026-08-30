@@ -3,7 +3,7 @@ from typing import Any, List, Optional
 from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_, select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import get_current_user, require_home_permission, HomeContext
@@ -748,7 +748,7 @@ async def get_calendar_projection(
     # 1. Fetch Calendar Events
     event_query = (
         select(EventModel)
-        .options(selectinload(EventModel.category))
+        .options(joinedload(EventModel.category))
         .where(
             EventModel.home_id == home_ctx.home_id,
             EventModel.deleted_at.is_(None),
@@ -756,7 +756,7 @@ async def get_calendar_projection(
             EventModel.start_time <= end_date
         )
     )
-    events = (await db.execute(event_query)).scalars().all()
+    events = (await db.execute(event_query)).unique().scalars().all()
     total_events = len(events)
 
     for e in events:
@@ -787,7 +787,7 @@ async def get_calendar_projection(
         end_d = end_date.date()
         task_query = (
             select(TaskModel)
-            .options(selectinload(TaskModel.category))
+            .options(joinedload(TaskModel.category))
             .where(
                 TaskModel.home_id == home_ctx.home_id,
                 TaskModel.deleted_at.is_(None),
@@ -797,7 +797,7 @@ async def get_calendar_projection(
                 TaskModel.due_date <= end_d
             )
         )
-        tasks = (await db.execute(task_query)).scalars().all()
+        tasks = (await db.execute(task_query)).unique().scalars().all()
         total_tasks = len(tasks)
 
         for t in tasks:
@@ -829,7 +829,7 @@ async def get_calendar_projection(
         end_d = end_date.date()
         bill_query = (
             select(BillModel)
-            .options(selectinload(BillModel.category))
+            .options(joinedload(BillModel.category))
             .where(
                 BillModel.home_id == home_ctx.home_id,
                 BillModel.deleted_at.is_(None),
@@ -838,7 +838,7 @@ async def get_calendar_projection(
                 BillModel.due_date <= end_d
             )
         )
-        bills = (await db.execute(bill_query)).scalars().all()
+        bills = (await db.execute(bill_query)).unique().scalars().all()
         total_bills = len(bills)
 
         for b in bills:

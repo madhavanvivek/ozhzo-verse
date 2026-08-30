@@ -2,7 +2,7 @@ from uuid import UUID
 from fastapi import Depends, Header, HTTPException, Path, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 import redis.asyncio as redis
 
@@ -51,7 +51,7 @@ async def get_current_user(
 
     query = (
         select(UserModel)
-        .options(selectinload(UserModel.profile))
+        .options(joinedload(UserModel.profile))
         .where(UserModel.id == user_id, UserModel.is_active == True, UserModel.deleted_at == None)
     )
     result = await db.execute(query)
@@ -115,7 +115,7 @@ def require_home_permission(required_permission: str):
     ) -> HomeContext:
         query = (
             select(HomeMemberModel)
-            .options(selectinload(HomeMemberModel.home))
+            .options(joinedload(HomeMemberModel.home))
             .where(
                 HomeMemberModel.home_id == home_id,
                 HomeMemberModel.user_id == current_user.id,

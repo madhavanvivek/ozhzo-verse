@@ -48,20 +48,24 @@ export default function AdminSubscriptionsPage() {
   });
   const [promoModalError, setPromoModalError] = useState<string | null>(null);
 
-  const fetchData = async () => {
+  const fetchData = async (targetTab: string = activeTab) => {
     setIsLoading(true);
     setError(null);
     try {
-      const [plansData, featuresData, promotionsData, subscribersData] = await Promise.all([
-        apiClient.get<SubscriptionPlan[]>('/admin/subscriptions/plans'),
-        apiClient.get<SubscriptionFeature[]>('/admin/subscriptions/features'),
-        apiClient.get<Promotion[]>('/admin/subscriptions/promotions'),
-        apiClient.get<AdminSubscriberListItem[]>('/admin/subscriptions/subscribers')
-      ]);
-      setPlans(plansData || []);
-      setFeatures(featuresData || []);
-      setPromotions(promotionsData || []);
-      setSubscribers(subscribersData || []);
+      if (targetTab === 'plans' || targetTab === 'features') {
+        const [plansData, featuresData] = await Promise.all([
+          apiClient.get<SubscriptionPlan[]>('/admin/subscriptions/plans'),
+          apiClient.get<SubscriptionFeature[]>('/admin/subscriptions/features')
+        ]);
+        setPlans(plansData || []);
+        setFeatures(featuresData || []);
+      } else if (targetTab === 'promotions') {
+        const promotionsData = await apiClient.get<Promotion[]>('/admin/subscriptions/promotions');
+        setPromotions(promotionsData || []);
+      } else if (targetTab === 'subscribers') {
+        const subscribersData = await apiClient.get<AdminSubscriberListItem[]>('/admin/subscriptions/subscribers');
+        setSubscribers(subscribersData || []);
+      }
     } catch (err: any) {
       setError(err?.message || 'Failed to fetch subscription configuration.');
     } finally {
@@ -70,8 +74,8 @@ export default function AdminSubscriptionsPage() {
   };
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    fetchData(activeTab);
+  }, [activeTab]);
 
   const handleCreatePromotion = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -161,7 +165,7 @@ export default function AdminSubscriptionsPage() {
           </Link>
 
           <button
-            onClick={fetchData}
+            onClick={() => fetchData(activeTab)}
             disabled={isLoading}
             style={{
               display: 'inline-flex',

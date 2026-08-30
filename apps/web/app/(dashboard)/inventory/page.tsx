@@ -127,79 +127,98 @@ export default function InventoryPage() {
   const loadData = async (showLoadingState = false) => {
     if (showLoadingState) setIsLoading(true);
     try {
-      const homeId = await apiClient.getValidActiveHome();
-      setActiveHomeId(homeId);
+      const initialHomeId = apiClient.getActiveHomeId();
+      const [homeIdRes, itemsRes, flatLocsRes, locTypesRes] = await Promise.allSettled([
+        apiClient.getValidActiveHome(),
+        initialHomeId ? apiClient.get<any>(`/homes/${initialHomeId}/inventory/items`) : Promise.resolve(null),
+        initialHomeId ? apiClient.get<any>(`/homes/${initialHomeId}/locations`) : Promise.resolve(null),
+        initialHomeId ? apiClient.get<any>(`/homes/${initialHomeId}/location-types`) : Promise.resolve(null)
+      ]);
 
-      if (homeId) {
-        const [itemsRes, flatLocsRes, locTypesRes] = await Promise.allSettled([
-          apiClient.get<any>(`/homes/${homeId}/inventory/items`),
-          apiClient.get<any>(`/homes/${homeId}/locations`),
-          apiClient.get<any>(`/homes/${homeId}/location-types`)
+      let finalHomeId = initialHomeId;
+      if (homeIdRes.status === 'fulfilled' && homeIdRes.value) {
+        finalHomeId = homeIdRes.value;
+      }
+      setActiveHomeId(finalHomeId);
+
+      let itemsData = itemsRes.status === 'fulfilled' ? itemsRes.value : null;
+      let flatLocsData = flatLocsRes.status === 'fulfilled' ? flatLocsRes.value : null;
+      let locTypesData = locTypesRes.status === 'fulfilled' ? locTypesRes.value : null;
+
+      // If homeId changed or was not available at start, re-fetch for finalHomeId
+      if (finalHomeId && finalHomeId !== initialHomeId) {
+        const [freshItems, freshLocs, freshTypes] = await Promise.allSettled([
+          apiClient.get<any>(`/homes/${finalHomeId}/inventory/items`),
+          apiClient.get<any>(`/homes/${finalHomeId}/locations`),
+          apiClient.get<any>(`/homes/${finalHomeId}/location-types`)
         ]);
+        if (freshItems.status === 'fulfilled') itemsData = freshItems.value;
+        if (freshLocs.status === 'fulfilled') flatLocsData = freshLocs.value;
+        if (freshTypes.status === 'fulfilled') locTypesData = freshTypes.value;
+      }
 
-        if (locTypesRes.status === 'fulfilled' && Array.isArray(locTypesRes.value)) {
-          setLocationTypes(locTypesRes.value);
+      if (locTypesData && Array.isArray(locTypesData)) {
+        setLocationTypes(locTypesData);
+      }
+
+      if (itemsData) {
+        const rawItems = itemsData.items || itemsData;
+        if (Array.isArray(rawItems)) {
+          setItems(rawItems.map((i: any) => ({
+            id: i.id,
+            name: i.name,
+            item_type: i.item_type || 'CONSUMABLE',
+            category_name: i.category_name || 'General',
+            quantity: parseFloat(i.quantity) || 0,
+            unit: i.unit || 'pcs',
+            min_threshold: i.min_threshold ? parseFloat(i.min_threshold) : undefined,
+            preferred_quantity: i.preferred_quantity ? parseFloat(i.preferred_quantity) : undefined,
+            location_id: i.location_id,
+            location_path: i.location_path || 'Unassigned',
+            condition: i.condition || 'Good',
+            asset_status: i.asset_status || 'AVAILABLE',
+            current_holder_name: i.current_holder_name,
+            expiry_date: i.expiry_date,
+            status: i.status || 'GOOD',
+            expiry_status: i.expiry_status || 'NORMAL',
+            notes: i.notes
+          })));
         }
+      }
 
-        if (itemsRes.status === 'fulfilled' && itemsRes.value) {
-          const rawItems = itemsRes.value.items || itemsRes.value;
-          if (Array.isArray(rawItems)) {
-            setItems(rawItems.map((i: any) => ({
-              id: i.id,
-              name: i.name,
-              item_type: i.item_type || 'CONSUMABLE',
-              category_name: i.category_name || 'General',
-              quantity: parseFloat(i.quantity) || 0,
-              unit: i.unit || 'pcs',
-              min_threshold: i.min_threshold ? parseFloat(i.min_threshold) : undefined,
-              preferred_quantity: i.preferred_quantity ? parseFloat(i.preferred_quantity) : undefined,
-              location_id: i.location_id,
-              location_path: i.location_path || 'Unassigned',
-              condition: i.condition || 'Good',
-              asset_status: i.asset_status || 'AVAILABLE',
-              current_holder_name: i.current_holder_name,
-              expiry_date: i.expiry_date,
-              status: i.status || 'GOOD',
-              expiry_status: i.expiry_status || 'NORMAL',
-              notes: i.notes
-            })));
-          }
-        }
+      if (flatLocsData) {
+        const locs = Array.isArray(flatLocsData) ? flatLocsData : [];
+        setFlatLocations(locs.map((l: any) => ({
+          id: l.id,
+          name: l.name,
+          path: l.path || l.name
+        })));
 
-        if (flatLocsRes.status === 'fulfilled' && flatLocsRes.value) {
-          const locs = Array.isArray(flatLocsRes.value) ? flatLocsRes.value : [];
-          setFlatLocations(locs.map((l: any) => ({
+        const map = new Map<string, LocationNode>();
+        const roots: LocationNode[] = [];
+        locs.forEach((l: any) => {
+          map.set(l.id, {
             id: l.id,
             name: l.name,
-            path: l.path || l.name
-          })));
-
-          const map = new Map<string, LocationNode>();
-          const roots: LocationNode[] = [];
-          locs.forEach((l: any) => {
-            map.set(l.id, {
-              id: l.id,
-              name: l.name,
-              location_type: l.location_type,
-              path: l.path || l.name,
-              item_count: l.item_count || 0,
-              children: []
-            });
+            location_type: l.location_type,
+            path: l.path || l.name,
+            item_count: l.item_count || 0,
+            children: []
           });
-          locs.forEach((l: any) => {
-            const node = map.get(l.id)!;
-            if (l.parent_id && map.has(l.parent_id)) {
-              map.get(l.parent_id)!.children!.push(node);
-            } else {
-              roots.push(node);
-            }
-          });
-          setLocationsTree(roots);
-
-          if (locs.length > 0) {
-            setNewItemLocationId(locs[0].id);
-            setTargetLocationId(locs[0].id);
+        });
+        locs.forEach((l: any) => {
+          const node = map.get(l.id)!;
+          if (l.parent_id && map.has(l.parent_id)) {
+            map.get(l.parent_id)!.children!.push(node);
+          } else {
+            roots.push(node);
           }
+        });
+        setLocationsTree(roots);
+
+        if (locs.length > 0) {
+          setNewItemLocationId(locs[0].id);
+          setTargetLocationId(locs[0].id);
         }
       }
     } catch (err) {

@@ -53,7 +53,7 @@ export default function DashboardLayout({
     email?: string | null;
     phone_number?: string | null;
     mobile_verified?: boolean;
-  } | null>(null);
+  } | null>(() => apiClient.getUser());
   const [unreadCount, setUnreadCount] = useState(0);
 
   // Modals & Navigation state
@@ -66,32 +66,45 @@ export default function DashboardLayout({
 
   const loadUserDataAndHomes = async () => {
     try {
-      const [userRes, homesRes] = await Promise.allSettled([
-        apiClient.get<{
-          display_name: string;
-          email?: string | null;
-          phone_number?: string | null;
-          mobile_verified?: boolean;
-        }>('/users/me'),
-        apiClient.get<
-          Array<{
-            id: string;
-            name: string;
-            role: string;
-          }>
-        >('/homes')
-      ]);
+      const userRes = await apiClient.get<{
+        id: string;
+        display_name: string;
+        email?: string | null;
+        phone_number?: string | null;
+        mobile_verified?: boolean;
+        homes?: Array<{
+          home_id?: string;
+          id?: string;
+          name: string;
+          role: string;
+        }>;
+      }>('/users/me');
 
-      if (userRes.status === 'fulfilled' && userRes.value) {
-        setUserProfile(userRes.value);
-      }
+      if (userRes) {
+        setUserProfile(userRes);
+        apiClient.setUser(userRes);
 
-      if (homesRes.status === 'fulfilled' && homesRes.value) {
-        const mappedHomes = homesRes.value.map((home) => ({
-          home_id: home.id,
-          name: home.name,
-          role: home.role
-        }));
+        let mappedHomes: Array<{ home_id: string; name: string; role: string }> = [];
+        if (Array.isArray(userRes.homes) && userRes.homes.length > 0) {
+          mappedHomes = userRes.homes.map((home) => ({
+            home_id: home.home_id || home.id || '',
+            name: home.name,
+            role: home.role
+          }));
+        } else {
+          try {
+            const freshHomes = await apiClient.get<Array<{ id: string; name: string; role: string }>>('/homes');
+            if (Array.isArray(freshHomes)) {
+              mappedHomes = freshHomes.map((h) => ({
+                home_id: h.id,
+                name: h.name,
+                role: h.role
+              }));
+            }
+          } catch {
+            mappedHomes = [];
+          }
+        }
 
         setHomes(mappedHomes);
         const resolvedId = apiClient.resolveActiveHome(mappedHomes);

@@ -44,16 +44,26 @@ async def list_user_notifications(
     if notification_type:
         filters.append(NotificationModel.type == notification_type)
 
-    # Total matching count
-    count_query = select(func.count()).select_from(NotificationModel).where(*filters)
-    total = (await db.execute(count_query)).scalar() or 0
+    if is_read is None and not notification_type:
+        counts_res = (await db.execute(
+            select(
+                func.count(NotificationModel.id),
+                func.count().filter(NotificationModel.is_read == False)
+            ).where(NotificationModel.user_id == current_user.id)
+        )).first()
+        total = counts_res[0] if counts_res else 0
+        unread_count = counts_res[1] if counts_res else 0
+    else:
+        # Total matching count
+        count_query = select(func.count()).select_from(NotificationModel).where(*filters)
+        total = (await db.execute(count_query)).scalar() or 0
 
-    # Total unread count
-    unread_query = select(func.count()).select_from(NotificationModel).where(
-        NotificationModel.user_id == current_user.id,
-        NotificationModel.is_read == False
-    )
-    unread_count = (await db.execute(unread_query)).scalar() or 0
+        # Total unread count
+        unread_query = select(func.count()).select_from(NotificationModel).where(
+            NotificationModel.user_id == current_user.id,
+            NotificationModel.is_read == False
+        )
+        unread_count = (await db.execute(unread_query)).scalar() or 0
 
     # Paginated results
     query = (

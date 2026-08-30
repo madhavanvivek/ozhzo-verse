@@ -202,9 +202,6 @@ class ApiClient {
     // Stale or missing Home ID -> Select first accessible home
     const firstHomeId = normalizedHomes[0].id;
     this.setActiveHomeId(firstHomeId);
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('home-changed', { detail: { homeId: firstHomeId } }));
-    }
     return firstHomeId;
   }
 
@@ -393,8 +390,9 @@ class ApiClient {
   get<T>(endpoint: string, options?: { skipCache?: boolean }): Promise<T> {
     const token = this.getAccessToken() || '';
     const cleanEndpoint = endpoint.trim().split('?')[0];
-    const cacheKey = `${endpoint}::${token}`;
-    const isCacheable = (cleanEndpoint === '/users/me' || cleanEndpoint === '/homes') && !options?.skipCache;
+    const normalizedEndpoint = cleanEndpoint.startsWith('/') ? cleanEndpoint : `/${cleanEndpoint}`;
+    const cacheKey = `${normalizedEndpoint}::${token}`;
+    const isCacheable = (normalizedEndpoint === '/users/me' || normalizedEndpoint === '/homes') && !options?.skipCache;
 
     // 1. Return fresh cached response if available
     if (isCacheable) {

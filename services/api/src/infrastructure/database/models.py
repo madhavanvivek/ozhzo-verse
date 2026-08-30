@@ -586,6 +586,11 @@ class BillModel(Base):
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
     deleted_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Legacy column compatibility mappings
+    category_legacy = Column("category", String(64), nullable=True, default="General")
+    amount_legacy = Column("amount", Numeric(12, 2), nullable=True)
+    recurrence_interval_legacy = Column("recurrence_interval", String(32), nullable=True)
+
     __table_args__ = (
         Index("idx_bills_home_status", "home_id", "status"),
         Index("idx_bills_home_due", "home_id", "due_date"),
@@ -602,11 +607,15 @@ class BillModel(Base):
 
     def __init__(self, **kwargs):
         if "amount" in kwargs and "expected_amount" not in kwargs:
-            kwargs["expected_amount"] = kwargs.pop("amount")
+            kwargs["expected_amount"] = kwargs["amount"]
+        if "expected_amount" in kwargs and "amount_legacy" not in kwargs:
+            kwargs["amount_legacy"] = kwargs["expected_amount"]
         if "recurrence_interval" in kwargs and "recurrence_type" not in kwargs:
-            kwargs["recurrence_type"] = kwargs.pop("recurrence_interval")
-        if "category" in kwargs and isinstance(kwargs["category"], str):
-            kwargs.pop("category")
+            kwargs["recurrence_type"] = kwargs["recurrence_interval"]
+        if "recurrence_type" in kwargs and "recurrence_interval_legacy" not in kwargs:
+            kwargs["recurrence_interval_legacy"] = kwargs["recurrence_type"]
+        if "category_legacy" not in kwargs:
+            kwargs["category_legacy"] = "General"
         super().__init__(**kwargs)
 
     @property

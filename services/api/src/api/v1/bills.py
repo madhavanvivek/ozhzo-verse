@@ -120,12 +120,6 @@ def map_bill_dto(
     linked_task_title = None
     if task_map and bill.id in task_map:
         linked_task_id, linked_task_title = task_map[bill.id]
-    elif hasattr(bill, "tasks") and bill.tasks:
-        for t in bill.tasks:
-            if not getattr(t, "deleted_at", None):
-                linked_task_id = t.id
-                linked_task_title = t.title
-                break
 
     return BillDTO(
         id=bill.id or uuid4(),

@@ -36,20 +36,35 @@ class UserModel(Base):
 
     @property
     def display_name(self) -> str:
-        if self.profile and self.profile.display_name:
-            return self.profile.display_name
+        from sqlalchemy import inspect
+        try:
+            ins = inspect(self)
+            if "profile" in ins.dict and ins.dict["profile"]:
+                return ins.dict["profile"].display_name
+        except Exception:
+            pass
         return self.email or "Member"
 
     @property
     def first_name(self) -> str:
-        if self.profile:
-            return self.profile.first_name
+        from sqlalchemy import inspect
+        try:
+            ins = inspect(self)
+            if "profile" in ins.dict and ins.dict["profile"]:
+                return ins.dict["profile"].first_name
+        except Exception:
+            pass
         return (self.email or "Member").split("@")[0]
 
     @property
     def last_name(self) -> str:
-        if self.profile:
-            return self.profile.last_name
+        from sqlalchemy import inspect
+        try:
+            ins = inspect(self)
+            if "profile" in ins.dict and ins.dict["profile"]:
+                return ins.dict["profile"].last_name
+        except Exception:
+            pass
         return ""
 
 

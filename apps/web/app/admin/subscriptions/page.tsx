@@ -11,23 +11,53 @@ import {
   Percent,
   X,
   Users,
-  ExternalLink
+  ExternalLink,
+  CreditCard,
+  DollarSign,
+  Activity
 } from 'lucide-react';
 import { apiClient } from '@/lib/apiClient';
 import { AdminBadge } from '../components/AdminBadge';
-import { SubscriptionPlan, SubscriptionFeature, Promotion, AdminSubscriberListItem } from '../types';
+import {
+  SubscriptionPlan,
+  SubscriptionFeature,
+  Promotion,
+  AdminSubscriberListItem,
+  PaymentTransaction,
+  SubscriptionAnalytics
+} from '../types';
 
 export default function AdminSubscriptionsPage() {
   const [plans, setPlans] = useState<SubscriptionPlan[]>([]);
   const [features, setFeatures] = useState<SubscriptionFeature[]>([]);
   const [promotions, setPromotions] = useState<Promotion[]>([]);
   const [subscribers, setSubscribers] = useState<AdminSubscriberListItem[]>([]);
+  const [transactions, setTransactions] = useState<PaymentTransaction[]>([]);
+  const [analytics, setAnalytics] = useState<SubscriptionAnalytics | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   // Tab State
-  const [activeTab, setActiveTab] = useState<'plans' | 'subscribers' | 'promotions' | 'features'>('plans');
+  const [activeTab, setActiveTab] = useState<'plans' | 'subscribers' | 'transactions' | 'promotions' | 'features'>('plans');
+
+  // Plan Creation Modal
+  const [isPlanModalOpen, setIsPlanModalOpen] = useState(false);
+  const [isSubmittingPlan, setIsSubmittingPlan] = useState(false);
+  const [planForm, setPlanForm] = useState({
+    name: '',
+    code: '',
+    description: '',
+    plan_type: 'HOME',
+    included_members: 1,
+    maximum_members: 10,
+    max_homes: 5,
+    additional_member_allowed: true,
+    introductory_enabled: true,
+    introductory_duration_days: 365,
+    introductory_price: '0.00'
+  });
+  const [planModalError, setPlanModalError] = useState<string | null>(null);
 
   // Promotion Creation Modal
   const [isPromoModalOpen, setIsPromoModalOpen] = useState(false);
@@ -52,6 +82,11 @@ export default function AdminSubscriptionsPage() {
     setIsLoading(true);
     setError(null);
     try {
+      // Always load analytics summary in background
+      apiClient.get<SubscriptionAnalytics>('/admin/subscriptions/analytics')
+        .then((data) => setAnalytics(data))
+        .catch(() => {});
+
       if (targetTab === 'plans' || targetTab === 'features') {
         const [plansData, featuresData] = await Promise.all([
           apiClient.get<SubscriptionPlan[]>('/admin/subscriptions/plans'),
@@ -65,6 +100,9 @@ export default function AdminSubscriptionsPage() {
       } else if (targetTab === 'subscribers') {
         const subscribersData = await apiClient.get<AdminSubscriberListItem[]>('/admin/subscriptions/subscribers');
         setSubscribers(subscribersData || []);
+      } else if (targetTab === 'transactions') {
+        const txData = await apiClient.get<PaymentTransaction[]>('/admin/subscriptions/transactions');
+        setTransactions(txData || []);
       }
     } catch (err: any) {
       setError(err?.message || 'Failed to fetch subscription configuration.');
@@ -76,6 +114,34 @@ export default function AdminSubscriptionsPage() {
   useEffect(() => {
     fetchData(activeTab);
   }, [activeTab]);
+
+  const handleCreatePlan = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmittingPlan(true);
+    setPlanModalError(null);
+    try {
+      await apiClient.post('/admin/subscriptions/plans', {
+        name: planForm.name.trim(),
+        code: planForm.code.toUpperCase().trim(),
+        description: planForm.description.trim() || undefined,
+        plan_type: planForm.plan_type.toUpperCase(),
+        included_members: Number(planForm.included_members) || 1,
+        maximum_members: Number(planForm.maximum_members) || 10,
+        max_homes: Number(planForm.max_homes) || 5,
+        additional_member_allowed: planForm.additional_member_allowed,
+        introductory_enabled: planForm.introductory_enabled,
+        introductory_duration_days: Number(planForm.introductory_duration_days) || 365,
+        introductory_price: parseFloat(planForm.introductory_price) || 0
+      });
+      setIsPlanModalOpen(false);
+      setSuccessMessage(`Subscription plan "${planForm.name}" created successfully.`);
+      fetchData('plans');
+    } catch (err: any) {
+      setPlanModalError(err?.message || 'Failed to create subscription plan.');
+    } finally {
+      setIsSubmittingPlan(false);
+    }
+  };
 
   const handleCreatePromotion = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -99,7 +165,7 @@ export default function AdminSubscriptionsPage() {
       });
       setIsPromoModalOpen(false);
       setSuccessMessage(`Promotion code "${promoForm.code.toUpperCase()}" launched successfully.`);
-      fetchData();
+      fetchData('promotions');
     } catch (err: any) {
       setPromoModalError(err?.message || 'Failed to create promotion.');
     } finally {
@@ -128,7 +194,7 @@ export default function AdminSubscriptionsPage() {
               margin: 0
             }}
           >
-            Subscription & Pricing Matrix
+            Subscription & Monetization Console
           </h1>
           <p
             style={{
@@ -137,7 +203,7 @@ export default function AdminSubscriptionsPage() {
               marginTop: '4px'
             }}
           >
-            Configure tier plans, multi-currency regional price versions, and promotional campaign discounts.
+            Manage subscription plans, multi-home entitlements, regional prices, transaction audit trails, and promotions.
           </p>
         </div>
 
@@ -187,6 +253,63 @@ export default function AdminSubscriptionsPage() {
           </button>
         </div>
       </div>
+
+      {/* Analytics Summary Row */}
+      {analytics && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
+          <div style={{ padding: '16px', borderRadius: 'var(--radius-lg, 16px)', backgroundColor: 'var(--color-surface-card, #ffffff)', border: '1px solid var(--color-border-subtle, #e2e8f0)', boxShadow: 'var(--shadow-subtle)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-text-secondary, #64748b)', fontSize: '12px', fontWeight: 600, textTransform: 'uppercase' }}>
+              <DollarSign size={16} color="var(--color-primary-900, #0f172a)" />
+              <span>Total Revenue</span>
+            </div>
+            <div style={{ fontSize: '24px', fontWeight: 800, color: 'var(--color-primary-900, #0f172a)', marginTop: '6px' }}>
+              ${Number(analytics.total_revenue).toFixed(2)}
+            </div>
+            <div style={{ fontSize: '11px', color: 'var(--color-text-secondary, #64748b)', marginTop: '2px' }}>
+              Avg Order: ${Number(analytics.average_order_value).toFixed(2)}
+            </div>
+          </div>
+
+          <div style={{ padding: '16px', borderRadius: 'var(--radius-lg, 16px)', backgroundColor: 'var(--color-surface-card, #ffffff)', border: '1px solid var(--color-border-subtle, #e2e8f0)', boxShadow: 'var(--shadow-subtle)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-text-secondary, #64748b)', fontSize: '12px', fontWeight: 600, textTransform: 'uppercase' }}>
+              <Users size={16} color="var(--status-in-stock, #10b981)" />
+              <span>Active Subscribers</span>
+            </div>
+            <div style={{ fontSize: '24px', fontWeight: 800, color: 'var(--status-in-stock, #10b981)', marginTop: '6px' }}>
+              {analytics.active_subscribers}
+            </div>
+            <div style={{ fontSize: '11px', color: 'var(--color-text-secondary, #64748b)', marginTop: '2px' }}>
+              + {analytics.trial_subscribers} on free intro trial
+            </div>
+          </div>
+
+          <div style={{ padding: '16px', borderRadius: 'var(--radius-lg, 16px)', backgroundColor: 'var(--color-surface-card, #ffffff)', border: '1px solid var(--color-border-subtle, #e2e8f0)', boxShadow: 'var(--shadow-subtle)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-text-secondary, #64748b)', fontSize: '12px', fontWeight: 600, textTransform: 'uppercase' }}>
+              <CreditCard size={16} color="var(--color-accent-warm, #f97316)" />
+              <span>Total Transactions</span>
+            </div>
+            <div style={{ fontSize: '24px', fontWeight: 800, color: 'var(--color-primary-900, #0f172a)', marginTop: '6px' }}>
+              {analytics.total_transactions}
+            </div>
+            <div style={{ fontSize: '11px', color: 'var(--color-text-secondary, #64748b)', marginTop: '2px' }}>
+              Settled payment intents
+            </div>
+          </div>
+
+          <div style={{ padding: '16px', borderRadius: 'var(--radius-lg, 16px)', backgroundColor: 'var(--color-surface-card, #ffffff)', border: '1px solid var(--color-border-subtle, #e2e8f0)', boxShadow: 'var(--shadow-subtle)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-text-secondary, #64748b)', fontSize: '12px', fontWeight: 600, textTransform: 'uppercase' }}>
+              <Activity size={16} color="var(--status-overdue, #ef4444)" />
+              <span>Churn / Past Due</span>
+            </div>
+            <div style={{ fontSize: '24px', fontWeight: 800, color: 'var(--color-text-primary, #0f172a)', marginTop: '6px' }}>
+              {analytics.past_due_subscribers + analytics.cancelled_subscribers}
+            </div>
+            <div style={{ fontSize: '11px', color: 'var(--color-text-secondary, #64748b)', marginTop: '2px' }}>
+              {analytics.past_due_subscribers} past due, {analytics.cancelled_subscribers} cancelled
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Success Notification */}
       {successMessage && (
@@ -253,7 +376,7 @@ export default function AdminSubscriptionsPage() {
           }}
         >
           <Layers size={16} />
-          <span>Subscription Plans & Regional Prices ({plans.length})</span>
+          <span>Subscription Plans ({plans.length})</span>
         </button>
 
         <button
@@ -275,6 +398,27 @@ export default function AdminSubscriptionsPage() {
         >
           <Users size={16} />
           <span>Active Subscribers ({subscribers.length})</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('transactions')}
+          style={{
+            padding: '10px 16px',
+            borderRadius: 'var(--radius-md, 10px)',
+            border: 'none',
+            backgroundColor: activeTab === 'transactions' ? 'var(--color-primary-900, #0f172a)' : 'transparent',
+            color: activeTab === 'transactions' ? 'var(--color-text-inverse, #ffffff)' : 'var(--color-text-secondary, #64748b)',
+            fontSize: '13px',
+            fontWeight: 600,
+            cursor: 'pointer',
+            minHeight: '44px',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px'
+          }}
+        >
+          <CreditCard size={16} />
+          <span>Payment Transactions ({transactions.length})</span>
         </button>
 
         <button
@@ -319,6 +463,124 @@ export default function AdminSubscriptionsPage() {
           <span>Feature Flags ({features.length})</span>
         </button>
       </div>
+
+      {/* Tab: Plans & Regional Prices */}
+      {activeTab === 'plans' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h2 style={{ fontSize: '16px', fontWeight: 700, margin: 0 }}>Configured Subscription Plans</h2>
+            <button
+              onClick={() => {
+                setPlanModalError(null);
+                setIsPlanModalOpen(true);
+              }}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '8px 14px',
+                borderRadius: 'var(--radius-md, 10px)',
+                backgroundColor: 'var(--color-primary-900, #0f172a)',
+                color: 'var(--color-text-inverse, #ffffff)',
+                fontSize: '12px',
+                fontWeight: 600,
+                border: 'none',
+                cursor: 'pointer',
+                minHeight: '36px'
+              }}
+            >
+              <Plus size={14} />
+              <span>Create Subscription Plan</span>
+            </button>
+          </div>
+
+          {plans.map((p) => (
+            <div
+              key={p.id}
+              style={{
+                backgroundColor: 'var(--color-surface-card, #ffffff)',
+                borderRadius: 'var(--radius-lg, 16px)',
+                border: '1px solid var(--color-border-subtle, #e2e8f0)',
+                padding: '24px',
+                boxShadow: 'var(--shadow-subtle)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '16px'
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <h2 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--color-text-primary, #0f172a)', margin: 0 }}>
+                      {p.name}
+                    </h2>
+                    <AdminBadge variant="purple">{p.code}</AdminBadge>
+                    <AdminBadge variant="success">{p.status}</AdminBadge>
+                    <AdminBadge variant="info">Max {p.max_homes ?? 10} Homes</AdminBadge>
+                  </div>
+                  <p style={{ fontSize: '13px', color: 'var(--color-text-secondary, #64748b)', margin: '4px 0 0' }}>
+                    {p.description || 'Full digital operating system subscription plan.'}
+                  </p>
+                </div>
+
+                <div style={{ fontSize: '12px', color: 'var(--color-text-secondary, #64748b)', textAlign: 'right' }}>
+                  <div>Home Capacity: <strong>{p.max_homes ?? 10} Households</strong></div>
+                  <div>Included Members: <strong>{p.included_members}</strong> (Max: {p.maximum_members || 'Unlimited'})</div>
+                  <div>Introductory Admin: <strong>{p.introductory_enabled ? 'Free 1 Year' : 'Paid'}</strong></div>
+                </div>
+              </div>
+
+              {/* Regional Pricing Versions Matrix */}
+              <div>
+                <h3 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-text-primary, #0f172a)', margin: '0 0 10px' }}>
+                  Regional Pricing Versions
+                </h3>
+                {(!p.prices || p.prices.length === 0) ? (
+                  <div style={{ fontSize: '13px', color: 'var(--color-text-secondary, #64748b)' }}>
+                    No regional price versions recorded for this plan.
+                  </div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
+                    {p.prices.map((pr) => (
+                      <div
+                        key={pr.id}
+                        style={{
+                          padding: '14px',
+                          borderRadius: 'var(--radius-md, 10px)',
+                          border: '1px solid var(--color-border-subtle, #e2e8f0)',
+                          backgroundColor: 'var(--color-surface-subtle, #f1f5f9)',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '6px',
+                          fontSize: '12px'
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontWeight: 700, color: 'var(--color-text-primary, #0f172a)' }}>
+                            {pr.country} ({pr.currency})
+                          </span>
+                          <AdminBadge variant={pr.is_active ? 'success' : 'neutral'}>
+                            v{pr.version} {pr.is_active ? 'Active' : 'Archived'}
+                          </AdminBadge>
+                        </div>
+                        <div style={{ color: 'var(--color-text-secondary, #64748b)' }}>
+                          Period: <strong>{pr.billing_period}</strong>
+                        </div>
+                        <div style={{ color: 'var(--color-text-primary, #0f172a)', fontSize: '13px', fontWeight: 600 }}>
+                          Base List: {pr.currency} {pr.list_price}
+                        </div>
+                        <div style={{ color: 'var(--color-text-secondary, #64748b)' }}>
+                          Extra Seat List: {pr.currency} {pr.additional_member_list_price} / seat
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Tab: Subscribers */}
       {activeTab === 'subscribers' && (
@@ -448,96 +710,92 @@ export default function AdminSubscriptionsPage() {
         </div>
       )}
 
-      {/* Tab 1: Plans & Regional Prices */}
-      {activeTab === 'plans' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          {plans.map((p) => (
-            <div
-              key={p.id}
-              style={{
-                backgroundColor: 'var(--color-surface-card, #ffffff)',
-                borderRadius: 'var(--radius-lg, 16px)',
-                border: '1px solid var(--color-border-subtle, #e2e8f0)',
-                padding: '24px',
-                boxShadow: 'var(--shadow-subtle)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '16px'
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <h2 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--color-text-primary, #0f172a)', margin: 0 }}>
-                      {p.name}
-                    </h2>
-                    <AdminBadge variant="purple">{p.code}</AdminBadge>
-                    <AdminBadge variant="success">{p.status}</AdminBadge>
-                  </div>
-                  <p style={{ fontSize: '13px', color: 'var(--color-text-secondary, #64748b)', margin: '4px 0 0' }}>
-                    {p.description || 'Full digital operating system subscription plan.'}
-                  </p>
-                </div>
-
-                <div style={{ fontSize: '12px', color: 'var(--color-text-secondary, #64748b)', textAlign: 'right' }}>
-                  <div>Included Members: <strong>{p.included_members}</strong></div>
-                  <div>Introductory Admin: <strong>{p.introductory_enabled ? 'Free 1 Year' : 'Paid'}</strong></div>
-                </div>
-              </div>
-
-              {/* Regional Pricing Versions Matrix */}
-              <div>
-                <h3 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-text-primary, #0f172a)', margin: '0 0 10px' }}>
-                  Regional Pricing Versions
-                </h3>
-                {(!p.prices || p.prices.length === 0) ? (
-                  <div style={{ fontSize: '13px', color: 'var(--color-text-secondary, #64748b)' }}>
-                    No regional price versions recorded for this plan.
-                  </div>
-                ) : (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
-                    {p.prices.map((pr) => (
-                      <div
-                        key={pr.id}
-                        style={{
-                          padding: '14px',
-                          borderRadius: 'var(--radius-md, 10px)',
-                          border: '1px solid var(--color-border-subtle, #e2e8f0)',
-                          backgroundColor: 'var(--color-surface-subtle, #f1f5f9)',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '6px',
-                          fontSize: '12px'
-                        }}
-                      >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span style={{ fontWeight: 700, color: 'var(--color-text-primary, #0f172a)' }}>
-                            {pr.country} ({pr.currency})
-                          </span>
-                          <AdminBadge variant={pr.is_active ? 'success' : 'neutral'}>
-                            v{pr.version} {pr.is_active ? 'Active' : 'Archived'}
-                          </AdminBadge>
-                        </div>
-                        <div style={{ color: 'var(--color-text-secondary, #64748b)' }}>
-                          Period: <strong>{pr.billing_period}</strong>
-                        </div>
-                        <div style={{ color: 'var(--color-text-primary, #0f172a)', fontSize: '13px', fontWeight: 600 }}>
-                          Base List: {pr.currency} {pr.list_price}
-                        </div>
-                        <div style={{ color: 'var(--color-text-secondary, #64748b)' }}>
-                          Extra Seat List: {pr.currency} {pr.additional_member_list_price} / seat
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+      {/* Tab: Payment Transactions */}
+      {activeTab === 'transactions' && (
+        <div
+          style={{
+            backgroundColor: 'var(--color-surface-card, #ffffff)',
+            borderRadius: 'var(--radius-lg, 16px)',
+            border: '1px solid var(--color-border-subtle, #e2e8f0)',
+            overflow: 'hidden',
+            boxShadow: 'var(--shadow-subtle)'
+          }}
+        >
+          {transactions.length === 0 ? (
+            <div style={{ padding: '48px 24px', textAlign: 'center', color: 'var(--color-text-secondary, #64748b)', fontSize: '14px' }}>
+              No financial transaction records recorded yet.
             </div>
-          ))}
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                <thead>
+                  <tr
+                    style={{
+                      borderBottom: '1px solid var(--color-border-subtle, #e2e8f0)',
+                      backgroundColor: 'var(--color-surface-subtle, #f1f5f9)',
+                      color: 'var(--color-text-secondary, #64748b)',
+                      fontWeight: 600
+                    }}
+                  >
+                    <th style={{ padding: '12px 16px' }}>Transaction ID</th>
+                    <th style={{ padding: '12px 16px' }}>User / Customer</th>
+                    <th style={{ padding: '12px 16px' }}>Plan Purchased</th>
+                    <th style={{ padding: '12px 16px' }}>Amount</th>
+                    <th style={{ padding: '12px 16px' }}>Discount</th>
+                    <th style={{ padding: '12px 16px' }}>Final Paid</th>
+                    <th style={{ padding: '12px 16px' }}>Provider</th>
+                    <th style={{ padding: '12px 16px' }}>Status</th>
+                    <th style={{ padding: '12px 16px' }}>Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {transactions.map((tx) => (
+                    <tr
+                      key={tx.id}
+                      style={{
+                        borderBottom: '1px solid var(--color-border-subtle, #e2e8f0)',
+                        transition: 'background-color 0.15s ease'
+                      }}
+                    >
+                      <td style={{ padding: '12px 16px', fontFamily: 'monospace', fontSize: '12px' }}>
+                        {tx.id.slice(0, 8)}...
+                      </td>
+                      <td style={{ padding: '12px 16px' }}>
+                        {tx.user_email || tx.user_id.slice(0, 8)}
+                      </td>
+                      <td style={{ padding: '12px 16px', fontWeight: 600 }}>
+                        {tx.plan_name}
+                      </td>
+                      <td style={{ padding: '12px 16px' }}>
+                        {tx.currency} {Number(tx.amount).toFixed(2)}
+                      </td>
+                      <td style={{ padding: '12px 16px', color: 'var(--status-in-stock, #10b981)' }}>
+                        -{tx.currency} {Number(tx.discount_amount).toFixed(2)}
+                      </td>
+                      <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--color-primary-900, #0f172a)' }}>
+                        {tx.currency} {Number(tx.final_amount).toFixed(2)}
+                      </td>
+                      <td style={{ padding: '12px 16px' }}>
+                        <AdminBadge variant="neutral">{tx.provider}</AdminBadge>
+                      </td>
+                      <td style={{ padding: '12px 16px' }}>
+                        <AdminBadge variant={tx.status === 'SUCCESS' ? 'success' : tx.status === 'PENDING' ? 'warning' : 'danger'}>
+                          {tx.status}
+                        </AdminBadge>
+                      </td>
+                      <td style={{ padding: '12px 16px', color: 'var(--color-text-secondary, #64748b)', fontSize: '12px' }}>
+                        {new Date(tx.created_at).toLocaleString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Tab 2: Promotions */}
+      {/* Tab: Promotions */}
       {activeTab === 'promotions' && (
         <div
           style={{
@@ -628,7 +886,7 @@ export default function AdminSubscriptionsPage() {
         </div>
       )}
 
-      {/* Tab 3: Feature Capabilities */}
+      {/* Tab: Feature Flags */}
       {activeTab === 'features' && (
         <div
           style={{
@@ -672,6 +930,191 @@ export default function AdminSubscriptionsPage() {
                 </p>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Create Plan */}
+      {isPlanModalOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(15, 23, 42, 0.6)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '16px',
+            zIndex: 9999
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !isSubmittingPlan) setIsPlanModalOpen(false);
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: 'var(--color-surface-card, #ffffff)',
+              borderRadius: 'var(--radius-lg, 16px)',
+              padding: '24px',
+              maxWidth: '520px',
+              width: '100%',
+              boxShadow: 'var(--shadow-modal)',
+              border: '1px solid var(--color-border-subtle, #e2e8f0)',
+              position: 'relative'
+            }}
+          >
+            <button
+              onClick={() => setIsPlanModalOpen(false)}
+              aria-label="Close"
+              style={{
+                position: 'absolute',
+                top: '16px',
+                right: '16px',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                padding: '8px',
+                minHeight: '44px',
+                minWidth: '44px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
+            >
+              <X size={20} />
+            </button>
+
+            <h2 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--color-text-primary, #0f172a)', margin: '0 0 16px' }}>
+              Create Subscription Plan
+            </h2>
+
+            {planModalError && (
+              <div
+                style={{
+                  padding: '12px',
+                  backgroundColor: 'var(--status-overdue-bg, #fef2f2)',
+                  border: '1px solid #fecaca',
+                  borderRadius: 'var(--radius-md, 10px)',
+                  color: 'var(--status-overdue, #ef4444)',
+                  fontSize: '13px',
+                  marginBottom: '16px'
+                }}
+              >
+                {planModalError}
+              </div>
+            )}
+
+            <form onSubmit={handleCreatePlan} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                    Plan Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ozhzo Multi-Home Pro"
+                    value={planForm.name}
+                    onChange={(e) => setPlanForm({ ...planForm, name: e.target.value })}
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                    Plan Code *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="MULTI_HOME_PRO"
+                    value={planForm.code}
+                    onChange={(e) => setPlanForm({ ...planForm, code: e.target.value })}
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                  Description
+                </label>
+                <textarea
+                  placeholder="Plan description and features..."
+                  value={planForm.description}
+                  onChange={(e) => setPlanForm({ ...planForm, description: e.target.value })}
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '13px', minHeight: '70px', resize: 'vertical' }}
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                    Max Allowed Homes (Entitlement) *
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    value={planForm.max_homes}
+                    onChange={(e) => setPlanForm({ ...planForm, max_homes: parseInt(e.target.value) || 1 })}
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                    Included Family Members *
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    value={planForm.included_members}
+                    onChange={(e) => setPlanForm({ ...planForm, included_members: parseInt(e.target.value) || 1 })}
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '12px' }}>
+                <button
+                  type="button"
+                  onClick={() => setIsPlanModalOpen(false)}
+                  disabled={isSubmittingPlan}
+                  style={{
+                    padding: '10px 18px',
+                    borderRadius: 'var(--radius-md, 10px)',
+                    border: '1px solid var(--color-border-subtle, #e2e8f0)',
+                    backgroundColor: 'transparent',
+                    fontSize: '14px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    minHeight: '44px'
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingPlan}
+                  style={{
+                    padding: '10px 20px',
+                    borderRadius: 'var(--radius-md, 10px)',
+                    border: 'none',
+                    backgroundColor: 'var(--color-primary-900, #0f172a)',
+                    color: 'var(--color-text-inverse, #ffffff)',
+                    fontSize: '14px',
+                    fontWeight: 600,
+                    cursor: isSubmittingPlan ? 'not-allowed' : 'pointer',
+                    minHeight: '44px'
+                  }}
+                >
+                  {isSubmittingPlan ? 'Creating Plan...' : 'Create Plan'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

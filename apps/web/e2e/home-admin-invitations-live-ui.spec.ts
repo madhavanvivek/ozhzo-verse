@@ -18,13 +18,19 @@ test.describe('Ozhzo Verse — Home Admin, Invitations & UI End-to-End Tests', (
   test('2. Home Admin Edit Home Settings Flow (/settings)', async ({ page }) => {
     // 1. Log in through normal user login
     await page.goto('/login');
-    const emailTab = page.getByRole('button', { name: 'Email' });
-    if (await emailTab.isVisible()) {
-      await emailTab.click();
+    const identifierInput = page.locator('#login-identifier');
+    if (await identifierInput.isVisible()) {
+      await identifierInput.fill('vivek@zinfog.com');
+      await page.fill('#login-password', 'Caseno@123');
+    } else {
+      const emailTab = page.getByRole('button', { name: 'Email' });
+      if (await emailTab.isVisible()) {
+        await emailTab.click();
+      }
+      await page.fill('#email', 'vivek@zinfog.com');
+      await page.fill('#password', 'Caseno@123');
     }
-    await page.fill('#email', 'vivek@zinfog.com');
-    await page.fill('#password', 'Caseno@123');
-    await page.click('button[type="submit"]');
+    await page.click('#login-submit-btn');
 
     await page.waitForURL('**/dashboard', { timeout: 15000 });
 
@@ -63,13 +69,19 @@ test.describe('Ozhzo Verse — Home Admin, Invitations & UI End-to-End Tests', (
   test('3. Home Admin Member Invitation, Code Visibility & Persistence (/members)', async ({ page }) => {
     // 1. Log in
     await page.goto('/login');
-    const emailTab = page.getByRole('button', { name: 'Email' });
-    if (await emailTab.isVisible()) {
-      await emailTab.click();
+    const identifierInput = page.locator('#login-identifier');
+    if (await identifierInput.isVisible()) {
+      await identifierInput.fill('vivek@zinfog.com');
+      await page.fill('#login-password', 'Caseno@123');
+    } else {
+      const emailTab = page.getByRole('button', { name: 'Email' });
+      if (await emailTab.isVisible()) {
+        await emailTab.click();
+      }
+      await page.fill('#email', 'vivek@zinfog.com');
+      await page.fill('#password', 'Caseno@123');
     }
-    await page.fill('#email', 'vivek@zinfog.com');
-    await page.fill('#password', 'Caseno@123');
-    await page.click('button[type="submit"]');
+    await page.click('#login-submit-btn');
 
     await page.waitForURL('**/dashboard', { timeout: 15000 });
 
@@ -134,21 +146,27 @@ test.describe('Ozhzo Verse — Home Admin, Invitations & UI End-to-End Tests', (
 
   test('4. Join Home by Code Flow (/join)', async ({ page }) => {
     await page.goto('/join');
-    await expect(page.locator('h1')).toContainText('Join a Home Workspace');
-    await expect(page.locator('#code')).toBeVisible();
-    await expect(page.getByRole('button', { name: /Join Home/i })).toBeVisible();
+    await expect(page.locator('h1')).toContainText(/Join a (Household|Home Workspace)/i);
+    await expect(page.locator('#invitationCode')).toBeVisible();
+    await expect(page.getByRole('button', { name: /Accept Invitation|Join Home/i })).toBeVisible();
   });
 
   test('5. Home Settings Danger Zone Delete Workspace Flow', async ({ page }) => {
     // 1. Log in
     await page.goto('/login');
-    const emailTab = page.getByRole('button', { name: 'Email' });
-    if (await emailTab.isVisible()) {
-      await emailTab.click();
+    const identifierInput = page.locator('#login-identifier');
+    if (await identifierInput.isVisible()) {
+      await identifierInput.fill('vivek@zinfog.com');
+      await page.fill('#login-password', 'Caseno@123');
+    } else {
+      const emailTab = page.getByRole('button', { name: 'Email' });
+      if (await emailTab.isVisible()) {
+        await emailTab.click();
+      }
+      await page.fill('#email', 'vivek@zinfog.com');
+      await page.fill('#password', 'Caseno@123');
     }
-    await page.fill('#email', 'vivek@zinfog.com');
-    await page.fill('#password', 'Caseno@123');
-    await page.click('button[type="submit"]');
+    await page.click('#login-submit-btn');
 
     await page.waitForURL('**/dashboard', { timeout: 15000 });
 

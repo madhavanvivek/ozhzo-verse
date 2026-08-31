@@ -15,18 +15,55 @@ from src.infrastructure.database.models import OTPVerificationModel
 def normalize_phone_number(phone_number: str, country_code: Optional[str] = None) -> str:
     """
     Normalizes a phone number into strict E.164 format (+[country_code][number]).
-    Removes whitespace, hyphens, and parenthesis.
+    Handles spaces, dashes, parentheses, dots, leading zeros, and default country codes.
+    Canonicalizes:
+      - +91 9876543210 -> +919876543210
+      - +919876543210  -> +919876543210
+      - 09876543210    -> +919876543210 (or with country_code)
+      - 91-9876543210  -> +919876543210
+      - 9876543210     -> +919876543210 (or with country_code)
+      - 00919876543210 -> +919876543210
     """
-    cleaned = re.sub(r"[\s\-\(\)]", "", phone_number.strip())
-    if not cleaned.startswith("+"):
+    if not phone_number or not isinstance(phone_number, str):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Phone number is required."
+        )
+
+    raw = phone_number.strip()
+    # Handle international dialing prefix '00'
+    if raw.startswith("00"):
+        raw = "+" + raw[2:]
+
+    # Remove all formatting characters
+    cleaned = re.sub(r"[\s\-\(\)\.\,]", "", raw)
+
+    if cleaned.startswith("+"):
+        digits_only = re.sub(r"[^\d]", "", cleaned[1:])
+        cleaned = f"+{digits_only}"
+    else:
+        digits_only = re.sub(r"[^\d]", "", cleaned)
         if country_code:
-            code = country_code.strip()
-            if not code.startswith("+"):
-                code = f"+{code}"
-            cleaned = f"{code}{cleaned}"
+            cc = "+" + re.sub(r"[^\d]", "", country_code.strip())
+            # If user included leading 0 in local number, strip it
+            if digits_only.startswith("0") and len(digits_only) > 6:
+                digits_only = digits_only.lstrip("0")
+            cleaned = f"{cc}{digits_only}"
         else:
-            cleaned = f"+{cleaned}"
-    
+            # Strip leading zero if present
+            if digits_only.startswith("0") and len(digits_only) == 11:
+                digits_only = digits_only[1:]
+
+            # 10-digit number defaults to standard +91
+            if len(digits_only) == 10:
+                cleaned = f"+91{digits_only}"
+            elif len(digits_only) == 12 and digits_only.startswith("91"):
+                cleaned = f"+{digits_only}"
+            elif len(digits_only) == 11 and digits_only.startswith("1"):
+                cleaned = f"+{digits_only}"
+            else:
+                cleaned = f"+{digits_only}"
+
     # E.164 validation: + followed by 7 to 15 digits
     if not re.match(r"^\+[1-9]\d{6,14}$", cleaned):
         raise HTTPException(

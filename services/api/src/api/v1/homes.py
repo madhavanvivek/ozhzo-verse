@@ -24,6 +24,7 @@ from src.infrastructure.database.models import (
     UserModel
 )
 from src.infrastructure.cache.redis_client import get_redis_client
+from src.domain.entitlements import check_can_create_home, check_and_reserve_home_member_seat
 from src.core.exceptions import TierLimitExceededException, MobileVerificationRequiredException
 from src.core.home_identity import generate_unique_public_home_id, generate_home_qr_token
 from src.schemas.common import ApiSuccessResponse
@@ -98,36 +99,15 @@ async def create_home(
     if not current_user.mobile_verified:
         raise MobileVerificationRequiredException()
 
-    # Check free tier limit (1 active owned home for regular users without paid subscription)
-    query = select(HomeModel).where(
-        HomeModel.created_by == current_user.id,
-        HomeModel.deleted_at.is_(None)
-    )
-    existing_result = await db.execute(query)
-    existing_homes = existing_result.scalars().all()
-    if len(existing_homes) >= 1:
-        home_ids = [h.id for h in existing_homes]
-        sub_query = select(SubscriptionModel).where(
-            SubscriptionModel.home_id.in_(home_ids),
-            SubscriptionModel.status.in_(["ACTIVE", "TRIALING"])
-        )
-        sub_res = await db.execute(sub_query)
-        active_sub = sub_res.scalars().first()
-        has_active_sub = (
-            active_sub is not None and
-            isinstance(active_sub, SubscriptionModel) and
-            getattr(active_sub, "status", None) in ["ACTIVE", "TRIALING"]
-        )
-        if not has_active_sub:
-            raise TierLimitExceededException(
-                resource="homes",
-                limit=1,
-                detail="Your free plan includes one Home. Upgrade your subscription to create another Home."
-            )
+    # Enforce Home creation entitlement: 1 free home for regular users, subscription required for additional
+    await check_can_create_home(current_user, db)
 
     # Generate permanent collision-resistant public Home ID and secure QR token
     public_id = await generate_unique_public_home_id(db)
     qr_token = generate_home_qr_token()
+
+    # Mark user's lifetime free home grant as consumed
+    current_user.free_home_consumed = True
 
     # 1. Create Home record
     new_home = HomeModel(
@@ -540,36 +520,32 @@ async def review_join_request(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Join request has already been reviewed.")
 
     if payload.action == "APPROVE":
-        # Check subscription member limit
-        members_count_q = select(func.count(HomeMemberModel.id)).where(
+        # Enforce subscription member limit with concurrency locking
+        await check_and_reserve_home_member_seat(home_ctx.home_id, db, lock_home=True)
+
+        # Check if membership already exists (e.g. previously removed or inactive)
+        existing_mem_q = select(HomeMemberModel).where(
             HomeMemberModel.home_id == home_ctx.home_id,
-            HomeMemberModel.status == "ACTIVE"
+            HomeMemberModel.user_id == join_req.user_id
         )
-        current_members = (await db.execute(members_count_q)).scalar() or 0
+        existing_mem_res = await db.execute(existing_mem_q)
+        existing_mem = existing_mem_res.scalar_one_or_none() if hasattr(existing_mem_res, "scalar_one_or_none") else None
 
-        sub_q = select(SubscriptionModel).where(
-            SubscriptionModel.home_id == home_ctx.home_id,
-            SubscriptionModel.status.in_(["ACTIVE", "TRIALING"])
-        )
-        sub = (await db.execute(sub_q)).scalars().first()
-        allowed_seats = 5 + (sub.paid_member_seats if sub and hasattr(sub, "paid_member_seats") and sub.paid_member_seats else 0)
-        if current_members >= allowed_seats:
-            raise TierLimitExceededException(
-                resource="members",
-                limit=allowed_seats,
-                detail=f"Home has reached its member seat limit ({allowed_seats} seats). Upgrade subscription to add more members."
+        if existing_mem:
+            existing_mem.status = "ACTIVE"
+            existing_mem.role = payload.role or "MEMBER"
+            existing_mem.updated_at = datetime.now(timezone.utc)
+        else:
+            new_mem = HomeMemberModel(
+                id=uuid.uuid4(),
+                home_id=home_ctx.home_id,
+                user_id=join_req.user_id,
+                role=payload.role or "MEMBER",
+                status="ACTIVE",
+                joined_at=datetime.now(timezone.utc)
             )
+            db.add(new_mem)
 
-        # Add member
-        new_mem = HomeMemberModel(
-            id=uuid.uuid4(),
-            home_id=home_ctx.home_id,
-            user_id=join_req.user_id,
-            role=payload.role or "MEMBER",
-            status="ACTIVE",
-            joined_at=datetime.now(timezone.utc)
-        )
-        db.add(new_mem)
         join_req.status = "APPROVED"
         join_req.reviewed_by = home_ctx.user.id
         join_req.reviewed_at = datetime.now(timezone.utc)
@@ -620,9 +596,9 @@ async def review_join_request(
             display_name="Applicant",
             status=join_req.status,
             message=join_req.message,
-            created_at=join_req.created_at,
+            created_at=join_req.created_at or datetime.now(timezone.utc),
             reviewed_by=join_req.reviewed_by,
-            reviewed_at=join_req.reviewed_at
+            reviewed_at=join_req.reviewed_at or datetime.now(timezone.utc)
         )
     )
 
@@ -788,6 +764,8 @@ async def delete_home_workspace(
 
     home.deleted_at = datetime.now(timezone.utc)
     home.status = "SUSPENDED"
+    home.home_qr_status = "REVOKED"
+    home.home_qr_revoked_at = datetime.now(timezone.utc)
 
     audit = AuditLogModel(
         entity_type="HOME",

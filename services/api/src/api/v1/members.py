@@ -47,60 +47,12 @@ def generate_invitation_code() -> str:
     return f"OZ-{random_part}"
 
 
-async def check_home_member_seat_limit(home_id: UUID, db: AsyncSession):
+from src.domain.entitlements import check_and_reserve_home_member_seat
+
+
+async def check_home_member_seat_limit(home_id: UUID, db: AsyncSession, include_pending: bool = False):
     """Enforce member seat limits based on subscription plan allowance."""
-    # 1. Count active members and pending invitations
-    allocated_count = 0
-    try:
-        active_count_query = select(func.count(HomeMemberModel.id)).where(
-            HomeMemberModel.home_id == home_id,
-            HomeMemberModel.status == "ACTIVE"
-        )
-        cnt_res = await db.execute(active_count_query)
-        val = cnt_res.scalar() if hasattr(cnt_res, "scalar") else getattr(cnt_res, "scalar_one", lambda: 0)()
-        if isinstance(val, int):
-            allocated_count += val
-
-        pending_count_query = select(func.count(InvitationModel.id)).where(
-            InvitationModel.home_id == home_id,
-            InvitationModel.status == "PENDING"
-        )
-        p_res = await db.execute(pending_count_query)
-        p_val = p_res.scalar() if hasattr(p_res, "scalar") else getattr(p_res, "scalar_one", lambda: 0)()
-        if isinstance(p_val, int):
-            allocated_count += p_val
-    except Exception:
-        allocated_count = 0
-
-    # 2. Query subscription if any
-    sub_query = (
-        select(SubscriptionModel)
-        .options(selectinload(SubscriptionModel.plan))
-        .where(SubscriptionModel.home_id == home_id)
-    )
-    try:
-        sub_res = await db.execute(sub_query)
-        sub = sub_res.scalar_one_or_none() if hasattr(sub_res, "scalar_one_or_none") else None
-    except Exception:
-        sub = None
-
-    if isinstance(sub, SubscriptionModel) and sub.status in ["ACTIVE", "TRIALING"]:
-        included = sub.plan.included_members if (sub.plan and hasattr(sub.plan, "included_members")) else 5
-        paid_seats = sub.paid_member_seats or 0
-        total_allowed = included + paid_seats
-        if sub.plan and getattr(sub.plan, "maximum_members", None) and total_allowed > sub.plan.maximum_members:
-            total_allowed = sub.plan.maximum_members
-    else:
-        # Default Free Tier allowance
-        total_allowed = 5
-
-    if allocated_count >= total_allowed:
-        from src.core.exceptions import TierLimitExceededException
-        raise TierLimitExceededException(
-            resource="members",
-            limit=total_allowed,
-            detail="Your Home subscription does not have an available member seat."
-        )
+    await check_and_reserve_home_member_seat(home_id, db, include_pending_invitations=include_pending, lock_home=True)
 
 
 async def _extract_optional_user(
@@ -276,7 +228,7 @@ async def create_invitation(
     redis_client: Optional[redis.Redis] = Depends(get_redis_client),
 ):
     # 1. Enforce member seat limit before issuing invitation
-    await check_home_member_seat_limit(home_ctx.home_id, db)
+    await check_home_member_seat_limit(home_ctx.home_id, db, include_pending=True)
 
     normalized_phone = None
     if payload.phone_number:
@@ -704,12 +656,35 @@ async def _execute_join_invitation(
             detail="This invitation has expired."
         )
 
-    # 4. Enforce phone constraint if issued to a specific mobile number
-    if invitation.phone_number and current_user.phone_number:
-        if normalize_phone_number(current_user.phone_number) != normalize_phone_number(invitation.phone_number):
+    # 4. Enforce recipient constraints if issued to a specific mobile number or email
+    if invitation.phone_number:
+        user_phone = current_user.phone_number
+        if not user_phone and getattr(current_user, "profile", None) and current_user.profile.phone_number:
+            user_phone = current_user.profile.phone_number
+
+        if not user_phone:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Please verify your mobile number before accepting this invitation."
+            )
+
+        if not current_user.mobile_verified:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Please verify your mobile number before accepting this invitation."
+            )
+
+        if normalize_phone_number(user_phone) != normalize_phone_number(invitation.phone_number):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="This invitation was issued to a different mobile number."
+            )
+
+    if invitation.email and current_user.email:
+        if current_user.email.lower().strip() != invitation.email.lower().strip():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This invitation was issued to a different email address."
             )
 
     # 5. Check duplicate active membership
@@ -725,13 +700,8 @@ async def _execute_join_invitation(
             detail="You are already a member of this Home."
         )
 
-    # 6. Enforce subscription member seat limits
-    try:
-        await check_home_member_seat_limit(home.id, db)
-    except (HTTPException, BaseDomainException):
-        raise
-    except Exception:
-        pass
+    # 6. Enforce subscription member seat limits with concurrency locking
+    await check_and_reserve_home_member_seat(home.id, db, include_pending_invitations=False, lock_home=True)
 
     # 7. Create or reactivate membership
     membership_status = "ACTIVE"

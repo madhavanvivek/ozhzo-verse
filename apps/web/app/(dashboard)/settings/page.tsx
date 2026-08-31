@@ -408,8 +408,8 @@ export default function HomeSettingsPage() {
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 'var(--space-6)', alignItems: 'center' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '16px', backgroundColor: 'white', borderRadius: '12px', border: '1px solid var(--color-border)', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--space-6)', alignItems: 'center' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '16px', backgroundColor: 'white', borderRadius: '12px', border: '1px solid var(--color-border)', boxShadow: '0 2px 8px rgba(0,0,0,0.05)', maxWidth: '220px', margin: '0 auto' }}>
               <QRCode value={getJoinUrl()} size={160} />
               <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-primary-900)', marginTop: '8px', letterSpacing: '0.5px' }}>
                 {identity?.public_home_id || 'OZH-HOME'}

@@ -38,8 +38,9 @@ class VerifyOTPResponse(BaseModel):
 
 
 class LoginRequest(BaseModel):
+    login_identifier: Optional[str] = Field(None, description="Email address or mobile number")
     phone_number: Optional[str] = None
-    email: Optional[EmailStr] = None
+    email: Optional[str] = None
     password: Optional[str] = None
     otp_code: Optional[str] = None
 

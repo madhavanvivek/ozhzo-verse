@@ -249,7 +249,7 @@ class ApiClient {
   private handleUnauthorizedRedirect() {
     if (typeof window !== 'undefined') {
       const pathname = window.location.pathname;
-      if (!pathname.startsWith('/login') && !pathname.startsWith('/register')) {
+      if (!pathname.startsWith('/login') && !pathname.startsWith('/register') && !pathname.startsWith('/admin/login')) {
         this.clearSession();
         window.location.href = '/login';
       }
@@ -328,8 +328,8 @@ class ApiClient {
       throw new Error(networkErr?.message || 'Failed to connect to API server. Please check your connection.');
     }
 
-    // Handle 401 token refresh retry (avoid loop on auth endpoints)
-    if (response.status === 401 && !endpoint.includes('/auth/')) {
+    // Handle 401 token refresh retry (avoid loop on auth and login endpoints)
+    if (response.status === 401 && !endpoint.includes('/auth') && !endpoint.includes('/login')) {
       if (!this.refreshPromise) {
         this.refreshPromise = this.performTokenRefresh().finally(() => {
           this.refreshPromise = null;

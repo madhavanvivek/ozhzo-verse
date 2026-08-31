@@ -278,15 +278,50 @@ async def login(
     redis_client: redis.Redis = Depends(get_redis_client)
 ):
     """
-    Standard authentication endpoint exclusively for normal Ozhzo household users.
+    Unified authentication endpoint exclusively for normal Ozhzo household users.
+    Accepts either Email or Mobile Number in login_identifier (or phone_number / email).
     Platform Super Admins must authenticate via /admin/auth/login.
     """
+    raw_identifier = (
+        payload.login_identifier or
+        payload.email or
+        payload.phone_number or
+        ""
+    ).strip()
+
+    if not raw_identifier:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Please provide an email address or mobile number to sign in."
+        )
+
     user = None
-    # 1. Lookup by phone number
-    if payload.phone_number:
-        normalized_phone = normalize_phone_number(payload.phone_number)
+    is_phone_login = False
+
+    # 1. Resolve Identifier: Email vs Mobile Number
+    if "@" in raw_identifier:
+        normalized_email = raw_identifier.lower().strip()
+        await enforce_auth_rate_limit(redis_client, normalized_email, "login", max_requests=10, window_seconds=60)
+
+        query = select(UserModel).where(
+            func.lower(UserModel.email) == normalized_email,
+            UserModel.is_active == True,
+            UserModel.deleted_at == None
+        ).order_by(UserModel.created_at.asc())
+        result = await db.execute(query)
+        user = _extract_authenticated_user(result)
+    else:
+        is_phone_login = True
+        try:
+            normalized_phone = normalize_phone_number(raw_identifier)
+        except HTTPException:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid email/mobile number or password."
+            )
+
         await enforce_auth_rate_limit(redis_client, normalized_phone, "login", max_requests=10, window_seconds=60)
-        
+
         query = select(UserModel).where(
             UserModel.phone_number == normalized_phone,
             UserModel.is_active == True,
@@ -295,29 +330,10 @@ async def login(
         result = await db.execute(query)
         user = _extract_authenticated_user(result)
 
-    # 2. Lookup by email
-    elif payload.email:
-        normalized_email = payload.email.lower().strip()
-        await enforce_auth_rate_limit(redis_client, normalized_email, "login", max_requests=10, window_seconds=60)
-        
-        query = select(UserModel).where(
-            func.lower(UserModel.email) == normalized_email,
-            UserModel.is_active == True,
-            UserModel.deleted_at == None
-        ).order_by(UserModel.created_at.asc())
-        result = await db.execute(query)
-        user = _extract_authenticated_user(result)
-
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Please provide a phone number or email address to sign in."
-        )
-
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email, phone number, or password."
+            detail="Invalid email/mobile number or password."
         )
 
     # Guard: Direct Super Admins to the Administrator Operations Console
@@ -327,12 +343,19 @@ async def login(
             detail="Platform administrator accounts must sign in through the Administrator Console at /admin/login."
         )
 
-    # 3. Verify password or OTP
+    # Guard: Unverified mobile login
+    if is_phone_login and not user.mobile_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Please verify your mobile number before continuing."
+        )
+
+    # 2. Verify password or OTP
     authenticated = False
     if payload.password:
         if user.password_hash:
             authenticated = verify_password(payload.password.strip(), user.password_hash)
-    elif payload.otp_code and payload.phone_number:
+    elif payload.otp_code and user.phone_number:
         otp_service = OTPService()
         try:
             await otp_service.verify_otp(db, user.phone_number, payload.otp_code, "LOGIN")
@@ -343,10 +366,10 @@ async def login(
     if not authenticated:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email, phone number, or password."
+            detail="Invalid email/mobile number or password."
         )
 
-    # 4. Issue standard user token pair
+    # 3. Issue standard user token pair
     access_token = create_access_token(subject=str(user.id))
     refresh_token = create_refresh_token(subject=str(user.id))
 

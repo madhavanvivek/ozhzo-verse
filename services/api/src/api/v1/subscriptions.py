@@ -1,9 +1,10 @@
 import json
+import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import List, Optional, Tuple
-from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from uuid import UUID, uuid4
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +17,7 @@ from src.infrastructure.database.models import (
     CouponRedemptionModel,
     HomeMemberModel,
     HomeModel,
+    PaymentTransactionModel,
     PromotionModel,
     PromotionRedemptionModel,
     SubscriptionFeatureModel,
@@ -27,19 +29,27 @@ from src.infrastructure.database.models import (
     UserModel,
     UserProfileModel
 )
+from src.domain.entitlements import get_user_entitlement_summary
+from src.domain.payments import get_payment_provider
 from src.schemas.common import ApiSuccessResponse
 from src.schemas.auth import MessageResponse
 from src.schemas.coupon import ApplyCouponRequest, ApplyCouponResponse, CouponDTO
 from src.schemas.subscription import (
     CalculateSubscriptionRequest,
     CalculateSubscriptionResponse,
+    CheckoutSubscriptionRequest,
+    CheckoutSubscriptionResponse,
+    ConfirmPaymentRequest,
+    ConfirmPaymentResponse,
     HomeSubscriptionOverviewDTO,
     MemberEntitlementDTO,
+    PaymentTransactionDTO,
     PromotionDTO,
     SubscriptionFeatureDTO,
     SubscriptionPlanDetailDTO,
     SubscriptionPriceDTO,
-    UpdateSubscriptionSeatsRequest
+    UpdateSubscriptionSeatsRequest,
+    UserEntitlementSummaryDTO
 )
 
 router = APIRouter(prefix="/subscription", tags=["Subscriptions"])
@@ -748,6 +758,496 @@ async def redeem_coupon(
             redemption_status="REDEEMED"
         )
     )
+
+
+# ------------------------------------------------------------------------------
+# Stage 2.2 User Entitlements & Payment Checkout Endpoints
+# ------------------------------------------------------------------------------
+
+@router.get("/me", response_model=ApiSuccessResponse[UserEntitlementSummaryDTO])
+async def get_my_subscription_entitlements(
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Returns server-authoritative entitlement status for the current user:
+    - Free home consumption state
+    - Active homes vs allowed homes
+    - Active paid subscription details
+    """
+    summary = await get_user_entitlement_summary(current_user, db)
+    return ApiSuccessResponse(data=UserEntitlementSummaryDTO(**summary))
+
+
+@router.post("/checkout", response_model=ApiSuccessResponse[CheckoutSubscriptionResponse])
+async def checkout_subscription(
+    payload: CheckoutSubscriptionRequest,
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Creates a payment session and transaction record for a subscription plan purchase.
+    """
+    plan = await db.get(SubscriptionPlanModel, payload.plan_id)
+    if not plan or plan.status != "ACTIVE":
+        raise HTTPException(status_code=404, detail="Subscription plan not found or inactive.")
+
+    price = None
+    if payload.price_id:
+        price = await db.get(SubscriptionPriceModel, payload.price_id)
+    if not price:
+        price_q = (
+            select(SubscriptionPriceModel)
+            .where(
+                SubscriptionPriceModel.plan_id == plan.id,
+                SubscriptionPriceModel.currency == payload.currency.upper(),
+                SubscriptionPriceModel.billing_period == payload.billing_period.upper(),
+                SubscriptionPriceModel.is_active == True
+            )
+            .order_by(SubscriptionPriceModel.version.desc())
+        )
+        price = (await db.execute(price_q)).scalars().first()
+    if not price:
+        price_q_fallback = (
+            select(SubscriptionPriceModel)
+            .where(
+                SubscriptionPriceModel.plan_id == plan.id,
+                SubscriptionPriceModel.country == "GLOBAL",
+                SubscriptionPriceModel.is_active == True
+            )
+            .order_by(SubscriptionPriceModel.version.desc())
+        )
+        price = (await db.execute(price_q_fallback)).scalars().first()
+
+    list_amount = price.list_price if price else Decimal("0.00")
+    if list_amount == Decimal("0.00") and price and getattr(price, "additional_member_list_price", None):
+        list_amount = price.additional_member_list_price
+    if list_amount == Decimal("0.00"):
+        list_amount = Decimal("20.00")
+
+    # Evaluate coupon
+    applied_coupon = None
+    discount_amt = Decimal("0.00")
+    if payload.coupon_code:
+        coupon, valid, reason = await evaluate_coupon(
+            coupon_code=payload.coupon_code,
+            plan_id=plan.id,
+            country=price.country if price else "GLOBAL",
+            state=None,
+            district=None,
+            postal_code=None,
+            currency=payload.currency.upper(),
+            user_id=current_user.id,
+            home_id=payload.home_id,
+            db=db
+        )
+        if coupon and valid:
+            applied_coupon = coupon
+            if coupon.coupon_type == "FREE_PERIOD":
+                discount_amt = list_amount
+            elif coupon.coupon_type == "PERCENTAGE_DISCOUNT":
+                pct = min(Decimal("100.00"), max(Decimal("0.00"), coupon.discount_value))
+                discount_amt = (list_amount * (pct / Decimal("100.00"))).quantize(Decimal("0.01"))
+            elif coupon.coupon_type == "FIXED_DISCOUNT":
+                discount_amt = min(list_amount, max(Decimal("0.00"), coupon.discount_value))
+
+    final_amount = max(Decimal("0.00"), list_amount - discount_amt)
+    payment_required = final_amount > Decimal("0.00")
+
+    provider = get_payment_provider()
+    import secrets
+    intent = await provider.create_payment_intent(
+        user_id=current_user.id,
+        amount=final_amount,
+        currency=payload.currency.upper(),
+        metadata={"plan_id": str(plan.id), "user_id": str(current_user.id)}
+    )
+
+    transaction = PaymentTransactionModel(
+        id=uuid.uuid4(),
+        user_id=current_user.id,
+        home_id=payload.home_id,
+        plan_id=plan.id,
+        price_id=price.id if price else None,
+        coupon_id=applied_coupon.id if applied_coupon else None,
+        amount=list_amount,
+        discount_amount=discount_amt,
+        tax_amount=Decimal("0.00"),
+        final_amount=final_amount,
+        currency=payload.currency.upper(),
+        provider=intent.provider,
+        provider_transaction_id=intent.provider_transaction_id,
+        idempotency_key=f"tx_chk_{secrets.token_hex(16)}",
+        status="SUCCESS" if not payment_required else "PENDING",
+        metadata_json=json.dumps({"coupon": applied_coupon.code if applied_coupon else None})
+    )
+    db.add(transaction)
+    await db.commit()
+
+    return ApiSuccessResponse(
+        data=CheckoutSubscriptionResponse(
+            transaction_id=transaction.id,
+            provider=intent.provider,
+            provider_transaction_id=intent.provider_transaction_id,
+            amount=list_amount,
+            discount_amount=discount_amt,
+            final_amount=final_amount,
+            currency=payload.currency.upper(),
+            status=transaction.status,
+            client_secret=intent.client_secret,
+            payment_required=payment_required
+        )
+    )
+
+
+@router.post("/confirm-payment", response_model=ApiSuccessResponse[ConfirmPaymentResponse])
+async def confirm_payment(
+    payload: ConfirmPaymentRequest,
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Authoritatively verifies payment and activates subscription.
+    """
+    transaction = await db.get(PaymentTransactionModel, payload.transaction_id)
+    if not transaction or transaction.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Payment transaction not found.")
+
+    if transaction.status == "SUCCESS" and transaction.subscription_id:
+        return ApiSuccessResponse(
+            data=ConfirmPaymentResponse(
+                success=True,
+                status="ACTIVE",
+                subscription_id=transaction.subscription_id,
+                message="Subscription payment confirmed."
+            )
+        )
+
+    # If payment was required, verify with provider
+    if transaction.final_amount > Decimal("0.00"):
+        provider = get_payment_provider()
+        verification = await provider.verify_payment(payload.provider_transaction_id, payload.signature)
+        if not verification.success:
+            transaction.status = "FAILED"
+            transaction.failure_reason = verification.failure_reason or "Payment verification failed."
+            await db.commit()
+            raise HTTPException(status_code=400, detail=transaction.failure_reason or "Payment verification failed.")
+
+        # STRICT VERIFICATION: Amount and Currency MUST exactly match the authoritative transaction record
+        if verification.amount_paid != transaction.final_amount:
+            transaction.status = "FAILED"
+            transaction.failure_reason = (
+                f"Payment amount mismatch: expected {transaction.currency} {transaction.final_amount}, "
+                f"verified {verification.currency} {verification.amount_paid}"
+            )
+            await db.commit()
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Payment verification failed: Amount mismatch. Expected {transaction.currency} {transaction.final_amount} "
+                    f"but received {verification.currency} {verification.amount_paid}."
+                )
+            )
+
+        if verification.currency.upper().strip() != transaction.currency.upper().strip():
+            transaction.status = "FAILED"
+            transaction.failure_reason = (
+                f"Payment currency mismatch: expected {transaction.currency}, "
+                f"verified {verification.currency}"
+            )
+            await db.commit()
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Payment verification failed: Currency mismatch. Expected {transaction.currency} "
+                    f"but received {verification.currency}."
+                )
+            )
+
+    transaction.status = "SUCCESS"
+    transaction.provider_transaction_id = payload.provider_transaction_id
+
+    # Create or update subscription
+    now = datetime.now(timezone.utc)
+    ends_at = now + timedelta(days=365)
+
+    sub = None
+    if transaction.home_id:
+        sub_q = select(SubscriptionModel).where(SubscriptionModel.home_id == transaction.home_id)
+        sub = (await db.execute(sub_q)).scalar_one_or_none()
+
+    if not sub:
+        # Check if user has an existing subscription record
+        sub_user_q = select(SubscriptionModel).where(SubscriptionModel.user_id == current_user.id)
+        sub = (await db.execute(sub_user_q)).scalars().first()
+
+    if sub:
+        sub.plan_id = transaction.plan_id
+        sub.price_id = transaction.price_id
+        sub.status = "ACTIVE"
+        sub.current_period_starts_at = now
+        sub.current_period_ends_at = ends_at
+        sub.user_id = current_user.id
+        sub.updated_at = now
+    else:
+        # Fallback home_id if none specified: use user's first created home if one exists
+        target_home_id = transaction.home_id
+        if not target_home_id:
+            h_q = select(HomeModel.id).where(HomeModel.created_by == current_user.id).limit(1)
+            target_home_id = (await db.execute(h_q)).scalar_one_or_none()
+        
+        # If still no home (e.g. subscribing before creating 2nd home), create a placeholder home UUID or user subscription
+        if not target_home_id:
+            target_home_id = uuid.uuid4()
+            placeholder_home = HomeModel(
+                id=target_home_id,
+                name="Primary Household",
+                created_by=current_user.id,
+                status="ACTIVE",
+                deleted_at=datetime.now(timezone.utc)  # marked so it's only a subscription carrier
+            )
+            db.add(placeholder_home)
+            await db.flush()
+
+        sub = SubscriptionModel(
+            id=uuid.uuid4(),
+            home_id=target_home_id,
+            user_id=current_user.id,
+            plan_id=transaction.plan_id,
+            price_id=transaction.price_id,
+            active_coupon_id=transaction.coupon_id,
+            status="ACTIVE",
+            introductory_period_starts_at=now,
+            introductory_period_ends_at=ends_at,
+            current_period_starts_at=now,
+            current_period_ends_at=ends_at,
+            paid_member_seats=0,
+            currency_snapshot=transaction.currency,
+            effective_price_snapshot=transaction.final_amount,
+            list_price_snapshot=transaction.amount,
+            discount_amount_snapshot=transaction.discount_amount,
+        )
+        db.add(sub)
+        await db.flush()
+
+    transaction.subscription_id = sub.id
+
+    # If coupon was applied, record redemption
+    if transaction.coupon_id:
+        coupon = await db.get(CouponModel, transaction.coupon_id)
+        if coupon:
+            redemption = CouponRedemptionModel(
+                id=uuid.uuid4(),
+                coupon_id=coupon.id,
+                campaign_id=coupon.campaign_id,
+                user_id=current_user.id,
+                home_id=sub.home_id,
+                discount_amount_applied=transaction.discount_amount,
+                redeemed_at=now
+            )
+            db.add(redemption)
+            coupon.redemptions_count += 1
+
+    # Mark user's free home grant as consumed (user is now a subscriber)
+    current_user.free_home_consumed = True
+
+    await db.commit()
+
+    return ApiSuccessResponse(
+        data=ConfirmPaymentResponse(
+            success=True,
+            status="ACTIVE",
+            subscription_id=sub.id,
+            message="Subscription activated successfully."
+        )
+    )
+
+
+@router.post("/cancel", response_model=ApiSuccessResponse[MessageResponse])
+async def cancel_subscription(
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Cancels active subscription at the end of the billing period.
+    """
+    sub_q = select(SubscriptionModel).where(
+        (SubscriptionModel.user_id == current_user.id) |
+        (SubscriptionModel.home_id.in_(select(HomeModel.id).where(HomeModel.created_by == current_user.id)))
+    )
+    sub = (await db.execute(sub_q)).scalars().first()
+    if not sub:
+        raise HTTPException(status_code=404, detail="Active subscription not found.")
+
+    sub.cancel_at_period_end = True
+    sub.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    return ApiSuccessResponse(data=MessageResponse(message="Subscription will be cancelled at the end of the billing period."))
+
+
+@router.get("/transactions", response_model=ApiSuccessResponse[List[PaymentTransactionDTO]])
+async def list_user_transactions(
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Lists transaction history for the authenticated user.
+    """
+    query = (
+        select(PaymentTransactionModel)
+        .options(selectinload(PaymentTransactionModel.plan), selectinload(PaymentTransactionModel.user))
+        .where(PaymentTransactionModel.user_id == current_user.id)
+        .order_by(PaymentTransactionModel.created_at.desc())
+    )
+    results = (await db.execute(query)).scalars().all()
+
+    dtos = [
+        PaymentTransactionDTO(
+            id=tx.id,
+            user_id=tx.user_id,
+            user_email=tx.user.email if tx.user else None,
+            home_id=tx.home_id,
+            subscription_id=tx.subscription_id,
+            plan_name=tx.plan.name if tx.plan else "Ozhzo Plan",
+            amount=tx.amount,
+            discount_amount=tx.discount_amount,
+            final_amount=tx.final_amount,
+            currency=tx.currency,
+            provider=tx.provider,
+            provider_transaction_id=tx.provider_transaction_id,
+            status=tx.status,
+            created_at=tx.created_at
+        )
+        for tx in results
+    ]
+    return ApiSuccessResponse(data=dtos)
+
+
+# ------------------------------------------------------------------------------
+# Payment Webhook Handler
+# ------------------------------------------------------------------------------
+
+
+@router.post("/webhook/{provider_name}")
+async def handle_payment_webhook(
+    provider_name: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Secure server-to-server payment provider webhook handler.
+    Enforces signature validation, idempotency, amount/currency matching,
+    and safe lifecycle status transitions without client trust.
+    """
+    signature = (
+        request.headers.get("x-webhook-signature")
+        or request.headers.get("stripe-signature")
+        or request.headers.get("x-razorpay-signature")
+    )
+    try:
+        raw_body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload.")
+
+    provider = get_payment_provider()
+    webhook_res = await provider.handle_webhook(raw_body, signature)
+    if not webhook_res.get("valid", True):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature.")
+
+    provider_tx_id = webhook_res.get("provider_transaction_id")
+    event_type = webhook_res.get("event_type", "")
+
+    if not provider_tx_id:
+        return {"status": "ignored", "reason": "No provider transaction id present."}
+
+    # Find the corresponding transaction
+    tx_q = select(PaymentTransactionModel).where(
+        PaymentTransactionModel.provider_transaction_id == provider_tx_id
+    )
+    transaction = (await db.execute(tx_q)).scalar_one_or_none()
+
+    if not transaction:
+        return {"status": "ignored", "reason": "Transaction record not found in system."}
+
+    # Event: payment.succeeded / charge.successful
+    if "succeed" in event_type.lower():
+        # Idempotency check: if already processed, return 200 OK without duplicate entitlement
+        if transaction.status == "SUCCESS" and transaction.subscription_id:
+            return {"status": "processed", "message": "Transaction already settled and active."}
+
+        event_amount = webhook_res.get("amount")
+        event_currency = webhook_res.get("currency")
+
+        if event_amount is not None and event_amount != transaction.final_amount:
+            transaction.status = "FAILED"
+            transaction.failure_reason = f"Webhook amount mismatch: expected {transaction.final_amount}, received {event_amount}"
+            await db.commit()
+            return {"status": "rejected", "reason": "Amount mismatch."}
+
+        if event_currency and event_currency.upper().strip() != transaction.currency.upper().strip():
+            transaction.status = "FAILED"
+            transaction.failure_reason = f"Webhook currency mismatch: expected {transaction.currency}, received {event_currency}"
+            await db.commit()
+            return {"status": "rejected", "reason": "Currency mismatch."}
+
+        # Settle payment and activate subscription
+        transaction.status = "SUCCESS"
+        now = datetime.now(timezone.utc)
+        ends_at = now + timedelta(days=365)
+
+        sub = None
+        if transaction.subscription_id:
+            sub = await db.get(SubscriptionModel, transaction.subscription_id)
+        if not sub and transaction.user_id:
+            sub_q = select(SubscriptionModel).where(SubscriptionModel.user_id == transaction.user_id)
+            sub = (await db.execute(sub_q)).scalars().first()
+
+        if sub:
+            sub.status = "ACTIVE"
+            sub.current_period_ends_at = ends_at
+            sub.updated_at = now
+        else:
+            sub = SubscriptionModel(
+                id=uuid.uuid4(),
+                home_id=transaction.home_id or uuid.uuid4(),
+                user_id=transaction.user_id,
+                plan_id=transaction.plan_id,
+                price_id=transaction.price_id,
+                status="ACTIVE",
+                current_period_starts_at=now,
+                current_period_ends_at=ends_at,
+                currency_snapshot=transaction.currency,
+                effective_price_snapshot=transaction.final_amount,
+                list_price_snapshot=transaction.amount,
+                discount_amount_snapshot=transaction.discount_amount,
+            )
+            db.add(sub)
+            await db.flush()
+
+        transaction.subscription_id = sub.id
+
+        if transaction.user_id:
+            user = await db.get(UserModel, transaction.user_id)
+            if user:
+                user.free_home_consumed = True
+
+        await db.commit()
+        return {"status": "processed", "subscription_id": str(sub.id)}
+
+    # Event: payment.refunded / charge.refunded
+    elif "refund" in event_type.lower():
+        transaction.status = "REFUNDED"
+        if transaction.subscription_id:
+            sub = await db.get(SubscriptionModel, transaction.subscription_id)
+            if sub:
+                sub.status = "CANCELED"
+                sub.updated_at = datetime.now(timezone.utc)
+        await db.commit()
+        return {"status": "processed", "action": "refund_applied"}
+
+    # Unknown or unhandled event
+    return {"status": "acknowledged", "event": event_type}
 
 
 # ------------------------------------------------------------------------------

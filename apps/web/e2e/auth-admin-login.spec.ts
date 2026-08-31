@@ -7,16 +7,15 @@ test.describe('Ozhzo Verse Authentication and Super Admin Access Flow', () => {
     await context.clearCookies();
   });
 
-  test('1. Normal household /login renders properly with Phone and Email tabs', async ({ page }) => {
+  test('1. Normal household /login renders properly with unified email and mobile login', async ({ page }) => {
     await page.goto('/login');
     await expect(page.locator('h1')).toContainText('Welcome Back');
     await expect(page.getByText('Sign in to your Ozhzo Verse home')).toBeVisible();
 
-    // Verify Tab Toggle
-    const emailTab = page.getByRole('button', { name: 'Email' });
-    await emailTab.click();
-    await expect(page.locator('#email')).toBeVisible();
-    await expect(page.locator('#password')).toBeVisible();
+    // Verify Unified Identifier & Password Inputs
+    await expect(page.locator('#login-identifier')).toBeVisible();
+    await expect(page.locator('#login-password')).toBeVisible();
+    await expect(page.locator('#login-submit-btn')).toBeVisible();
   });
 
   test('2. /admin/login page renders Platform Operations Console frame', async ({ page }) => {
@@ -30,8 +29,8 @@ test.describe('Ozhzo Verse Authentication and Super Admin Access Flow', () => {
   });
 
   test('3. Flow C: Wrong password displays "Authentication Failed" & "Invalid email or password."', async ({ page }) => {
-    // Intercept backend auth login with 401
-    await page.route('**/api/v1/auth/login', async (route) => {
+    // Intercept API admin auth login with 401
+    const mock401 = async (route: any) => {
       await route.fulfill({
         status: 401,
         contentType: 'application/json',
@@ -40,7 +39,10 @@ test.describe('Ozhzo Verse Authentication and Super Admin Access Flow', () => {
           detail: 'Invalid credentials or verification code.'
         })
       });
-    });
+    };
+    await page.route('**/api/v1/admin/auth/login', mock401);
+    await page.route('**/api/v1/admin/login', mock401);
+    await page.route('**/api/v1/auth/login', mock401);
 
     await page.goto('/admin/login');
     await page.fill('#admin-login-email', 'vivek@zinfog.com');
@@ -56,7 +58,7 @@ test.describe('Ozhzo Verse Authentication and Super Admin Access Flow', () => {
 
   test('4. Flows A & D: Household OWNER/MEMBER authenticated but not Super Admin displays "Access Restricted"', async ({ page }) => {
     // Intercept auth/login to return valid tokens
-    await page.route('**/api/v1/auth/login', async (route) => {
+    const mockOwnerLogin = async (route: any) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -70,7 +72,10 @@ test.describe('Ozhzo Verse Authentication and Super Admin Access Flow', () => {
           }
         })
       });
-    });
+    };
+    await page.route('**/api/v1/admin/auth/login', mockOwnerLogin);
+    await page.route('**/api/v1/admin/login', mockOwnerLogin);
+    await page.route('**/api/v1/auth/login', mockOwnerLogin);
 
     // Intercept users/me to return non-admin profile (household owner)
     await page.route('**/api/v1/users/me', async (route) => {
@@ -115,7 +120,7 @@ test.describe('Ozhzo Verse Authentication and Super Admin Access Flow', () => {
 
   test('5. Flows B & E: Super Admin authentication succeeds and redirects to /admin', async ({ page }) => {
     // Intercept auth/login with successful response
-    await page.route('**/api/v1/auth/login', async (route) => {
+    const mockAdminLogin = async (route: any) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -129,7 +134,10 @@ test.describe('Ozhzo Verse Authentication and Super Admin Access Flow', () => {
           }
         })
       });
-    });
+    };
+    await page.route('**/api/v1/admin/auth/login', mockAdminLogin);
+    await page.route('**/api/v1/admin/login', mockAdminLogin);
+    await page.route('**/api/v1/auth/login', mockAdminLogin);
 
     // Intercept users/me returning Super Admin flags
     await page.route('**/api/v1/users/me', async (route) => {
@@ -660,10 +668,9 @@ test.describe('Ozhzo Verse Authentication and Super Admin Access Flow', () => {
       localStorage.setItem('active_home_id', homeId);
     }, { homeId: userA_HomeId });
 
-    await page.click('#email-tab-btn');
-    await expect(page.locator('#email')).toBeVisible();
-    await page.fill('#email', 'userB@example.com');
-    await page.fill('#password', 'ValidPass123!');
+    await expect(page.locator('#login-identifier')).toBeVisible();
+    await page.fill('#login-identifier', 'userB@example.com');
+    await page.fill('#login-password', 'ValidPass123!');
     await page.click('#login-submit-btn');
 
     // Step 3: Verify reaching /dashboard as Home B without 403 error

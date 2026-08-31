@@ -302,7 +302,7 @@ function JoinHomeContent() {
               <Input
                 id="invitationCode"
                 label="Invitation Code or Token"
-                placeholder="e.g. INV-XXXXXX"
+                placeholder="e.g. OZ-XXXXXX"
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
                 required

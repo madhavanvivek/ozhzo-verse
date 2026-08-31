@@ -13,6 +13,7 @@ from src.infrastructure.database.session import get_db
 from src.infrastructure.database.models import (
     CouponModel,
     HomeModel,
+    PaymentTransactionModel,
     PromotionModel,
     SubscriptionAuditLogModel,
     SubscriptionFeatureModel,
@@ -31,6 +32,7 @@ from src.schemas.subscription import (
     CreateSubscriptionFeatureRequest,
     CreateSubscriptionPlanRequest,
     CreateSubscriptionPriceRequest,
+    PaymentTransactionDTO,
     PromotionDTO,
     SubscriptionAuditLogDTO,
     SubscriptionFeatureDTO,
@@ -91,6 +93,7 @@ async def create_subscription_plan(
         status="ACTIVE",
         included_members=payload.included_members,
         maximum_members=payload.maximum_members,
+        max_homes=payload.max_homes,
         additional_member_allowed=payload.additional_member_allowed,
         introductory_enabled=payload.introductory_enabled,
         introductory_duration_days=payload.introductory_duration_days,
@@ -120,6 +123,7 @@ async def create_subscription_plan(
             status=new_plan.status,
             included_members=new_plan.included_members,
             maximum_members=new_plan.maximum_members,
+            max_homes=new_plan.max_homes,
             additional_member_allowed=new_plan.additional_member_allowed,
             introductory_enabled=new_plan.introductory_enabled,
             introductory_duration_days=new_plan.introductory_duration_days,
@@ -146,6 +150,7 @@ async def update_subscription_plan(
         "status": plan.status,
         "included_members": plan.included_members,
         "maximum_members": plan.maximum_members,
+        "max_homes": getattr(plan, "max_homes", 10),
         "introductory_duration_days": plan.introductory_duration_days,
         "introductory_price": str(plan.introductory_price)
     }
@@ -160,6 +165,8 @@ async def update_subscription_plan(
         plan.included_members = payload.included_members
     if payload.maximum_members is not None:
         plan.maximum_members = payload.maximum_members
+    if payload.max_homes is not None:
+        plan.max_homes = payload.max_homes
     if payload.additional_member_allowed is not None:
         plan.additional_member_allowed = payload.additional_member_allowed
     if payload.introductory_enabled is not None:
@@ -194,6 +201,7 @@ async def update_subscription_plan(
             status=plan.status,
             included_members=plan.included_members,
             maximum_members=plan.maximum_members,
+            max_homes=plan.max_homes,
             additional_member_allowed=plan.additional_member_allowed,
             introductory_enabled=plan.introductory_enabled,
             introductory_duration_days=plan.introductory_duration_days,
@@ -785,4 +793,97 @@ async def list_subscribers(
     ]
 
     return ApiSuccessResponse(data=dtos)
+
+
+# ------------------------------------------------------------------------------
+# 5. Financial Transactions & Revenue Analytics (Super Admin)
+# ------------------------------------------------------------------------------
+
+@router.get("/transactions", response_model=ApiSuccessResponse[List[PaymentTransactionDTO]])
+async def list_admin_payment_transactions(
+    status_filter: Optional[str] = None,
+    super_admin: UserModel = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Returns audit trail of all payment transactions across the platform.
+    """
+    query = (
+        select(PaymentTransactionModel)
+        .options(selectinload(PaymentTransactionModel.plan), selectinload(PaymentTransactionModel.user))
+    )
+    if status_filter and status_filter.upper() != "ALL":
+        query = query.where(PaymentTransactionModel.status == status_filter.upper())
+
+    query = query.order_by(desc(PaymentTransactionModel.created_at))
+    results = (await db.execute(query)).scalars().all()
+
+    dtos = [
+        PaymentTransactionDTO(
+            id=tx.id,
+            user_id=tx.user_id,
+            user_email=tx.user.email if tx.user else None,
+            home_id=tx.home_id,
+            subscription_id=tx.subscription_id,
+            plan_name=tx.plan.name if tx.plan else "Ozhzo Plan",
+            amount=tx.amount,
+            discount_amount=tx.discount_amount,
+            final_amount=tx.final_amount,
+            currency=tx.currency,
+            provider=tx.provider,
+            provider_transaction_id=tx.provider_transaction_id,
+            status=tx.status,
+            created_at=tx.created_at
+        )
+        for tx in results
+    ]
+    return ApiSuccessResponse(data=dtos)
+
+
+@router.get("/analytics")
+async def get_admin_subscription_analytics(
+    super_admin: UserModel = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Returns revenue analytics, active subscriber counts, and order statistics.
+    """
+    from sqlalchemy import func
+
+    # 1. Total revenue
+    rev_q = select(func.sum(PaymentTransactionModel.final_amount)).where(PaymentTransactionModel.status == "SUCCESS")
+    total_rev = (await db.execute(rev_q)).scalar() or Decimal("0.00")
+
+    # 2. Transaction counts
+    tx_count_q = select(func.count(PaymentTransactionModel.id))
+    total_tx = (await db.execute(tx_count_q)).scalar() or 0
+
+    # 3. Subscriber counts by status
+    subs_active_q = select(func.count(SubscriptionModel.id)).where(SubscriptionModel.status == "ACTIVE")
+    active_subs = (await db.execute(subs_active_q)).scalar() or 0
+
+    subs_trial_q = select(func.count(SubscriptionModel.id)).where(SubscriptionModel.status == "TRIALING")
+    trial_subs = (await db.execute(subs_trial_q)).scalar() or 0
+
+    subs_past_due_q = select(func.count(SubscriptionModel.id)).where(SubscriptionModel.status == "PAST_DUE")
+    past_due_subs = (await db.execute(subs_past_due_q)).scalar() or 0
+
+    subs_cancelled_q = select(func.count(SubscriptionModel.id)).where(SubscriptionModel.status == "CANCELED")
+    cancelled_subs = (await db.execute(subs_cancelled_q)).scalar() or 0
+
+    avg_order = (total_rev / total_tx).quantize(Decimal("0.01")) if total_tx > 0 else Decimal("0.00")
+
+    return ApiSuccessResponse(
+        data={
+            "total_revenue": float(total_rev),
+            "total_transactions": total_tx,
+            "active_subscribers": active_subs,
+            "trial_subscribers": trial_subs,
+            "past_due_subscribers": past_due_subs,
+            "cancelled_subscribers": cancelled_subs,
+            "average_order_value": float(avg_order),
+            "currency": "USD"
+        }
+    )
+
 

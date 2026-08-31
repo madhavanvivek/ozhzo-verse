@@ -49,7 +49,7 @@ async def test_01_public_id_format_and_collision_resistance():
     suffix = public_id[4:]
     assert len(suffix) == 6
     for char in suffix:
-        assert char in "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+        assert char in "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
         assert char not in "0O1IL"
 
 

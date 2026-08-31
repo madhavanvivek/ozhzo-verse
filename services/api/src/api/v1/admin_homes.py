@@ -541,3 +541,79 @@ async def archive_home(
 
     return ApiSuccessResponse(data=MessageResponse(message=f"Home '{home.name}' archived successfully."))
 
+
+@router.post("/{home_id}/qr/regenerate", response_model=ApiSuccessResponse[MessageResponse])
+async def admin_regenerate_home_qr(
+    home_id: UUID,
+    super_admin: UserModel = Depends(require_admin_permission("admin:homes:edit")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Administratively regenerate a Home workspace's QR code.
+    Immediately invalidates previous QR token and increments QR version.
+    """
+    from src.core.home_identity import generate_home_qr_token
+
+    home = await db.get(HomeModel, home_id)
+    if not home or home.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Home workspace not found.")
+
+    old_version = getattr(home, "home_qr_version", 1) or 1
+    new_token = generate_home_qr_token()
+
+    home.home_qr_token = new_token
+    home.home_qr_status = "ACTIVE"
+    home.home_qr_version = old_version + 1
+    home.home_qr_created_at = datetime.now(timezone.utc)
+    home.home_qr_revoked_at = None
+    home.updated_at = datetime.now(timezone.utc)
+
+    await record_home_audit(
+        db=db,
+        home_id=home.id,
+        action="ADMIN_REGENERATE_HOME_QR",
+        performed_by=super_admin.id,
+        old_values={"qr_version": old_version},
+        new_values={"qr_version": home.home_qr_version, "qr_status": "ACTIVE"},
+        reason="Administrative QR regeneration"
+    )
+    await db.commit()
+
+    return ApiSuccessResponse(
+        data=MessageResponse(message=f"QR code for Home '{home.name}' regenerated to version {home.home_qr_version}.")
+    )
+
+
+@router.post("/{home_id}/qr/revoke", response_model=ApiSuccessResponse[MessageResponse])
+async def admin_revoke_home_qr(
+    home_id: UUID,
+    super_admin: UserModel = Depends(require_admin_permission("admin:homes:edit")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Administratively revoke a Home workspace's QR code, disabling public discovery.
+    """
+    home = await db.get(HomeModel, home_id)
+    if not home or home.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Home workspace not found.")
+
+    home.home_qr_status = "REVOKED"
+    home.home_qr_revoked_at = datetime.now(timezone.utc)
+    home.updated_at = datetime.now(timezone.utc)
+
+    await record_home_audit(
+        db=db,
+        home_id=home.id,
+        action="ADMIN_REVOKE_HOME_QR",
+        performed_by=super_admin.id,
+        old_values={"qr_status": "ACTIVE"},
+        new_values={"qr_status": "REVOKED", "revoked_at": str(home.home_qr_revoked_at)},
+        reason="Administrative QR revocation"
+    )
+    await db.commit()
+
+    return ApiSuccessResponse(
+        data=MessageResponse(message=f"QR code for Home '{home.name}' revoked successfully.")
+    )
+
+

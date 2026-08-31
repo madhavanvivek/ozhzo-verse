@@ -5,264 +5,594 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import {
+  Tag,
+  CreditCard,
+  CheckCircle2,
+  AlertCircle,
+  Home,
+  Check,
+  X,
+  Receipt,
   Users,
-  ShieldCheck,
-  Sparkles,
-  Tag
+  RefreshCw
 } from 'lucide-react';
 import { apiClient } from '@/lib/apiClient';
 
-interface MemberEntitlement {
-  user_id: string;
-  display_name: string;
-  role: string;
-  is_free_entitled: boolean;
-  is_seat_covered: boolean;
+interface UserEntitlementSummary {
+  free_home_consumed: boolean;
+  free_home_included: number;
+  active_homes_count: number;
+  total_allowed_homes: number;
+  can_create_home: boolean;
+  active_subscription?: {
+    id: string;
+    plan_name: string;
+    status: string;
+    current_period_ends_at?: string | null;
+    cancel_at_period_end?: boolean;
+    paid_member_seats: number;
+    effective_price: number | string;
+    currency: string;
+  } | null;
+}
+
+interface SubscriptionPrice {
+  id: string;
+  plan_id: string;
+  country: string;
+  currency: string;
+  billing_period: string;
+  list_price: number | string;
+  additional_member_list_price: number | string;
+  is_active: boolean;
+}
+
+interface SubscriptionPlanDetail {
+  id: string;
+  name: string;
+  code: string;
+  description?: string | null;
+  plan_type: string;
+  status: string;
+  included_members: number;
+  maximum_members?: number | null;
+  max_homes: number;
+  additional_member_allowed: boolean;
+  introductory_enabled: boolean;
+  introductory_duration_days: number;
+  introductory_price: number | string;
+  prices: SubscriptionPrice[];
+}
+
+interface PaymentTransaction {
+  id: string;
+  plan_name: string;
+  amount: number | string;
+  discount_amount: number | string;
+  final_amount: number | string;
+  currency: string;
+  provider: string;
+  status: string;
+  created_at: string;
 }
 
 interface MemberDTO {
   id: string;
   user_id: string;
   display_name: string;
-  phone_number?: string | null;
-  email?: string | null;
   role: string;
   status: string;
 }
 
 export default function SubscriptionPage() {
+  const [entitlements, setEntitlements] = useState<UserEntitlementSummary | null>(null);
+  const [plans, setPlans] = useState<SubscriptionPlanDetail[]>([]);
+  const [transactions, setTransactions] = useState<PaymentTransaction[]>([]);
   const [members, setMembers] = useState<MemberDTO[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  const [seats, setSeats] = useState(0);
+  // Selected checkout options
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+  const [selectedCurrency, setSelectedCurrency] = useState('USD');
+  const [couponCode, setCouponCode] = useState('');
+  const [appliedCoupon, setAppliedCoupon] = useState<{
+    code: string;
+    discount_text: string;
+    discount_amount: number;
+    is_free: boolean;
+  } | null>(null);
+  const [couponError, setCouponError] = useState<string | null>(null);
+  const [isValidatingCoupon, setIsValidatingCoupon] = useState(false);
 
-  const planName = 'Ozhzo Home Standard';
-  const currency = 'USD';
-  const additionalMemberListPrice = 20.00;
-  const discountPercent = 50.00;
-  const discountAmount = 10.00;
-  const effectivePrice = 10.00;
-  const promotionCode = 'LAUNCH50';
+  // Checkout modal & process
+  const [isCheckingOut, setIsCheckingOut] = useState(false);
+  const [checkoutResult, setCheckoutResult] = useState<{
+    transaction_id: string;
+    amount: number;
+    discount_amount: number;
+    final_amount: number;
+    currency: string;
+    provider_transaction_id: string;
+    payment_required: boolean;
+  } | null>(null);
+  const [isConfirming, setIsConfirming] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    const loadSubscriptionAndMembers = async () => {
-      setIsLoading(true);
-      try {
-        const homeId = await apiClient.getValidActiveHome();
-
-        if (homeId) {
-          const membersData = await apiClient.get<MemberDTO[]>(`/homes/${homeId}/members`);
-          setMembers(membersData || []);
-          const requiredPaid = Math.max(0, (membersData?.length || 1) - 1);
-          setSeats(requiredPaid);
-        }
-      } catch (err) {
-        console.error('Failed to load subscription members:', err);
-        setMembers([]);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    loadSubscriptionAndMembers();
-  }, []);
-
-  const formatCurrency = (amount: number, curr: string) => {
+  const loadAllData = async () => {
+    setIsLoading(true);
     try {
-      return new Intl.NumberFormat('en-US', {
-        style: 'currency',
-        currency: curr || 'USD',
-      }).format(amount);
-    } catch {
-      return `${curr} ${amount.toFixed(2)}`;
+      const [entData, plansData, txData] = await Promise.all([
+        apiClient.get<UserEntitlementSummary>('/subscription/me'),
+        apiClient.get<SubscriptionPlanDetail[]>('/subscription/plans'),
+        apiClient.get<PaymentTransaction[]>('/subscription/transactions').catch(() => [])
+      ]);
+
+      setEntitlements(entData);
+      setPlans(plansData || []);
+      setTransactions(txData || []);
+
+      if (plansData && plansData.length > 0 && !selectedPlanId) {
+        setSelectedPlanId(plansData[0].id);
+      }
+
+      // Load members for active home if present
+      const homeId = await apiClient.getValidActiveHome();
+      if (homeId) {
+        const memData = await apiClient.get<MemberDTO[]>(`/homes/${homeId}/members`).catch(() => []);
+        setMembers(memData || []);
+      }
+    } catch (err) {
+      console.error('Failed to load subscription data:', err);
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const handleUpdateSeats = (newSeats: number) => {
-    if (newSeats < 0) return;
-    setSeats(newSeats);
+  useEffect(() => {
+    loadAllData();
+  }, []);
+
+  const handleValidateCoupon = async () => {
+    if (!couponCode.trim()) return;
+    setIsValidatingCoupon(true);
+    setCouponError(null);
+    try {
+      const res: any = await apiClient.post('/coupons/validate', {
+        code: couponCode.trim()
+      });
+      if (res?.valid) {
+        setAppliedCoupon({
+          code: res.code,
+          discount_text: res.benefit || 'Discount applied',
+          discount_amount: Number(res.discount_value) || 0,
+          is_free: res.coupon_type === 'FREE_PERIOD'
+        });
+      } else {
+        setCouponError('Invalid or expired coupon code.');
+      }
+    } catch (err: any) {
+      setCouponError(err?.message || 'Coupon not found or inactive.');
+      setAppliedCoupon(null);
+    } finally {
+      setIsValidatingCoupon(false);
+    }
   };
 
-  const totalMembers = members.length || 1;
-  const freeEntitledSeats = 1;
-  const requiredPaidSeats = Math.max(0, totalMembers - freeEntitledSeats);
-  const isFullyCovered = seats >= requiredPaidSeats;
-  const annualTotalPrice = seats * effectivePrice;
+  const handleInitiateCheckout = async (planId: string) => {
+    setIsCheckingOut(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    try {
+      const res = await apiClient.post<{
+        transaction_id: string;
+        amount: number;
+        discount_amount: number;
+        final_amount: number;
+        currency: string;
+        provider_transaction_id: string;
+        payment_required: boolean;
+      }>('/subscription/checkout', {
+        plan_id: planId,
+        currency: selectedCurrency,
+        coupon_code: appliedCoupon ? appliedCoupon.code : (couponCode.trim() || undefined),
+        billing_period: 'ANNUAL'
+      });
 
-  const memberEntitlements: MemberEntitlement[] = members.map((m, index) => {
-    const isFree = index === 0;
-    const isCovered = isFree || (index <= seats);
-    return {
-      user_id: m.user_id,
-      display_name: m.display_name,
-      role: m.role,
-      is_free_entitled: isFree,
-      is_seat_covered: isCovered
-    };
-  });
+      setCheckoutResult(res);
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Checkout failed. Please try again.');
+    } finally {
+      setIsCheckingOut(false);
+    }
+  };
+
+  const handleConfirmPayment = async () => {
+    if (!checkoutResult) return;
+    setIsConfirming(true);
+    setErrorMessage(null);
+    try {
+      await apiClient.post('/subscription/confirm-payment', {
+        transaction_id: checkoutResult.transaction_id,
+        provider_transaction_id: checkoutResult.provider_transaction_id
+      });
+
+      setSuccessMessage('Subscription activated successfully! Your household entitlements are now active.');
+      setCheckoutResult(null);
+      setAppliedCoupon(null);
+      setCouponCode('');
+      await loadAllData();
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Payment confirmation failed.');
+    } finally {
+      setIsConfirming(false);
+    }
+  };
+
+  const handleCancelSubscription = async () => {
+    if (!window.confirm('Are you sure you want to cancel your subscription at the end of the current billing cycle?')) return;
+    try {
+      await apiClient.post('/subscription/cancel', {});
+      setSuccessMessage('Subscription scheduled for cancellation at the end of the current billing period.');
+      await loadAllData();
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Failed to cancel subscription.');
+    }
+  };
+
+  const selectedPlan = plans.find((p) => p.id === selectedPlanId) || plans[0];
+
+  if (isLoading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '50vh', gap: '10px', color: 'var(--color-primary-900)' }}>
+        <RefreshCw size={24} className="animate-spin" />
+        <span style={{ fontSize: '14px', fontWeight: 600 }}>Loading subscription entitlements...</span>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)', maxWidth: '900px' }}>
       {/* Header */}
       <div>
         <h1 style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--color-primary-900)' }}>
-          Household Subscription & Dynamic Entitlements
+          Household Subscription & Multi-Home Entitlements
         </h1>
-        <p style={{ fontSize: '14px', color: 'var(--color-text-secondary)' }}>
-          Transparent, data-driven pricing: Standard List Price + Promotional Discount = Effective Customer Price.
+        <p style={{ fontSize: '14px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
+          One user = One free Home lifetime. Upgrade your household subscription for additional homes, multi-member sync, and premium features.
         </p>
       </div>
 
-      {/* Trial Status Card */}
+      {/* Notifications */}
+      {successMessage && (
+        <div style={{ padding: '14px 18px', backgroundColor: 'var(--status-in-stock-bg)', border: '1px solid #a7f3d0', borderRadius: 'var(--radius-md)', color: 'var(--status-in-stock)', fontSize: '14px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <CheckCircle2 size={18} />
+          <span>{successMessage}</span>
+        </div>
+      )}
+
+      {errorMessage && (
+        <div style={{ padding: '14px 18px', backgroundColor: 'var(--status-overdue-bg)', border: '1px solid #fecaca', borderRadius: 'var(--radius-md)', color: 'var(--status-overdue)', fontSize: '14px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <AlertCircle size={18} />
+          <span>{errorMessage}</span>
+        </div>
+      )}
+
+      {/* User Entitlements Overview Card */}
       <Card style={{ border: '2px solid var(--color-primary-900)', backgroundColor: 'var(--color-surface-overlay)' }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div style={{ width: '44px', height: '44px', borderRadius: '50%', backgroundColor: 'var(--color-primary-900)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Sparkles size={22} />
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-4)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+            <div style={{ width: '48px', height: '48px', borderRadius: '50%', backgroundColor: 'var(--color-primary-900)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Home size={24} />
             </div>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <h2 style={{ fontSize: '17px', fontWeight: 700, color: 'var(--color-primary-900)' }}>
-                  {planName}
+                <h2 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--color-primary-900)' }}>
+                  {entitlements?.active_subscription ? entitlements.active_subscription.plan_name : 'Ozhzo Free Household Tier'}
                 </h2>
-                <Badge variant={isFullyCovered ? 'in-stock' : 'overdue'}>
-                  {isFullyCovered ? 'Seats Covered' : 'Additional Seats Needed'}
+                <Badge variant={entitlements?.active_subscription ? 'in-stock' : 'neutral'}>
+                  {entitlements?.active_subscription ? 'Active Subscriber' : '1 Free Home Tier'}
                 </Badge>
-                <Badge variant="neutral">Promo: {promotionCode}</Badge>
               </div>
               <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
-                Annual household custody plan with multi-seat member synchronization.
+                {entitlements?.free_home_consumed
+                  ? 'Your lifetime free Home entitlement is consumed.'
+                  : 'You have 1 free lifetime Home available.'}
               </p>
             </div>
           </div>
 
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--color-primary-900)' }}>
-              {formatCurrency(annualTotalPrice, currency)} / year
+          <div style={{ display: 'flex', gap: '16px', textAlign: 'right' }}>
+            <div>
+              <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase' }}>
+                Active Households
+              </div>
+              <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--color-primary-900)' }}>
+                {entitlements?.active_homes_count ?? 0} / {entitlements?.total_allowed_homes ?? 1}
+              </div>
             </div>
-            <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
-              365 Days Remaining
-            </div>
+
+            {entitlements?.active_subscription && (
+              <div>
+                <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase' }}>
+                  Renewal / Expiry
+                </div>
+                <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-primary-900)', marginTop: '4px' }}>
+                  {entitlements.active_subscription.current_period_ends_at
+                    ? new Date(entitlements.active_subscription.current_period_ends_at).toLocaleDateString()
+                    : '1 Year'}
+                </div>
+              </div>
+            )}
           </div>
+        </div>
+
+        {entitlements?.active_subscription && (
+          <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--color-border-subtle)', display: 'flex', justifyContent: 'flex-end' }}>
+            <Button size="sm" variant="secondary" onClick={handleCancelSubscription}>
+              Cancel Auto-Renew
+            </Button>
+          </div>
+        )}
+      </Card>
+
+      {/* Available Plans Section */}
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+          <h2 style={{ fontSize: '16px', fontWeight: 700, color: 'var(--color-primary-900)' }}>
+            Choose Household Plan
+          </h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
+            <span style={{ color: 'var(--color-text-secondary)' }}>Currency:</span>
+            <select
+              value={selectedCurrency}
+              onChange={(e) => setSelectedCurrency(e.target.value)}
+              style={{ padding: '4px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border-subtle)', fontSize: '13px' }}
+            >
+              <option value="USD">USD ($)</option>
+              <option value="EUR">EUR (€)</option>
+              <option value="GBP">GBP (£)</option>
+              <option value="INR">INR (₹)</option>
+            </select>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 'var(--space-4)' }}>
+          {plans.map((p) => {
+            const isSelected = selectedPlanId === p.id;
+            const price = p.prices?.find((pr) => pr.currency === selectedCurrency) || p.prices?.[0];
+            const amount = price?.list_price || p.introductory_price || '49.00';
+
+            return (
+              <Card
+                key={p.id}
+                style={{
+                  border: isSelected ? '2px solid var(--color-primary-900)' : '1px solid var(--color-border-subtle)',
+                  backgroundColor: isSelected ? 'var(--color-surface-card)' : 'var(--color-surface-subtle)',
+                  cursor: 'pointer',
+                  position: 'relative',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between'
+                }}
+                onClick={() => setSelectedPlanId(p.id)}
+              >
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <h3 style={{ fontSize: '16px', fontWeight: 700, color: 'var(--color-primary-900)' }}>{p.name}</h3>
+                    {isSelected && <Badge variant="in-stock">Selected</Badge>}
+                  </div>
+
+                  <div style={{ fontSize: '24px', fontWeight: 800, color: 'var(--color-primary-900)', marginBottom: '8px' }}>
+                    {selectedCurrency} {Number(amount).toFixed(2)}{' '}
+                    <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)' }}>/ year</span>
+                  </div>
+
+                  <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '14px' }}>
+                    {p.description || 'Complete household operating system with multi-home management.'}
+                  </p>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '12px', color: 'var(--color-text-primary)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Check size={14} color="var(--status-in-stock)" />
+                      <span><strong>Up to {p.max_homes} Households</strong></span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Check size={14} color="var(--status-in-stock)" />
+                      <span><strong>{p.included_members} Included Members</strong></span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Check size={14} color="var(--status-in-stock)" />
+                      <span>Unlimited Inventory, Bills & Tasks</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ marginTop: '16px' }}>
+                  <Button
+                    variant={isSelected ? 'primary' : 'secondary'}
+                    style={{ width: '100%', minHeight: '40px' }}
+                    isLoading={isCheckingOut && isSelected}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedPlanId(p.id);
+                      handleInitiateCheckout(p.id);
+                    }}
+                  >
+                    Select & Subscribe
+                  </Button>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Coupon Application & Checkout Box */}
+      <Card variant="subtle">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Tag size={18} color="var(--color-primary-900)" />
+            <h3 style={{ fontSize: '15px', fontWeight: 700 }}>Have a Promotional Coupon or Grant Code?</h3>
+          </div>
+
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+            <input
+              type="text"
+              placeholder="e.g. LAUNCH50, MOSTWANTED"
+              value={couponCode}
+              onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
+              style={{
+                flex: 1,
+                minWidth: '200px',
+                padding: '10px 12px',
+                borderRadius: 'var(--radius-md)',
+                border: '1px solid var(--color-border-subtle)',
+                fontSize: '14px',
+                minHeight: '44px'
+              }}
+            />
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={handleValidateCoupon}
+              isLoading={isValidatingCoupon}
+              style={{ minHeight: '44px' }}
+            >
+              Apply Coupon
+            </Button>
+          </div>
+
+          {appliedCoupon && (
+            <div style={{ padding: '10px 12px', backgroundColor: 'var(--status-in-stock-bg)', borderRadius: 'var(--radius-md)', color: 'var(--status-in-stock)', fontSize: '13px', fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>Coupon "{appliedCoupon.code}" applied: {appliedCoupon.discount_text}</span>
+              <Button size="sm" variant="ghost" onClick={() => { setAppliedCoupon(null); setCouponCode(''); }}>
+                <X size={14} />
+              </Button>
+            </div>
+          )}
+
+          {couponError && (
+            <div style={{ fontSize: '13px', color: 'var(--status-overdue)', fontWeight: 500 }}>
+              {couponError}
+            </div>
+          )}
         </div>
       </Card>
 
-      {/* Pricing Breakdown Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 'var(--space-4)' }}>
-        <Card variant="subtle">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-            <ShieldCheck size={18} color="var(--color-primary-900)" />
-            <h3 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-primary-900)' }}>Standard List Price</h3>
-          </div>
-          <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--color-primary-900)' }}>
-            {formatCurrency(additionalMemberListPrice, currency)}{' '}
-            <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--color-text-secondary)' }}>
-              / additional member / yr
-            </span>
-          </div>
-          <p style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
-            Includes 1 free Home Admin account plus shared memory storage.
-          </p>
-        </Card>
+      {/* Checkout Modal / Summary */}
+      {checkoutResult && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px', zIndex: 9999 }}>
+          <div style={{ backgroundColor: 'var(--color-surface-card)', borderRadius: 'var(--radius-lg)', padding: '24px', maxWidth: '480px', width: '100%', boxShadow: 'var(--shadow-modal)', border: '1px solid var(--color-border-subtle)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <CreditCard size={20} color="var(--color-primary-900)" />
+                <h3 style={{ fontSize: '18px', fontWeight: 700 }}>Confirm Subscription Purchase</h3>
+              </div>
+              <button onClick={() => setCheckoutResult(null)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
+                <X size={20} />
+              </button>
+            </div>
 
-        <Card variant="subtle">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-            <Tag size={18} color="var(--status-low-stock)" />
-            <h3 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-primary-900)' }}>Launch Promotion Discount</h3>
-          </div>
-          <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--status-in-stock)' }}>
-            -{discountPercent}% OFF
-          </div>
-          <p style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
-            Standard promotional deduction: -{formatCurrency(discountAmount, currency)}/seat.
-          </p>
-        </Card>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '14px', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--color-text-secondary)' }}>Selected Plan:</span>
+                <span style={{ fontWeight: 600 }}>{selectedPlan?.name}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: 'var(--color-text-secondary)' }}>List Price:</span>
+                <span>{checkoutResult.currency} {Number(checkoutResult.amount).toFixed(2)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--status-in-stock)' }}>
+                <span>Discount:</span>
+                <span>-{checkoutResult.currency} {Number(checkoutResult.discount_amount).toFixed(2)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '16px', fontWeight: 700, borderTop: '1px solid var(--color-border-subtle)', paddingTop: '8px' }}>
+                <span>Total Amount Due:</span>
+                <span>{checkoutResult.currency} {Number(checkoutResult.final_amount).toFixed(2)}</span>
+              </div>
+            </div>
 
-        <Card variant="subtle">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-            <Users size={18} color="var(--color-primary-900)" />
-            <h3 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-primary-900)' }}>Effective Customer Price</h3>
-          </div>
-          <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--color-primary-900)' }}>
-            {formatCurrency(effectivePrice, currency)}{' '}
-            <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--status-in-stock)' }}>
-              ({discountPercent}% OFF)
-            </span>
-          </div>
-          <p style={{ fontSize: '12px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
-            Active promotion: <strong>{promotionCode}</strong> ({formatCurrency(discountAmount, currency)} discount/seat).
-          </p>
-        </Card>
-      </div>
-
-      {/* Member Entitlement Breakdown */}
-      <Card>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-4)' }}>
-          <div>
-            <h3 style={{ fontSize: '15px', fontWeight: 700, color: 'var(--color-primary-900)' }}>
-              Member Entitlements & Seat Allocation
-            </h3>
-            <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)' }}>
-              Breakdown of free introductory entitlement vs. dynamically allocated paid seats for current Home members ({totalMembers} active).
-            </p>
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Button size="sm" variant="secondary" onClick={() => handleUpdateSeats(seats - 1)} disabled={seats <= 0}>
-              -
-            </Button>
-            <span style={{ fontSize: '14px', fontWeight: 700, minWidth: '60px', textAlign: 'center' }}>
-              {seats} Seats
-            </span>
-            <Button size="sm" variant="secondary" onClick={() => handleUpdateSeats(seats + 1)}>
-              +
-            </Button>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <Button variant="secondary" onClick={() => setCheckoutResult(null)} disabled={isConfirming}>
+                Cancel
+              </Button>
+              <Button variant="primary" onClick={handleConfirmPayment} isLoading={isConfirming}>
+                {checkoutResult.final_amount > 0 ? 'Pay & Activate Subscription' : 'Activate Free Period'}
+              </Button>
+            </div>
           </div>
         </div>
+      )}
 
-        {isLoading ? (
-          <div style={{ height: '80px', backgroundColor: 'var(--color-surface-subtle)', borderRadius: 'var(--radius-md)', animation: 'pulse 1.5s infinite' }} />
-        ) : memberEntitlements.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: 'var(--space-6)', color: 'var(--color-text-secondary)', fontSize: '14px' }}>
-            No household members found for active Home workspace.
+      {/* Transaction Invoices Table */}
+      {transactions.length > 0 && (
+        <Card>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+            <Receipt size={18} color="var(--color-primary-900)" />
+            <h3 style={{ fontSize: '15px', fontWeight: 700 }}>Payment & Billing History</h3>
           </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-            {memberEntitlements.map((m) => (
+
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--color-border-subtle)', color: 'var(--color-text-secondary)' }}>
+                  <th style={{ padding: '8px 12px' }}>Date</th>
+                  <th style={{ padding: '8px 12px' }}>Plan</th>
+                  <th style={{ padding: '8px 12px' }}>Amount</th>
+                  <th style={{ padding: '8px 12px' }}>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {transactions.map((t) => (
+                  <tr key={t.id} style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
+                    <td style={{ padding: '8px 12px' }}>{new Date(t.created_at).toLocaleDateString()}</td>
+                    <td style={{ padding: '8px 12px', fontWeight: 600 }}>{t.plan_name}</td>
+                    <td style={{ padding: '8px 12px' }}>{t.currency} {Number(t.final_amount).toFixed(2)}</td>
+                    <td style={{ padding: '8px 12px' }}>
+                      <Badge variant={t.status === 'SUCCESS' ? 'in-stock' : 'overdue'}>{t.status}</Badge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      {/* Household Members & Seat Status */}
+      {members.length > 0 && (
+        <Card>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+            <Users size={18} color="var(--color-primary-900)" />
+            <h3 style={{ fontSize: '15px', fontWeight: 700 }}>Household Members & Seat Allocation ({members.length})</h3>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {members.map((m, idx) => (
               <div
-                key={m.user_id}
+                key={m.id}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'space-between',
-                  padding: '12px 16px',
+                  padding: '10px 12px',
                   borderRadius: 'var(--radius-md)',
                   backgroundColor: 'var(--color-surface-subtle)'
                 }}
               >
                 <div>
-                  <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--color-text-primary)' }}>
-                    {m.display_name}
-                  </div>
-                  <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
-                    Role: {m.role}
-                  </div>
+                  <div style={{ fontSize: '13px', fontWeight: 600 }}>{m.display_name}</div>
+                  <div style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>Role: {m.role}</div>
                 </div>
-
-                <div>
-                  {m.is_free_entitled ? (
-                    <Badge variant="in-stock">Free Admin Entitlement</Badge>
-                  ) : m.is_seat_covered ? (
-                    <Badge variant="neutral">Paid Member Seat</Badge>
-                  ) : (
-                    <Badge variant="overdue">Uncovered Seat</Badge>
-                  )}
-                </div>
+                <Badge variant={idx === 0 ? 'in-stock' : 'neutral'}>
+                  {idx === 0 ? 'Free Home Owner' : 'Household Member'}
+                </Badge>
               </div>
             ))}
           </div>
-        )}
-      </Card>
+        </Card>
+      )}
     </div>
   );
 }

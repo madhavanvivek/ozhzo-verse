@@ -172,6 +172,7 @@ export interface SubscriptionPlan {
   status: string;
   included_members: number;
   maximum_members?: number | null;
+  max_homes?: number;
   additional_member_allowed: boolean;
   introductory_enabled: boolean;
   introductory_duration_days: number;
@@ -297,5 +298,33 @@ export interface AdminSubscriberListItem {
   paid_seats: number;
   currency: string;
   created_at?: string | null;
+}
+
+export interface PaymentTransaction {
+  id: string;
+  user_id: string;
+  user_email?: string | null;
+  home_id?: string | null;
+  subscription_id?: string | null;
+  plan_name: string;
+  amount: string | number;
+  discount_amount: string | number;
+  final_amount: string | number;
+  currency: string;
+  provider: string;
+  provider_transaction_id?: string | null;
+  status: string;
+  created_at: string;
+}
+
+export interface SubscriptionAnalytics {
+  total_revenue: number;
+  total_transactions: number;
+  active_subscribers: number;
+  trial_subscribers: number;
+  past_due_subscribers: number;
+  cancelled_subscribers: number;
+  average_order_value: number;
+  currency: string;
 }
 

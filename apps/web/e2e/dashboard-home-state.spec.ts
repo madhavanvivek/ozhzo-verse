@@ -362,7 +362,7 @@ test.describe('Ozhzo Verse Dashboard Home-State UX & Workspace Resolution', () =
       }
     });
 
-    await page.route(`**/api/v1/homes/${validHomeId}/dashboard`, async (route) => {
+    await page.route('**/api/v1/homes/*/dashboard', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',

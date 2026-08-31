@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS users (
     mobile_verified BOOLEAN DEFAULT FALSE,
     is_super_admin BOOLEAN DEFAULT FALSE,
     system_role VARCHAR(32) NOT NULL DEFAULT 'USER',
+    free_home_consumed BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     deleted_at TIMESTAMP WITH TIME ZONE NULL
@@ -55,10 +56,16 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- 2. Homes & Members
+-- 2. Homes, Members & Identity / Join Requests
 CREATE TABLE IF NOT EXISTS homes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(120) NOT NULL,
+    public_home_id VARCHAR(16) UNIQUE NULL,
+    home_qr_token VARCHAR(128) UNIQUE NULL,
+    home_qr_status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE', -- ACTIVE, REVOKED, DISABLED
+    home_qr_version INTEGER NOT NULL DEFAULT 1,
+    home_qr_created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    home_qr_revoked_at TIMESTAMP WITH TIME ZONE NULL,
     country VARCHAR(8) NULL,
     state_province VARCHAR(64) NULL,
     district_city VARCHAR(64) NULL,
@@ -74,6 +81,9 @@ CREATE TABLE IF NOT EXISTS homes (
     deleted_at TIMESTAMP WITH TIME ZONE NULL
 );
 
+CREATE INDEX IF NOT EXISTS ix_homes_public_home_id ON homes (public_home_id);
+CREATE INDEX IF NOT EXISTS ix_homes_home_qr_token ON homes (home_qr_token);
+
 CREATE TABLE IF NOT EXISTS home_members (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     home_id UUID NOT NULL REFERENCES homes(id) ON DELETE CASCADE,
@@ -86,6 +96,22 @@ CREATE TABLE IF NOT EXISTS home_members (
     CONSTRAINT uq_home_members_home_user UNIQUE (home_id, user_id)
 );
 
+CREATE TABLE IF NOT EXISTS home_join_requests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    home_id UUID NOT NULL REFERENCES homes(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status VARCHAR(32) NOT NULL DEFAULT 'PENDING', -- PENDING, APPROVED, REJECTED, CANCELLED
+    message TEXT NULL,
+    reviewed_by UUID NULL REFERENCES users(id) ON DELETE SET NULL,
+    reviewed_at TIMESTAMP WITH TIME ZONE NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_join_requests_home_status ON home_join_requests (home_id, status);
+CREATE INDEX IF NOT EXISTS idx_join_requests_user_status ON home_join_requests (user_id, status);
+CREATE INDEX IF NOT EXISTS idx_join_requests_home_user_status ON home_join_requests (home_id, user_id, status);
+
 CREATE TABLE IF NOT EXISTS invitations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     home_id UUID NOT NULL REFERENCES homes(id) ON DELETE CASCADE,
@@ -95,13 +121,17 @@ CREATE TABLE IF NOT EXISTS invitations (
     role VARCHAR(32) NOT NULL DEFAULT 'MEMBER', -- HOME_ADMIN, MEMBER
     invitation_mode VARCHAR(32) NOT NULL DEFAULT 'INVITE_ONLY', -- INVITE_ONLY, INVITE_WITH_SUBSCRIPTION
     token VARCHAR(64) UNIQUE NOT NULL,
-    status VARCHAR(32) NOT NULL DEFAULT 'PENDING', -- PENDING, ACCEPTED, REVOKED, EXPIRED
+    invitation_code VARCHAR(32) UNIQUE NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'PENDING', -- PENDING, ACCEPTED, REVOKED, EXPIRED, DECLINED
     accepted_by UUID NULL REFERENCES users(id) ON DELETE SET NULL,
     accepted_at TIMESTAMP WITH TIME ZONE NULL,
+    revoked_at TIMESTAMP WITH TIME ZONE NULL,
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS ix_invitations_invitation_code ON invitations (invitation_code);
 
 -- 3. Household Inventory & Home Assets
 CREATE TABLE IF NOT EXISTS inventory_templates (
@@ -486,6 +516,7 @@ CREATE TABLE IF NOT EXISTS subscription_plans (
     status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE',
     included_members INTEGER NOT NULL DEFAULT 1,
     maximum_members INTEGER NULL DEFAULT 10,
+    max_homes INTEGER NOT NULL DEFAULT 10,
     additional_member_allowed BOOLEAN NOT NULL DEFAULT TRUE,
     introductory_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     introductory_duration_days INTEGER NOT NULL DEFAULT 365,
@@ -656,6 +687,7 @@ CREATE TABLE IF NOT EXISTS subscription_plan_features (
 CREATE TABLE IF NOT EXISTS subscriptions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     home_id UUID UNIQUE NOT NULL REFERENCES homes(id) ON DELETE CASCADE,
+    user_id UUID NULL REFERENCES users(id) ON DELETE SET NULL,
     plan_id UUID NOT NULL REFERENCES subscription_plans(id) ON DELETE RESTRICT,
     price_id UUID NULL REFERENCES subscription_prices(id) ON DELETE RESTRICT,
     active_coupon_id UUID NULL REFERENCES coupons(id) ON DELETE SET NULL,
@@ -689,6 +721,29 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS payment_transactions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    home_id UUID NULL REFERENCES homes(id) ON DELETE SET NULL,
+    subscription_id UUID NULL REFERENCES subscriptions(id) ON DELETE SET NULL,
+    plan_id UUID NOT NULL REFERENCES subscription_plans(id) ON DELETE RESTRICT,
+    price_id UUID NULL REFERENCES subscription_prices(id) ON DELETE SET NULL,
+    coupon_id UUID NULL REFERENCES coupons(id) ON DELETE SET NULL,
+    amount NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+    discount_amount NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+    tax_amount NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+    final_amount NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+    currency VARCHAR(3) NOT NULL DEFAULT 'USD',
+    provider VARCHAR(32) NOT NULL DEFAULT 'MOCK_GATEWAY',
+    provider_transaction_id VARCHAR(128) NULL,
+    idempotency_key VARCHAR(128) UNIQUE NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+    failure_reason TEXT NULL,
+    metadata_json TEXT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS subscription_audit_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     entity_type VARCHAR(64) NOT NULL,
@@ -715,4 +770,7 @@ CREATE INDEX IF NOT EXISTS idx_coupons_code_lookup ON coupons(code, status);
 CREATE INDEX IF NOT EXISTS idx_campaigns_code_lookup ON campaigns(code, status);
 CREATE INDEX IF NOT EXISTS idx_grants_home_lookup ON subscription_grants(home_id, status);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_home_status ON subscriptions(home_id, status);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_user_status ON subscriptions(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_pay_trans_user_status ON payment_transactions(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_pay_trans_created ON payment_transactions(created_at);
 CREATE INDEX IF NOT EXISTS idx_sub_audit_entity ON subscription_audit_logs(entity_type, entity_id, created_at);

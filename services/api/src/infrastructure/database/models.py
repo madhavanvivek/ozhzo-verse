@@ -26,6 +26,7 @@ class UserModel(Base):
     mobile_verified = Column(Boolean, default=False, nullable=False)
     is_super_admin = Column(Boolean, default=False, nullable=False)
     system_role = Column(String(32), default="USER", nullable=False)  # USER, SUPER_ADMIN, PLATFORM_ADMIN, SUPPORT_ADMIN, ANALYST
+    free_home_consumed = Column(Boolean, default=False, nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
     deleted_at = Column(DateTime(timezone=True), nullable=True)
@@ -950,6 +951,7 @@ class SubscriptionPlanModel(Base):
     status = Column(String(32), default="ACTIVE", nullable=False)    # ACTIVE, INACTIVE, ARCHIVED, DRAFT
     included_members = Column(Integer, default=1, nullable=False)
     maximum_members = Column(Integer, default=10, nullable=True)
+    max_homes = Column(Integer, default=10, nullable=False)
     additional_member_allowed = Column(Boolean, default=True, nullable=False)
     
     # Configurable Introductory Offer
@@ -1190,6 +1192,7 @@ class SubscriptionModel(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     home_id = Column(UUID(as_uuid=True), ForeignKey("homes.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     plan_id = Column(UUID(as_uuid=True), ForeignKey("subscription_plans.id", ondelete="RESTRICT"), nullable=False)
     price_id = Column(UUID(as_uuid=True), ForeignKey("subscription_prices.id", ondelete="RESTRICT"), nullable=True)
     active_coupon_id = Column(UUID(as_uuid=True), ForeignKey("coupons.id", ondelete="SET NULL"), nullable=True)
@@ -1226,9 +1229,11 @@ class SubscriptionModel(Base):
 
     __table_args__ = (
         Index("idx_subscriptions_home_status", "home_id", "status"),
+        Index("idx_subscriptions_user_status", "user_id", "status"),
     )
 
     home = relationship("HomeModel", back_populates="subscription")
+    user = relationship("UserModel", foreign_keys=[user_id])
     plan = relationship("SubscriptionPlanModel", back_populates="subscriptions")
     price = relationship("SubscriptionPriceModel")
     active_coupon = relationship("CouponModel")
@@ -1251,3 +1256,44 @@ class SubscriptionAuditLogModel(Base):
     __table_args__ = (
         Index("idx_sub_audit_entity", "entity_type", "entity_id", "created_at"),
     )
+
+
+class PaymentTransactionModel(Base):
+    __tablename__ = "payment_transactions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True)
+    home_id = Column(UUID(as_uuid=True), ForeignKey("homes.id", ondelete="SET NULL"), nullable=True, index=True)
+    subscription_id = Column(UUID(as_uuid=True), ForeignKey("subscriptions.id", ondelete="SET NULL"), nullable=True, index=True)
+    plan_id = Column(UUID(as_uuid=True), ForeignKey("subscription_plans.id", ondelete="RESTRICT"), nullable=False, index=True)
+    price_id = Column(UUID(as_uuid=True), ForeignKey("subscription_prices.id", ondelete="SET NULL"), nullable=True)
+    coupon_id = Column(UUID(as_uuid=True), ForeignKey("coupons.id", ondelete="SET NULL"), nullable=True)
+
+    amount = Column(Numeric(10, 2), default=0.00, nullable=False)
+    discount_amount = Column(Numeric(10, 2), default=0.00, nullable=False)
+    tax_amount = Column(Numeric(10, 2), default=0.00, nullable=False)
+    final_amount = Column(Numeric(10, 2), default=0.00, nullable=False)
+    currency = Column(String(3), default="USD", nullable=False)
+
+    provider = Column(String(32), default="MOCK_GATEWAY", nullable=False)  # MOCK_GATEWAY, STRIPE, RAZORPAY
+    provider_transaction_id = Column(String(128), nullable=True, index=True)
+    idempotency_key = Column(String(128), unique=True, nullable=True, index=True)
+    status = Column(String(32), default="PENDING", nullable=False)  # CREATED, PENDING, SUCCESS, FAILED, CANCELLED, REFUNDED
+    failure_reason = Column(Text, nullable=True)
+    metadata_json = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    __table_args__ = (
+        Index("idx_pay_trans_user_status", "user_id", "status"),
+        Index("idx_pay_trans_created", "created_at"),
+    )
+
+    user = relationship("UserModel", foreign_keys=[user_id])
+    home = relationship("HomeModel", foreign_keys=[home_id])
+    subscription = relationship("SubscriptionModel", foreign_keys=[subscription_id])
+    plan = relationship("SubscriptionPlanModel", foreign_keys=[plan_id])
+    price = relationship("SubscriptionPriceModel", foreign_keys=[price_id])
+    coupon = relationship("CouponModel", foreign_keys=[coupon_id])
+

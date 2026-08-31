@@ -64,6 +64,7 @@ class SubscriptionPlanDetailDTO(BaseModel):
     status: str
     included_members: int
     maximum_members: Optional[int] = None
+    max_homes: int = 10
     additional_member_allowed: bool
     introductory_enabled: bool
     introductory_duration_days: int
@@ -183,6 +184,7 @@ class CreateSubscriptionPlanRequest(BaseModel):
     plan_type: str = Field(default="HOME")
     included_members: int = Field(default=1, ge=1)
     maximum_members: Optional[int] = Field(default=10, ge=1)
+    max_homes: int = Field(default=10, ge=1)
     additional_member_allowed: bool = True
     introductory_enabled: bool = True
     introductory_duration_days: int = Field(default=365, ge=0)
@@ -195,6 +197,7 @@ class UpdateSubscriptionPlanRequest(BaseModel):
     status: Optional[str] = None
     included_members: Optional[int] = None
     maximum_members: Optional[int] = None
+    max_homes: Optional[int] = None
     additional_member_allowed: Optional[bool] = None
     introductory_enabled: Optional[bool] = None
     introductory_duration_days: Optional[int] = None
@@ -279,3 +282,69 @@ class SubscriptionAuditLogDTO(BaseModel):
     new_values: Optional[str] = None
     reason: Optional[str] = None
     created_at: datetime
+
+
+# ------------------------------------------------------------------------------
+# Stage 2.2 Payment & User Entitlement DTOs
+# ------------------------------------------------------------------------------
+
+class UserEntitlementSummaryDTO(BaseModel):
+    free_home_consumed: bool
+    free_home_included: int
+    active_homes_count: int
+    total_allowed_homes: int
+    can_create_home: bool
+    active_subscription: Optional[Dict[str, Any]] = None
+
+
+class CheckoutSubscriptionRequest(BaseModel):
+    plan_id: UUID
+    price_id: Optional[UUID] = None
+    coupon_code: Optional[str] = None
+    currency: str = "USD"
+    billing_period: str = "ANNUAL"
+    home_id: Optional[UUID] = None
+
+
+class CheckoutSubscriptionResponse(BaseModel):
+    transaction_id: UUID
+    provider: str
+    provider_transaction_id: str
+    amount: Decimal
+    discount_amount: Decimal
+    final_amount: Decimal
+    currency: str
+    status: str
+    client_secret: Optional[str] = None
+    payment_required: bool
+
+
+class ConfirmPaymentRequest(BaseModel):
+    transaction_id: UUID
+    provider_transaction_id: str
+    signature: Optional[str] = None
+
+
+class ConfirmPaymentResponse(BaseModel):
+    success: bool
+    status: str
+    subscription_id: Optional[UUID] = None
+    message: str
+
+
+class PaymentTransactionDTO(BaseModel):
+    id: UUID
+    user_id: UUID
+    user_email: Optional[str] = None
+    home_id: Optional[UUID] = None
+    subscription_id: Optional[UUID] = None
+    plan_name: str
+    amount: Decimal
+    discount_amount: Decimal
+    final_amount: Decimal
+    currency: str
+    provider: str
+    provider_transaction_id: Optional[str] = None
+    status: str
+    created_at: datetime
+

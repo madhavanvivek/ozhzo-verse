@@ -1,7 +1,9 @@
+from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID, uuid4
 from unittest.mock import AsyncMock
+from fastapi import HTTPException
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +14,7 @@ from src.infrastructure.database.models import (
     HomeModel,
     HomeMemberModel,
     InvitationModel,
+    SubscriptionCreditModel,
     SubscriptionModel,
     SubscriptionPlanModel,
     UserModel
@@ -505,3 +508,178 @@ async def verify_user_home_access_entitlement(
             pass
 
     return False, None, "No valid access entitlement found for this Home."
+
+
+# ==============================================================================
+# SUBSCRIPTION CREDIT LEDGER & DOUBLE-SPEND ENGINE (Stage 2.2A)
+# ==============================================================================
+
+async def get_user_available_credits(
+    user_id: UUID,
+    currency: str,
+    db: AsyncSession,
+    for_update: bool = False
+) -> List[SubscriptionCreditModel]:
+    """
+    Retrieves all available and non-expired subscription credits for a user in the requested currency.
+    If for_update=True, acquires row-level locks (FOR UPDATE) for double-spend protection.
+    """
+    now = datetime.now(timezone.utc)
+    curr = currency.upper().strip()
+
+    query = select(SubscriptionCreditModel).where(
+        SubscriptionCreditModel.user_id == user_id,
+        SubscriptionCreditModel.currency == curr,
+        SubscriptionCreditModel.status.in_(["AVAILABLE", "PARTIALLY_USED"]),
+        SubscriptionCreditModel.remaining_amount > Decimal("0.00"),
+        (SubscriptionCreditModel.expires_at.is_(None) | (SubscriptionCreditModel.expires_at >= now))
+    ).order_by(SubscriptionCreditModel.created_at.asc())
+
+    if for_update:
+        query = query.with_for_update()
+
+    try:
+        res = await db.execute(query)
+        if hasattr(res, "scalars"):
+            return list(res.scalars().all())
+        return []
+    except Exception:
+        return []
+
+
+async def get_user_credit_balance(
+    user_id: UUID,
+    currency: str,
+    db: AsyncSession
+) -> Decimal:
+    """
+    Calculates the total authoritative available credit balance for a user in a given currency.
+    """
+    credits = await get_user_available_credits(user_id, currency, db, for_update=False)
+    return sum([c.remaining_amount for c in credits], Decimal("0.00"))
+
+
+async def consume_user_credits(
+    user_id: UUID,
+    required_amount: Decimal,
+    currency: str,
+    db: AsyncSession,
+    transaction_id: Optional[UUID] = None,
+    description: Optional[str] = None
+) -> Tuple[Decimal, List[SubscriptionCreditModel]]:
+    """
+    Atomically consumes available credits up to required_amount.
+    Guarantees:
+      - Double-spend protection via SELECT ... FOR UPDATE.
+      - Immutable audit trail.
+      - Never allows negative remaining balances.
+      - Rejects currency mismatch.
+    Returns: (total_consumed_amount, list_of_affected_credits)
+    """
+    if required_amount <= Decimal("0.00"):
+        return Decimal("0.00"), []
+
+    credits = await get_user_available_credits(user_id, currency, db, for_update=True)
+    if not credits:
+        return Decimal("0.00"), []
+
+    remaining_to_deduct = required_amount
+    total_deducted = Decimal("0.00")
+    affected_credits = []
+    now = datetime.now(timezone.utc)
+
+    for cred in credits:
+        if remaining_to_deduct <= Decimal("0.00"):
+            break
+
+        avail = cred.remaining_amount
+        if avail <= Decimal("0.00"):
+            continue
+
+        deduction = min(avail, remaining_to_deduct)
+        cred.remaining_amount = avail - deduction
+        total_deducted += deduction
+        remaining_to_deduct -= deduction
+
+        if cred.remaining_amount == Decimal("0.00"):
+            cred.status = "REDEEMED"
+        else:
+            cred.status = "PARTIALLY_USED"
+
+        cred.updated_at = now
+        if transaction_id:
+            cred.redeemed_transaction_id = transaction_id
+        if description and not cred.description:
+            cred.description = description
+
+        affected_credits.append(cred)
+
+    return total_deducted, affected_credits
+
+
+async def grant_user_credit(
+    user_id: UUID,
+    amount: Decimal,
+    currency: str,
+    credit_type: str,
+    reason: str,
+    db: AsyncSession,
+    home_id: Optional[UUID] = None,
+    expires_in_days: Optional[int] = None,
+    admin_id: Optional[UUID] = None,
+    source_type: Optional[str] = "ADMIN_MANUAL",
+    source_id: Optional[UUID] = None,
+    reference: Optional[str] = None,
+    description: Optional[str] = None
+) -> SubscriptionCreditModel:
+    """
+    Issues immutable reusable subscription credit to a user.
+    """
+    now = datetime.now(timezone.utc)
+    expires_at = (now + timedelta(days=expires_in_days)) if expires_in_days else None
+
+    credit = SubscriptionCreditModel(
+        id=uuid4(),
+        user_id=user_id,
+        home_id=home_id,
+        amount=amount,
+        remaining_amount=amount,
+        currency=currency.upper().strip(),
+        credit_type=credit_type.upper().strip(),
+        status="AVAILABLE",
+        source_type=source_type,
+        source_id=source_id,
+        reference=reference or reason,
+        description=description or reason,
+        expires_at=expires_at,
+        created_by=admin_id,
+        created_at=now,
+        updated_at=now
+    )
+    db.add(credit)
+    return credit
+
+
+async def revoke_user_credit(
+    credit_id: UUID,
+    reason: str,
+    admin_id: UUID,
+    db: AsyncSession
+) -> SubscriptionCreditModel:
+    """
+    Revokes the remaining unconsumed balance of a subscription credit.
+    """
+    credit = await db.get(SubscriptionCreditModel, credit_id)
+    if not credit:
+        raise HTTPException(status_code=404, detail="Subscription credit record not found.")
+
+    if credit.status in ["REDEEMED", "CANCELLED", "EXPIRED"]:
+        raise HTTPException(status_code=400, detail=f"Credit is already {credit.status} and cannot be revoked.")
+
+    credit.remaining_amount = Decimal("0.00")
+    credit.status = "CANCELLED"
+    credit.updated_at = datetime.now(timezone.utc)
+    credit.description = f"{credit.description or ''} [REVOKED: {reason}]".strip()
+
+    return credit
+

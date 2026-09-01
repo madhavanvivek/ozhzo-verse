@@ -14,7 +14,8 @@ import {
   X,
   Receipt,
   Users,
-  RefreshCw
+  RefreshCw,
+  Coins
 } from 'lucide-react';
 import { apiClient } from '@/lib/apiClient';
 
@@ -76,6 +77,19 @@ interface PaymentTransaction {
   created_at: string;
 }
 
+interface SubscriptionCreditItem {
+  id: string;
+  amount: number | string;
+  remaining_amount: number | string;
+  currency: string;
+  credit_type: string;
+  status: string;
+  reference?: string | null;
+  description?: string | null;
+  expires_at?: string | null;
+  created_at: string;
+}
+
 interface MemberDTO {
   id: string;
   user_id: string;
@@ -88,6 +102,7 @@ export default function SubscriptionPage() {
   const [entitlements, setEntitlements] = useState<UserEntitlementSummary | null>(null);
   const [plans, setPlans] = useState<SubscriptionPlanDetail[]>([]);
   const [transactions, setTransactions] = useState<PaymentTransaction[]>([]);
+  const [credits, setCredits] = useState<SubscriptionCreditItem[]>([]);
   const [members, setMembers] = useState<MemberDTO[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -110,6 +125,7 @@ export default function SubscriptionPage() {
     transaction_id: string;
     amount: number;
     discount_amount: number;
+    credit_applied?: number;
     final_amount: number;
     currency: string;
     provider_transaction_id: string;
@@ -122,15 +138,17 @@ export default function SubscriptionPage() {
   const loadAllData = async () => {
     setIsLoading(true);
     try {
-      const [entData, plansData, txData] = await Promise.all([
+      const [entData, plansData, txData, credData] = await Promise.all([
         apiClient.get<UserEntitlementSummary>('/subscription/me'),
         apiClient.get<SubscriptionPlanDetail[]>('/subscription/plans'),
-        apiClient.get<PaymentTransaction[]>('/subscription/transactions').catch(() => [])
+        apiClient.get<PaymentTransaction[]>('/subscription/transactions').catch(() => []),
+        apiClient.get<SubscriptionCreditItem[]>('/subscription/my-credits').catch(() => [])
       ]);
 
       setEntitlements(entData);
       setPlans(plansData || []);
       setTransactions(txData || []);
+      setCredits(credData || []);
 
       if (plansData && plansData.length > 0 && !selectedPlanId) {
         setSelectedPlanId(plansData[0].id);
@@ -507,6 +525,12 @@ export default function SubscriptionPage() {
                 <span>Discount:</span>
                 <span>-{checkoutResult.currency} {Number(checkoutResult.discount_amount).toFixed(2)}</span>
               </div>
+              {checkoutResult.credit_applied && Number(checkoutResult.credit_applied) > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--status-in-stock)' }}>
+                  <span>Subscription Credit:</span>
+                  <span>-{checkoutResult.currency} {Number(checkoutResult.credit_applied).toFixed(2)}</span>
+                </div>
+              )}
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '16px', fontWeight: 700, borderTop: '1px solid var(--color-border-subtle)', paddingTop: '8px' }}>
                 <span>Total Amount Due:</span>
                 <span>{checkoutResult.currency} {Number(checkoutResult.final_amount).toFixed(2)}</span>
@@ -523,6 +547,47 @@ export default function SubscriptionPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Subscription Credits Table */}
+      {credits.length > 0 && (
+        <Card>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+            <Coins size={18} color="var(--color-primary-900)" />
+            <h3 style={{ fontSize: '15px', fontWeight: 700 }}>My Subscription Credits</h3>
+          </div>
+
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--color-border-subtle)', color: 'var(--color-text-secondary)' }}>
+                  <th style={{ padding: '8px 12px' }}>Date</th>
+                  <th style={{ padding: '8px 12px' }}>Reason / Reference</th>
+                  <th style={{ padding: '8px 12px' }}>Original Amount</th>
+                  <th style={{ padding: '8px 12px' }}>Available Balance</th>
+                  <th style={{ padding: '8px 12px' }}>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {credits.map((c) => (
+                  <tr key={c.id} style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
+                    <td style={{ padding: '8px 12px' }}>{new Date(c.created_at).toLocaleDateString()}</td>
+                    <td style={{ padding: '8px 12px' }}>{c.description || c.reference || c.credit_type}</td>
+                    <td style={{ padding: '8px 12px' }}>{c.currency} {Number(c.amount).toFixed(2)}</td>
+                    <td style={{ padding: '8px 12px', fontWeight: 700, color: Number(c.remaining_amount) > 0 ? 'var(--status-in-stock)' : 'var(--color-text-secondary)' }}>
+                      {c.currency} {Number(c.remaining_amount).toFixed(2)}
+                    </td>
+                    <td style={{ padding: '8px 12px' }}>
+                      <Badge variant={c.status === 'AVAILABLE' || c.status === 'PARTIALLY_USED' ? 'in-stock' : 'neutral'}>
+                        {c.status}
+                      </Badge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
       )}
 
       {/* Transaction Invoices Table */}

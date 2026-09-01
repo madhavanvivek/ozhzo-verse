@@ -1272,6 +1272,7 @@ class PaymentTransactionModel(Base):
 
     amount = Column(Numeric(10, 2), default=0.00, nullable=False)
     discount_amount = Column(Numeric(10, 2), default=0.00, nullable=False)
+    credit_amount = Column(Numeric(10, 2), default=0.00, nullable=False)
     tax_amount = Column(Numeric(10, 2), default=0.00, nullable=False)
     final_amount = Column(Numeric(10, 2), default=0.00, nullable=False)
     currency = Column(String(3), default="USD", nullable=False)
@@ -1337,4 +1338,48 @@ class HomeAccessEntitlementModel(Base):
     user = relationship("UserModel", foreign_keys=[user_id])
     subscription = relationship("SubscriptionModel", foreign_keys=[subscription_id])
     creator = relationship("UserModel", foreign_keys=[created_by])
+
+
+# ==============================================================================
+# SUBSCRIPTION CREDIT LEDGER (REUSABLE SUBSCRIPTION VALUE)
+# ==============================================================================
+
+class SubscriptionCreditModel(Base):
+    __tablename__ = "subscription_credits"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    home_id = Column(UUID(as_uuid=True), ForeignKey("homes.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    amount = Column(Numeric(10, 2), default=0.00, nullable=False)
+    remaining_amount = Column(Numeric(10, 2), default=0.00, nullable=False)
+    currency = Column(String(3), default="USD", nullable=False)
+
+    credit_type = Column(String(32), default="ADMIN_GRANT", nullable=False)  # RESERVATION_RELEASE, ADMIN_GRANT, PAYMENT_ADJUSTMENT, COMPENSATION
+    status = Column(String(32), default="AVAILABLE", nullable=False, index=True)  # AVAILABLE, PARTIALLY_USED, REDEEMED, EXPIRED, CANCELLED
+
+    source_type = Column(String(64), nullable=True)  # PAYMENT_TRANSACTION, RESERVATION_RELEASE, ADMIN_MANUAL, PROMOTION
+    source_id = Column(UUID(as_uuid=True), nullable=True)
+    reference = Column(String(128), nullable=True)
+    description = Column(Text, nullable=True)
+
+    expires_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    redeemed_transaction_id = Column(UUID(as_uuid=True), ForeignKey("payment_transactions.id", ondelete="SET NULL"), nullable=True)
+
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    __table_args__ = (
+        Index("idx_sub_credits_user_status", "user_id", "status"),
+        Index("idx_sub_credits_user_curr_status", "user_id", "currency", "status"),
+        Index("idx_sub_credits_home_status", "home_id", "status"),
+        Index("idx_sub_credits_created", "created_at"),
+    )
+
+    user = relationship("UserModel", foreign_keys=[user_id])
+    home = relationship("HomeModel", foreign_keys=[home_id])
+    creator = relationship("UserModel", foreign_keys=[created_by])
+    redeemed_transaction = relationship("PaymentTransactionModel", foreign_keys=[redeemed_transaction_id])
+
 

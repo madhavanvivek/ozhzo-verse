@@ -1,21 +1,29 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import List, Optional
 from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.dependencies import get_current_user, require_admin_permission, require_super_admin
+from src.domain.entitlements import (
+    get_user_credit_balance,
+    grant_user_credit,
+    provision_paid_home_entitlement,
+    revoke_user_credit
+)
 from src.infrastructure.database.session import get_db
 from src.infrastructure.database.models import (
     CouponModel,
+    HomeAccessEntitlementModel,
     HomeModel,
     PaymentTransactionModel,
     PromotionModel,
     SubscriptionAuditLogModel,
+    SubscriptionCreditModel,
     SubscriptionFeatureModel,
     SubscriptionPlanFeatureModel,
     SubscriptionPlanModel,
@@ -28,20 +36,27 @@ from src.schemas.common import ApiSuccessResponse
 from src.schemas.auth import MessageResponse
 from src.schemas.admin import AdminSubscriberListItemDTO
 from src.schemas.subscription import (
+    AdminCancelSubscriptionRequest,
+    AdminGrantSubscriptionRequest,
+    AdminOverrideSubscriptionPeriodRequest,
     CreatePromotionRequest,
     CreateSubscriptionFeatureRequest,
     CreateSubscriptionPlanRequest,
     CreateSubscriptionPriceRequest,
+    GrantCreditRequest,
     PaymentTransactionDTO,
     PromotionDTO,
+    RevokeCreditRequest,
     SubscriptionAuditLogDTO,
+    SubscriptionCreditDTO,
     SubscriptionFeatureDTO,
     SubscriptionPlanDetailDTO,
     SubscriptionPriceDTO,
     UpdatePromotionRequest,
     UpdateSubscriptionFeatureRequest,
     UpdateSubscriptionPlanRequest,
-    UpdateSubscriptionPriceRequest
+    UpdateSubscriptionPriceRequest,
+    UserCreditBalanceDTO
 )
 
 router = APIRouter(prefix="/admin/subscriptions", tags=["Super Admin - Subscriptions"])
@@ -884,6 +899,462 @@ async def get_admin_subscription_analytics(
             "average_order_value": float(avg_order),
             "currency": "USD"
         }
+    )
+
+
+# ------------------------------------------------------------------------------
+# 7. Super Admin Subscription Credit Management (Stage 2.2A)
+# ------------------------------------------------------------------------------
+
+@router.get("/credits", response_model=ApiSuccessResponse[List[SubscriptionCreditDTO]])
+async def list_admin_subscription_credits(
+    user_id: Optional[UUID] = None,
+    home_id: Optional[UUID] = None,
+    status_filter: Optional[str] = None,
+    currency_filter: Optional[str] = None,
+    credit_type: Optional[str] = None,
+    search: Optional[str] = None,
+    super_admin: UserModel = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    List and filter subscription credits across all platform users and homes.
+    """
+    query = (
+        select(
+            SubscriptionCreditModel,
+            UserModel.email.label("user_email"),
+            UserProfileModel.display_name.label("user_name"),
+            HomeModel.name.label("home_name")
+        )
+        .join(UserModel, SubscriptionCreditModel.user_id == UserModel.id)
+        .outerjoin(UserProfileModel, UserModel.id == UserProfileModel.user_id)
+        .outerjoin(HomeModel, SubscriptionCreditModel.home_id == HomeModel.id)
+    )
+
+    if user_id:
+        query = query.where(SubscriptionCreditModel.user_id == user_id)
+    if home_id:
+        query = query.where(SubscriptionCreditModel.home_id == home_id)
+    if status_filter and status_filter.upper() != "ALL":
+        query = query.where(SubscriptionCreditModel.status == status_filter.upper())
+    if currency_filter and currency_filter.upper() != "ALL":
+        query = query.where(SubscriptionCreditModel.currency == currency_filter.upper())
+    if credit_type and credit_type.upper() != "ALL":
+        query = query.where(SubscriptionCreditModel.credit_type == credit_type.upper())
+    if search:
+        search_pattern = f"%{search.strip().lower()}%"
+        query = query.where(
+            (UserModel.email.ilike(search_pattern)) |
+            (UserProfileModel.display_name.ilike(search_pattern)) |
+            (HomeModel.name.ilike(search_pattern)) |
+            (SubscriptionCreditModel.reference.ilike(search_pattern))
+        )
+
+    query = query.order_by(desc(SubscriptionCreditModel.created_at))
+    rows = (await db.execute(query)).all()
+
+    dtos = [
+        SubscriptionCreditDTO(
+            id=c.id,
+            user_id=c.user_id,
+            user_name=uname or (uemail.split("@")[0] if uemail else "User"),
+            user_email=uemail,
+            home_id=c.home_id,
+            home_name=hname,
+            amount=c.amount,
+            remaining_amount=c.remaining_amount,
+            currency=c.currency,
+            credit_type=c.credit_type,
+            status=c.status,
+            source_type=c.source_type,
+            reference=c.reference,
+            description=c.description,
+            expires_at=c.expires_at,
+            created_at=c.created_at
+        )
+        for c, uemail, uname, hname in rows
+    ]
+    return ApiSuccessResponse(data=dtos)
+
+
+@router.get("/credits/{credit_id}", response_model=ApiSuccessResponse[SubscriptionCreditDTO])
+async def get_admin_subscription_credit_detail(
+    credit_id: UUID,
+    super_admin: UserModel = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    query = (
+        select(
+            SubscriptionCreditModel,
+            UserModel.email.label("user_email"),
+            UserProfileModel.display_name.label("user_name"),
+            HomeModel.name.label("home_name")
+        )
+        .join(UserModel, SubscriptionCreditModel.user_id == UserModel.id)
+        .outerjoin(UserProfileModel, UserModel.id == UserProfileModel.user_id)
+        .outerjoin(HomeModel, SubscriptionCreditModel.home_id == HomeModel.id)
+        .where(SubscriptionCreditModel.id == credit_id)
+    )
+    res = await db.execute(query)
+    row = res.first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Subscription credit not found.")
+
+    c, uemail, uname, hname = row
+    return ApiSuccessResponse(
+        data=SubscriptionCreditDTO(
+            id=c.id,
+            user_id=c.user_id,
+            user_name=uname or (uemail.split("@")[0] if uemail else "User"),
+            user_email=uemail,
+            home_id=c.home_id,
+            home_name=hname,
+            amount=c.amount,
+            remaining_amount=c.remaining_amount,
+            currency=c.currency,
+            credit_type=c.credit_type,
+            status=c.status,
+            source_type=c.source_type,
+            reference=c.reference,
+            description=c.description,
+            expires_at=c.expires_at,
+            created_at=c.created_at
+        )
+    )
+
+
+@router.post("/credits/grant", status_code=status.HTTP_201_CREATED, response_model=ApiSuccessResponse[SubscriptionCreditDTO])
+async def admin_grant_credit(
+    payload: GrantCreditRequest,
+    super_admin: UserModel = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    target_user = await db.get(UserModel, payload.user_id)
+    if not target_user:
+        raise HTTPException(status_code=404, detail="Target user not found.")
+
+    if payload.home_id:
+        target_home = await db.get(HomeModel, payload.home_id)
+        if not target_home:
+            raise HTTPException(status_code=404, detail="Specified target Home not found.")
+
+    credit = await grant_user_credit(
+        user_id=payload.user_id,
+        amount=payload.amount,
+        currency=payload.currency,
+        credit_type=payload.credit_type,
+        reason=payload.reason,
+        db=db,
+        home_id=payload.home_id,
+        expires_in_days=payload.expires_in_days,
+        admin_id=super_admin.id,
+        description=payload.description or payload.reason
+    )
+    await db.flush()
+
+    await record_audit_log(
+        db=db,
+        entity_type="CREDIT",
+        entity_id=credit.id,
+        action="CREDIT_GRANTED",
+        performed_by=super_admin.id,
+        new_values={
+            "user_id": str(payload.user_id),
+            "amount": str(payload.amount),
+            "currency": payload.currency.upper(),
+            "credit_type": payload.credit_type,
+            "reason": payload.reason
+        },
+        reason=payload.reason
+    )
+    await db.commit()
+
+    return ApiSuccessResponse(
+        data=SubscriptionCreditDTO(
+            id=credit.id,
+            user_id=credit.user_id,
+            user_name=target_user.email.split("@")[0] if target_user.email else "User",
+            user_email=target_user.email,
+            home_id=credit.home_id,
+            home_name=None,
+            amount=credit.amount,
+            remaining_amount=credit.remaining_amount,
+            currency=credit.currency,
+            credit_type=credit.credit_type,
+            status=credit.status,
+            source_type=credit.source_type,
+            reference=credit.reference,
+            description=credit.description,
+            expires_at=credit.expires_at,
+            created_at=credit.created_at
+        ),
+        message=f"Successfully granted {payload.currency.upper()} {payload.amount} credit."
+    )
+
+
+@router.post("/credits/{credit_id}/revoke", response_model=ApiSuccessResponse[SubscriptionCreditDTO])
+async def admin_revoke_credit(
+    credit_id: UUID,
+    payload: RevokeCreditRequest,
+    super_admin: UserModel = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    credit = await db.get(SubscriptionCreditModel, credit_id)
+    if not credit:
+        raise HTTPException(status_code=404, detail="Subscription credit not found.")
+
+    old_rem = str(credit.remaining_amount)
+    revoked = await revoke_user_credit(
+        credit_id=credit_id,
+        reason=payload.reason,
+        admin_id=super_admin.id,
+        db=db
+    )
+    await db.flush()
+
+    await record_audit_log(
+        db=db,
+        entity_type="CREDIT",
+        entity_id=credit.id,
+        action="CREDIT_REVOKED",
+        performed_by=super_admin.id,
+        old_values={"remaining_amount": old_rem, "status": "AVAILABLE"},
+        new_values={"remaining_amount": "0.00", "status": "CANCELLED"},
+        reason=payload.reason
+    )
+    await db.commit()
+
+    return ApiSuccessResponse(
+        data=SubscriptionCreditDTO(
+            id=revoked.id,
+            user_id=revoked.user_id,
+            amount=revoked.amount,
+            remaining_amount=revoked.remaining_amount,
+            currency=revoked.currency,
+            credit_type=getattr(revoked, "credit_type", "ADMIN_GRANT") or "ADMIN_GRANT",
+            status=revoked.status,
+            source_type=revoked.source_type,
+            reference=revoked.reference,
+            description=revoked.description,
+            expires_at=revoked.expires_at,
+            created_at=getattr(revoked, "created_at", None) or datetime.now(timezone.utc)
+        ),
+        message="Subscription credit has been revoked."
+    )
+
+
+@router.get("/users/{user_id}/credit-balance", response_model=ApiSuccessResponse[List[UserCreditBalanceDTO]])
+async def get_admin_user_credit_balance(
+    user_id: UUID,
+    super_admin: UserModel = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    user = await db.get(UserModel, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    now = datetime.now(timezone.utc)
+    query = (
+        select(
+            SubscriptionCreditModel.currency,
+            func.sum(SubscriptionCreditModel.remaining_amount).label("total_balance"),
+            func.count(SubscriptionCreditModel.id).label("credits_count")
+        )
+        .where(
+            SubscriptionCreditModel.user_id == user_id,
+            SubscriptionCreditModel.status.in_(["AVAILABLE", "PARTIALLY_USED"]),
+            SubscriptionCreditModel.remaining_amount > Decimal("0.00"),
+            (SubscriptionCreditModel.expires_at.is_(None) | (SubscriptionCreditModel.expires_at >= now))
+        )
+        .group_by(SubscriptionCreditModel.currency)
+    )
+    res = await db.execute(query)
+    rows = res.all()
+
+    dtos = [
+        UserCreditBalanceDTO(
+            user_id=user_id,
+            currency=curr,
+            available_balance=bal or Decimal("0.00"),
+            credits_count=cnt or 0
+        )
+        for curr, bal, cnt in rows
+    ]
+    return ApiSuccessResponse(data=dtos)
+
+
+# ------------------------------------------------------------------------------
+# 8. Super Admin Subscription Controls (Grant, Override, Cancel)
+# ------------------------------------------------------------------------------
+
+@router.post("/grant", status_code=status.HTTP_201_CREATED, response_model=ApiSuccessResponse[MessageResponse])
+async def admin_grant_subscription(
+    payload: AdminGrantSubscriptionRequest,
+    super_admin: UserModel = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    home = await db.get(HomeModel, payload.home_id)
+    if not home:
+        raise HTTPException(status_code=404, detail="Target Home not found.")
+
+    plan = await db.get(SubscriptionPlanModel, payload.plan_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="Subscription Plan not found.")
+
+    now = datetime.now(timezone.utc)
+    ends_at = now + timedelta(days=payload.duration_days)
+
+    # Check for existing subscription
+    sub_q = select(SubscriptionModel).where(SubscriptionModel.home_id == home.id)
+    existing_sub = (await db.execute(sub_q)).scalars().first()
+
+    if existing_sub:
+        old_ends = str(existing_sub.current_period_ends_at)
+        existing_sub.plan_id = plan.id
+        existing_sub.status = "ACTIVE"
+        existing_sub.current_period_starts_at = now
+        existing_sub.current_period_ends_at = ends_at
+        existing_sub.paid_member_seats = payload.paid_member_seats
+        existing_sub.updated_at = now
+        sub_id = existing_sub.id
+    else:
+        old_ends = "None"
+        new_sub = SubscriptionModel(
+            id=uuid4(),
+            home_id=home.id,
+            plan_id=plan.id,
+            status="ACTIVE",
+            current_period_starts_at=now,
+            current_period_ends_at=ends_at,
+            paid_member_seats=payload.paid_member_seats,
+            currency="USD",
+            created_at=now,
+            updated_at=now
+        )
+        db.add(new_sub)
+        sub_id = new_sub.id
+
+    # Provision entitlement for home creator / target user
+    owner_id = payload.user_id or home.created_by
+    if owner_id:
+        owner_user = await db.get(UserModel, owner_id)
+        if owner_user:
+            await provision_paid_home_entitlement(
+                user=owner_user,
+                home=home,
+                subscription_id=sub_id,
+                db=db,
+                expires_at=ends_at
+            )
+
+    await record_audit_log(
+        db=db,
+        entity_type="SUBSCRIPTION",
+        entity_id=sub_id,
+        action="SUBSCRIPTION_GRANTED",
+        performed_by=super_admin.id,
+        old_values={"expiry": old_ends},
+        new_values={
+            "home_id": str(home.id),
+            "plan_code": plan.code,
+            "duration_days": payload.duration_days,
+            "expiry": str(ends_at)
+        },
+        reason=payload.reason
+    )
+    await db.commit()
+
+    return ApiSuccessResponse(
+        data=MessageResponse(message=f"Subscription successfully granted until {ends_at.strftime('%Y-%m-%d')}."),
+        message="Subscription granted."
+    )
+
+
+@router.patch("/{subscription_id}/override-period", response_model=ApiSuccessResponse[MessageResponse])
+async def admin_override_subscription_period(
+    subscription_id: UUID,
+    payload: AdminOverrideSubscriptionPeriodRequest,
+    super_admin: UserModel = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    sub = await db.get(SubscriptionModel, subscription_id)
+    if not sub:
+        raise HTTPException(status_code=404, detail="Subscription not found.")
+
+    old_ends = str(sub.current_period_ends_at)
+    sub.current_period_ends_at = payload.current_period_ends_at
+    sub.status = "ACTIVE"
+    sub.updated_at = datetime.now(timezone.utc)
+
+    # Synchronize associated HomeAccessEntitlements
+    ent_q = select(HomeAccessEntitlementModel).where(
+        HomeAccessEntitlementModel.subscription_id == sub.id,
+        HomeAccessEntitlementModel.status.in_(["ACTIVE", "EXPIRING", "EXPIRED"])
+    )
+    ents = (await db.execute(ent_q)).scalars().all()
+    for ent in ents:
+        ent.expires_at = payload.current_period_ends_at
+        ent.status = "ACTIVE" if payload.current_period_ends_at >= datetime.now(timezone.utc) else "EXPIRED"
+        ent.updated_at = datetime.now(timezone.utc)
+
+    await record_audit_log(
+        db=db,
+        entity_type="SUBSCRIPTION",
+        entity_id=sub.id,
+        action="SUBSCRIPTION_OVERRIDE",
+        performed_by=super_admin.id,
+        old_values={"current_period_ends_at": old_ends},
+        new_values={"current_period_ends_at": str(payload.current_period_ends_at)},
+        reason=payload.reason
+    )
+    await db.commit()
+
+    return ApiSuccessResponse(
+        data=MessageResponse(message=f"Subscription period overridden to {payload.current_period_ends_at.strftime('%Y-%m-%d')}."),
+        message="Subscription period updated."
+    )
+
+
+@router.post("/{subscription_id}/cancel", response_model=ApiSuccessResponse[MessageResponse])
+async def admin_cancel_subscription(
+    subscription_id: UUID,
+    payload: AdminCancelSubscriptionRequest,
+    super_admin: UserModel = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    sub = await db.get(SubscriptionModel, subscription_id)
+    if not sub:
+        raise HTTPException(status_code=404, detail="Subscription not found.")
+
+    sub.status = "CANCELED"
+    sub.updated_at = datetime.now(timezone.utc)
+
+    # Mark associated entitlements cancelled/expired while preserving Home
+    ent_q = select(HomeAccessEntitlementModel).where(
+        HomeAccessEntitlementModel.subscription_id == sub.id,
+        HomeAccessEntitlementModel.status == "ACTIVE"
+    )
+    ents = (await db.execute(ent_q)).scalars().all()
+    for ent in ents:
+        ent.status = "CANCELLED"
+        ent.updated_at = datetime.now(timezone.utc)
+
+    await record_audit_log(
+        db=db,
+        entity_type="SUBSCRIPTION",
+        entity_id=sub.id,
+        action="SUBSCRIPTION_CANCELLED",
+        performed_by=super_admin.id,
+        old_values={"status": "ACTIVE"},
+        new_values={"status": "CANCELED"},
+        reason=payload.reason
+    )
+    await db.commit()
+
+    return ApiSuccessResponse(
+        data=MessageResponse(message="Subscription has been cancelled. Tenant Home and household records remain intact."),
+        message="Subscription cancelled."
     )
 
 

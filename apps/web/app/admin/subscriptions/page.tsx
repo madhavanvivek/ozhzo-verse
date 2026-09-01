@@ -14,7 +14,9 @@ import {
   ExternalLink,
   CreditCard,
   DollarSign,
-  Activity
+  Activity,
+  Coins,
+  Calendar
 } from 'lucide-react';
 import { apiClient } from '@/lib/apiClient';
 import { AdminBadge } from '../components/AdminBadge';
@@ -24,7 +26,8 @@ import {
   Promotion,
   AdminSubscriberListItem,
   PaymentTransaction,
-  SubscriptionAnalytics
+  SubscriptionAnalytics,
+  SubscriptionCredit
 } from '../types';
 
 export default function AdminSubscriptionsPage() {
@@ -33,13 +36,54 @@ export default function AdminSubscriptionsPage() {
   const [promotions, setPromotions] = useState<Promotion[]>([]);
   const [subscribers, setSubscribers] = useState<AdminSubscriberListItem[]>([]);
   const [transactions, setTransactions] = useState<PaymentTransaction[]>([]);
+  const [credits, setCredits] = useState<SubscriptionCredit[]>([]);
   const [analytics, setAnalytics] = useState<SubscriptionAnalytics | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   // Tab State
-  const [activeTab, setActiveTab] = useState<'plans' | 'subscribers' | 'transactions' | 'promotions' | 'features'>('plans');
+  const [activeTab, setActiveTab] = useState<'plans' | 'subscribers' | 'transactions' | 'promotions' | 'features' | 'credits'>('plans');
+
+  // Credit Filter State
+  const [creditSearch, setCreditSearch] = useState('');
+  const [creditStatusFilter, setCreditStatusFilter] = useState('ALL');
+  const [creditCurrencyFilter, setCreditCurrencyFilter] = useState('ALL');
+
+  // Grant Credit Modal
+  const [isGrantCreditModalOpen, setIsGrantCreditModalOpen] = useState(false);
+  const [isSubmittingCredit, setIsSubmittingCredit] = useState(false);
+  const [grantCreditForm, setGrantCreditForm] = useState({
+    user_id: '',
+    home_id: '',
+    amount: '1000.00',
+    currency: 'INR',
+    credit_type: 'ADMIN_GRANT',
+    reason: 'Customer compensation voucher',
+    expires_in_days: '90',
+    description: ''
+  });
+  const [grantCreditError, setGrantCreditError] = useState<string | null>(null);
+
+  // Grant Subscription Modal
+  const [isGrantSubModalOpen, setIsGrantSubModalOpen] = useState(false);
+  const [isSubmittingSub, setIsSubmittingSub] = useState(false);
+  const [grantSubForm, setGrantSubForm] = useState({
+    home_id: '',
+    user_id: '',
+    plan_id: '',
+    duration_days: 365,
+    paid_member_seats: 0,
+    reason: 'Admin direct grant'
+  });
+  const [grantSubError, setGrantSubError] = useState<string | null>(null);
+
+  // Override Period Modal
+  const [isOverrideModalOpen, setIsOverrideModalOpen] = useState(false);
+  const [overrideSubId, setOverrideSubId] = useState('');
+  const [overrideDate, setOverrideDate] = useState('');
+  const [overrideReason, setOverrideReason] = useState('VIP pilot extension');
+  const [isSubmittingOverride, setIsSubmittingOverride] = useState(false);
 
   // Plan Creation Modal
   const [isPlanModalOpen, setIsPlanModalOpen] = useState(false);
@@ -103,6 +147,9 @@ export default function AdminSubscriptionsPage() {
       } else if (targetTab === 'transactions') {
         const txData = await apiClient.get<PaymentTransaction[]>('/admin/subscriptions/transactions');
         setTransactions(txData || []);
+      } else if (targetTab === 'credits') {
+        const creditsData = await apiClient.get<SubscriptionCredit[]>('/admin/subscriptions/credits');
+        setCredits(creditsData || []);
       }
     } catch (err: any) {
       setError(err?.message || 'Failed to fetch subscription configuration.');
@@ -170,6 +217,97 @@ export default function AdminSubscriptionsPage() {
       setPromoModalError(err?.message || 'Failed to create promotion.');
     } finally {
       setIsSubmittingPromo(false);
+    }
+  };
+
+  const handleGrantCredit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmittingCredit(true);
+    setGrantCreditError(null);
+    try {
+      await apiClient.post('/admin/subscriptions/credits/grant', {
+        user_id: grantCreditForm.user_id.trim(),
+        home_id: grantCreditForm.home_id.trim() || undefined,
+        amount: parseFloat(grantCreditForm.amount) || 0,
+        currency: grantCreditForm.currency.toUpperCase().trim(),
+        credit_type: grantCreditForm.credit_type,
+        reason: grantCreditForm.reason.trim(),
+        expires_in_days: grantCreditForm.expires_in_days ? parseInt(grantCreditForm.expires_in_days) : undefined,
+        description: grantCreditForm.description.trim() || undefined
+      });
+      setIsGrantCreditModalOpen(false);
+      setSuccessMessage(`Successfully granted ${grantCreditForm.currency.toUpperCase()} ${grantCreditForm.amount} credit.`);
+      fetchData('credits');
+    } catch (err: any) {
+      setGrantCreditError(err?.message || 'Failed to grant subscription credit.');
+    } finally {
+      setIsSubmittingCredit(false);
+    }
+  };
+
+  const handleRevokeCredit = async (creditId: string) => {
+    const reason = window.prompt('Enter reason for revoking this credit:');
+    if (!reason) return;
+    try {
+      await apiClient.post(`/admin/subscriptions/credits/${creditId}/revoke`, { reason: reason.trim() });
+      setSuccessMessage('Subscription credit has been revoked.');
+      fetchData('credits');
+    } catch (err: any) {
+      setError(err?.message || 'Failed to revoke credit.');
+    }
+  };
+
+  const handleGrantSubscription = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmittingSub(true);
+    setGrantSubError(null);
+    try {
+      await apiClient.post('/admin/subscriptions/grant', {
+        home_id: grantSubForm.home_id.trim(),
+        user_id: grantSubForm.user_id.trim() || undefined,
+        plan_id: grantSubForm.plan_id.trim(),
+        duration_days: Number(grantSubForm.duration_days) || 365,
+        paid_member_seats: Number(grantSubForm.paid_member_seats) || 0,
+        reason: grantSubForm.reason.trim()
+      });
+      setIsGrantSubModalOpen(false);
+      setSuccessMessage('Subscription successfully granted to workspace.');
+      fetchData('subscribers');
+    } catch (err: any) {
+      setGrantSubError(err?.message || 'Failed to grant subscription.');
+    } finally {
+      setIsSubmittingSub(false);
+    }
+  };
+
+  const handleOverridePeriod = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!overrideSubId || !overrideDate) return;
+    setIsSubmittingOverride(true);
+    try {
+      await apiClient.patch(`/admin/subscriptions/${overrideSubId}/override-period`, {
+        current_period_ends_at: new Date(overrideDate).toISOString(),
+        reason: overrideReason.trim()
+      });
+      setIsOverrideModalOpen(false);
+      setSuccessMessage('Subscription period has been updated.');
+      fetchData('subscribers');
+    } catch (err: any) {
+      setError(err?.message || 'Failed to override subscription period.');
+    } finally {
+      setIsSubmittingOverride(false);
+    }
+  };
+
+  const handleCancelSubscription = async (subId: string) => {
+    const reason = window.prompt('Enter reason for cancelling this subscription:');
+    if (!reason) return;
+    try {
+      await apiClient.post(`/admin/subscriptions/${subId}/cancel`, { reason: reason.trim() });
+      setSuccessMessage('Subscription cancelled. Tenant workspace remains intact.');
+      fetchData('subscribers');
+    } catch (err: any) {
+      setError(err?.message || 'Failed to cancel subscription.');
     }
   };
 
@@ -462,6 +600,27 @@ export default function AdminSubscriptionsPage() {
           <Tag size={16} />
           <span>Feature Flags ({features.length})</span>
         </button>
+
+        <button
+          onClick={() => setActiveTab('credits')}
+          style={{
+            padding: '10px 16px',
+            borderRadius: 'var(--radius-md, 10px)',
+            border: 'none',
+            backgroundColor: activeTab === 'credits' ? 'var(--color-primary-900, #0f172a)' : 'transparent',
+            color: activeTab === 'credits' ? 'var(--color-text-inverse, #ffffff)' : 'var(--color-text-secondary, #64748b)',
+            fontSize: '13px',
+            fontWeight: 600,
+            cursor: 'pointer',
+            minHeight: '44px',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px'
+          }}
+        >
+          <Coins size={16} />
+          <span>Subscription Credits ({credits.length})</span>
+        </button>
       </div>
 
       {/* Tab: Plans & Regional Prices */}
@@ -593,6 +752,40 @@ export default function AdminSubscriptionsPage() {
             boxShadow: 'var(--shadow-subtle)'
           }}
         >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: '1px solid var(--color-border-subtle, #e2e8f0)', flexWrap: 'wrap', gap: '12px' }}>
+            <div>
+              <h2 style={{ fontSize: '16px', fontWeight: 700, margin: 0, color: 'var(--color-text-primary, #0f172a)' }}>
+                Active Subscribers & Workspaces
+              </h2>
+              <p style={{ fontSize: '12px', color: 'var(--color-text-secondary, #64748b)', margin: '2px 0 0' }}>
+                All commercial subscriptions binding users and tenant homes.
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                setGrantSubError(null);
+                setIsGrantSubModalOpen(true);
+              }}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '8px 14px',
+                borderRadius: 'var(--radius-md, 10px)',
+                backgroundColor: 'var(--color-primary-900, #0f172a)',
+                color: 'var(--color-text-inverse, #ffffff)',
+                fontSize: '12px',
+                fontWeight: 600,
+                border: 'none',
+                cursor: 'pointer',
+                minHeight: '36px'
+              }}
+            >
+              <Plus size={14} />
+              <span>Grant Subscription</span>
+            </button>
+          </div>
+
           {subscribers.length === 0 ? (
             <div style={{ padding: '48px 24px', textAlign: 'center', color: 'var(--color-text-secondary, #64748b)', fontSize: '14px' }}>
               No active subscriber records found in the authoritative database.
@@ -616,7 +809,7 @@ export default function AdminSubscriptionsPage() {
                     <th style={{ padding: '12px 16px' }}>Coupon Applied</th>
                     <th style={{ padding: '12px 16px' }}>Paid Extra Seats</th>
                     <th style={{ padding: '12px 16px' }}>Renewal Date</th>
-                    <th style={{ padding: '12px 16px', textAlign: 'right' }}>Action</th>
+                    <th style={{ padding: '12px 16px', textAlign: 'right' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -681,25 +874,75 @@ export default function AdminSubscriptionsPage() {
                       </td>
 
                       <td style={{ padding: '12px 16px', textAlign: 'right' }}>
-                        <Link
-                          href={`/admin/homes/${s.home_id}`}
-                          style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            padding: '6px 10px',
-                            borderRadius: 'var(--radius-md, 8px)',
-                            border: '1px solid var(--color-border-subtle, #e2e8f0)',
-                            backgroundColor: 'var(--color-surface-subtle, #f1f5f9)',
-                            fontSize: '12px',
-                            fontWeight: 600,
-                            color: 'var(--color-text-primary, #0f172a)',
-                            minHeight: '32px'
-                          }}
-                        >
-                          <span>Inspect Workspace</span>
-                          <ExternalLink size={12} />
-                        </Link>
+                        <div style={{ display: 'inline-flex', gap: '6px', alignItems: 'center' }}>
+                          <button
+                            onClick={() => {
+                              setOverrideSubId(s.id);
+                              setOverrideDate(s.renewal_date ? new Date(s.renewal_date).toISOString().split('T')[0] : '');
+                              setIsOverrideModalOpen(true);
+                            }}
+                            title="Override Period / Expiry"
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              padding: '6px 10px',
+                              borderRadius: 'var(--radius-md, 8px)',
+                              border: '1px solid var(--color-border-subtle, #e2e8f0)',
+                              backgroundColor: 'var(--color-surface-subtle, #f1f5f9)',
+                              fontSize: '12px',
+                              fontWeight: 600,
+                              color: 'var(--color-text-primary, #0f172a)',
+                              cursor: 'pointer',
+                              minHeight: '32px'
+                            }}
+                          >
+                            <Calendar size={12} style={{ marginRight: '4px' }} />
+                            <span>Override</span>
+                          </button>
+
+                          {s.status === 'ACTIVE' && (
+                            <button
+                              onClick={() => handleCancelSubscription(s.id)}
+                              title="Cancel Subscription (Tenant Home Preserved)"
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                padding: '6px 10px',
+                                borderRadius: 'var(--radius-md, 8px)',
+                                border: '1px solid #fecaca',
+                                backgroundColor: 'var(--status-overdue-bg, #fef2f2)',
+                                fontSize: '12px',
+                                fontWeight: 600,
+                                color: 'var(--status-overdue, #ef4444)',
+                                cursor: 'pointer',
+                                minHeight: '32px'
+                              }}
+                            >
+                              <span>Cancel</span>
+                            </button>
+                          )}
+
+                          <Link
+                            href={`/admin/homes/${s.home_id}`}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              padding: '6px 10px',
+                              borderRadius: 'var(--radius-md, 8px)',
+                              border: '1px solid var(--color-border-subtle, #e2e8f0)',
+                              backgroundColor: 'var(--color-surface-subtle, #f1f5f9)',
+                              fontSize: '12px',
+                              fontWeight: 600,
+                              color: 'var(--color-text-primary, #0f172a)',
+                              minHeight: '32px',
+                              textDecoration: 'none'
+                            }}
+                          >
+                            <span>Inspect</span>
+                            <ExternalLink size={12} />
+                          </Link>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -931,6 +1174,241 @@ export default function AdminSubscriptionsPage() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Tab: Subscription Credits */}
+      {activeTab === 'credits' && (
+        <div
+          style={{
+            backgroundColor: 'var(--color-surface-card, #ffffff)',
+            borderRadius: 'var(--radius-lg, 16px)',
+            border: '1px solid var(--color-border-subtle, #e2e8f0)',
+            overflow: 'hidden',
+            boxShadow: 'var(--shadow-subtle)'
+          }}
+        >
+          {/* Header & Controls */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: '1px solid var(--color-border-subtle, #e2e8f0)', flexWrap: 'wrap', gap: '12px' }}>
+            <div>
+              <h2 style={{ fontSize: '16px', fontWeight: 700, margin: 0, color: 'var(--color-text-primary, #0f172a)' }}>
+                Subscription Credit Ledger
+              </h2>
+              <p style={{ fontSize: '12px', color: 'var(--color-text-secondary, #64748b)', margin: '2px 0 0' }}>
+                Authoritative reusable subscription value ledger. Fully audited with currency separation.
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <input
+                type="text"
+                placeholder="Search email, name, ref..."
+                value={creditSearch}
+                onChange={(e) => setCreditSearch(e.target.value)}
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: 'var(--radius-md, 8px)',
+                  border: '1px solid var(--color-border-subtle, #e2e8f0)',
+                  fontSize: '13px',
+                  minWidth: '200px'
+                }}
+              />
+
+              <select
+                value={creditStatusFilter}
+                onChange={(e) => setCreditStatusFilter(e.target.value)}
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: 'var(--radius-md, 8px)',
+                  border: '1px solid var(--color-border-subtle, #e2e8f0)',
+                  fontSize: '13px'
+                }}
+              >
+                <option value="ALL">All Statuses</option>
+                <option value="AVAILABLE">Available</option>
+                <option value="PARTIALLY_USED">Partially Used</option>
+                <option value="REDEEMED">Redeemed</option>
+                <option value="EXPIRED">Expired</option>
+                <option value="CANCELLED">Cancelled</option>
+              </select>
+
+              <select
+                value={creditCurrencyFilter}
+                onChange={(e) => setCreditCurrencyFilter(e.target.value)}
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: 'var(--radius-md, 8px)',
+                  border: '1px solid var(--color-border-subtle, #e2e8f0)',
+                  fontSize: '13px'
+                }}
+              >
+                <option value="ALL">All Currencies</option>
+                <option value="USD">USD</option>
+                <option value="INR">INR</option>
+                <option value="AED">AED</option>
+                <option value="GBP">GBP</option>
+                <option value="EUR">EUR</option>
+              </select>
+
+              <button
+                onClick={() => {
+                  setGrantCreditError(null);
+                  setIsGrantCreditModalOpen(true);
+                }}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '8px 14px',
+                  borderRadius: 'var(--radius-md, 10px)',
+                  backgroundColor: 'var(--color-primary-900, #0f172a)',
+                  color: 'var(--color-text-inverse, #ffffff)',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  border: 'none',
+                  cursor: 'pointer',
+                  minHeight: '36px'
+                }}
+              >
+                <Plus size={14} />
+                <span>Grant Credit</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Table */}
+          {credits.length === 0 ? (
+            <div style={{ padding: '48px 24px', textAlign: 'center', color: 'var(--color-text-secondary, #64748b)', fontSize: '14px' }}>
+              No subscription credits found in the ledger.
+            </div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                <thead>
+                  <tr
+                    style={{
+                      borderBottom: '1px solid var(--color-border-subtle, #e2e8f0)',
+                      backgroundColor: 'var(--color-surface-subtle, #f1f5f9)',
+                      color: 'var(--color-text-secondary, #64748b)',
+                      fontWeight: 600
+                    }}
+                  >
+                    <th style={{ padding: '12px 16px' }}>User / Account</th>
+                    <th style={{ padding: '12px 16px' }}>Original Amount</th>
+                    <th style={{ padding: '12px 16px' }}>Remaining Balance</th>
+                    <th style={{ padding: '12px 16px' }}>Currency</th>
+                    <th style={{ padding: '12px 16px' }}>Type</th>
+                    <th style={{ padding: '12px 16px' }}>Status</th>
+                    <th style={{ padding: '12px 16px' }}>Reference / Reason</th>
+                    <th style={{ padding: '12px 16px' }}>Expires</th>
+                    <th style={{ padding: '12px 16px', textAlign: 'right' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {credits
+                    .filter((c) => {
+                      if (creditStatusFilter !== 'ALL' && c.status !== creditStatusFilter) return false;
+                      if (creditCurrencyFilter !== 'ALL' && c.currency !== creditCurrencyFilter) return false;
+                      if (creditSearch) {
+                        const term = creditSearch.toLowerCase();
+                        const matchEmail = (c.user_email || '').toLowerCase().includes(term);
+                        const matchName = (c.user_name || '').toLowerCase().includes(term);
+                        const matchRef = (c.reference || '').toLowerCase().includes(term);
+                        const matchDesc = (c.description || '').toLowerCase().includes(term);
+                        if (!matchEmail && !matchName && !matchRef && !matchDesc) return false;
+                      }
+                      return true;
+                    })
+                    .map((c) => (
+                      <tr
+                        key={c.id}
+                        style={{
+                          borderBottom: '1px solid var(--color-border-subtle, #e2e8f0)',
+                          transition: 'background-color 0.15s ease'
+                        }}
+                      >
+                        <td style={{ padding: '12px 16px' }}>
+                          <div style={{ fontWeight: 600, color: 'var(--color-text-primary, #0f172a)' }}>
+                            {c.user_name || 'User'}
+                          </div>
+                          <div style={{ fontSize: '12px', color: 'var(--color-text-secondary, #64748b)' }}>
+                            {c.user_email || c.user_id.slice(0, 8)}
+                          </div>
+                        </td>
+
+                        <td style={{ padding: '12px 16px', fontWeight: 600 }}>
+                          {c.currency} {Number(c.amount).toFixed(2)}
+                        </td>
+
+                        <td style={{ padding: '12px 16px', fontWeight: 700, color: Number(c.remaining_amount) > 0 ? 'var(--status-in-stock, #10b981)' : 'var(--color-text-secondary, #64748b)' }}>
+                          {c.currency} {Number(c.remaining_amount).toFixed(2)}
+                        </td>
+
+                        <td style={{ padding: '12px 16px' }}>
+                          <AdminBadge variant="neutral">{c.currency}</AdminBadge>
+                        </td>
+
+                        <td style={{ padding: '12px 16px' }}>
+                          <AdminBadge variant="purple">{c.credit_type}</AdminBadge>
+                        </td>
+
+                        <td style={{ padding: '12px 16px' }}>
+                          <AdminBadge
+                            variant={
+                              c.status === 'AVAILABLE'
+                                ? 'success'
+                                : c.status === 'PARTIALLY_USED'
+                                ? 'info'
+                                : c.status === 'REDEEMED'
+                                ? 'neutral'
+                                : 'danger'
+                            }
+                          >
+                            {c.status}
+                          </AdminBadge>
+                        </td>
+
+                        <td style={{ padding: '12px 16px' }}>
+                          <div style={{ fontSize: '12px', color: 'var(--color-text-primary, #0f172a)' }}>
+                            {c.description || c.reference || '—'}
+                          </div>
+                          <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary, #94a3b8)' }}>
+                            {c.reference ? `Ref: ${c.reference}` : ''}
+                          </div>
+                        </td>
+
+                        <td style={{ padding: '12px 16px', color: 'var(--color-text-secondary, #64748b)', fontSize: '12px' }}>
+                          {c.expires_at ? new Date(c.expires_at).toLocaleDateString() : 'Never'}
+                        </td>
+
+                        <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                          {(c.status === 'AVAILABLE' || c.status === 'PARTIALLY_USED') && Number(c.remaining_amount) > 0 && (
+                            <button
+                              onClick={() => handleRevokeCredit(c.id)}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                padding: '6px 10px',
+                                borderRadius: 'var(--radius-md, 8px)',
+                                border: '1px solid #fecaca',
+                                backgroundColor: 'var(--status-overdue-bg, #fef2f2)',
+                                fontSize: '12px',
+                                fontWeight: 600,
+                                color: 'var(--status-overdue, #ef4444)',
+                                cursor: 'pointer',
+                                minHeight: '30px'
+                              }}
+                            >
+                              <span>Revoke</span>
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
@@ -1407,6 +1885,408 @@ export default function AdminSubscriptionsPage() {
                   }}
                 >
                   {isSubmittingPromo ? 'Creating...' : 'Launch Promotion'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Grant Credit */}
+      {isGrantCreditModalOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(15, 23, 42, 0.6)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 50,
+            padding: '16px'
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: 'var(--color-surface-card, #ffffff)',
+              borderRadius: 'var(--radius-lg, 16px)',
+              maxWidth: '520px',
+              width: '100%',
+              padding: '24px',
+              boxShadow: 'var(--shadow-raised, 0 20px 25px -5px rgba(0, 0, 0, 0.1))',
+              maxHeight: '90vh',
+              overflowY: 'auto'
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Coins size={20} color="var(--color-primary-900, #0f172a)" />
+                <h3 style={{ fontSize: '18px', fontWeight: 700, margin: 0 }}>Grant Subscription Credit</h3>
+              </div>
+              <button
+                onClick={() => setIsGrantCreditModalOpen(false)}
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '4px' }}
+              >
+                <X size={20} color="var(--color-text-secondary, #64748b)" />
+              </button>
+            </div>
+
+            {grantCreditError && (
+              <div style={{ padding: '12px', backgroundColor: 'var(--status-overdue-bg, #fef2f2)', border: '1px solid #fecaca', borderRadius: 'var(--radius-md, 8px)', color: 'var(--status-overdue, #ef4444)', fontSize: '13px', marginBottom: '16px' }}>
+                {grantCreditError}
+              </div>
+            )}
+
+            <form onSubmit={handleGrantCredit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                  Target User ID (UUID) *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. 550e8400-e29b-41d4-a716-446655440000"
+                  value={grantCreditForm.user_id}
+                  onChange={(e) => setGrantCreditForm({ ...grantCreditForm, user_id: e.target.value })}
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                    Credit Amount *
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    required
+                    value={grantCreditForm.amount}
+                    onChange={(e) => setGrantCreditForm({ ...grantCreditForm, amount: e.target.value })}
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                    Currency *
+                  </label>
+                  <select
+                    value={grantCreditForm.currency}
+                    onChange={(e) => setGrantCreditForm({ ...grantCreditForm, currency: e.target.value })}
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
+                  >
+                    <option value="INR">INR (₹)</option>
+                    <option value="USD">USD ($)</option>
+                    <option value="AED">AED (AED)</option>
+                    <option value="GBP">GBP (£)</option>
+                    <option value="EUR">EUR (€)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                  Credit Type *
+                </label>
+                <select
+                  value={grantCreditForm.credit_type}
+                  onChange={(e) => setGrantCreditForm({ ...grantCreditForm, credit_type: e.target.value })}
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
+                >
+                  <option value="ADMIN_GRANT">Super Admin Grant</option>
+                  <option value="COMPENSATION">Customer Service Compensation</option>
+                  <option value="PROMOTIONAL">Marketing Goodwill</option>
+                  <option value="RESERVATION_REFUND">Cancelled Reservation Credit</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                  Audit Reason (Authoritative & Traceable) *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. VIP onboarding gift or service restoration compensation"
+                  value={grantCreditForm.reason}
+                  onChange={(e) => setGrantCreditForm({ ...grantCreditForm, reason: e.target.value })}
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                  Expires In Days (Leave empty for no expiry)
+                </label>
+                <input
+                  type="number"
+                  placeholder="e.g. 90"
+                  value={grantCreditForm.expires_in_days}
+                  onChange={(e) => setGrantCreditForm({ ...grantCreditForm, expires_in_days: e.target.value })}
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '12px' }}>
+                <button
+                  type="button"
+                  onClick={() => setIsGrantCreditModalOpen(false)}
+                  disabled={isSubmittingCredit}
+                  style={{ padding: '10px 18px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', backgroundColor: 'transparent', fontSize: '14px', fontWeight: 600, cursor: 'pointer', minHeight: '44px' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingCredit}
+                  style={{ padding: '10px 20px', borderRadius: 'var(--radius-md, 10px)', border: 'none', backgroundColor: 'var(--color-primary-900, #0f172a)', color: 'var(--color-text-inverse, #ffffff)', fontSize: '14px', fontWeight: 600, cursor: isSubmittingCredit ? 'not-allowed' : 'pointer', minHeight: '44px' }}
+                >
+                  {isSubmittingCredit ? 'Granting...' : 'Issue Credit'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Grant Subscription */}
+      {isGrantSubModalOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(15, 23, 42, 0.6)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 50,
+            padding: '16px'
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: 'var(--color-surface-card, #ffffff)',
+              borderRadius: 'var(--radius-lg, 16px)',
+              maxWidth: '520px',
+              width: '100%',
+              padding: '24px',
+              boxShadow: 'var(--shadow-raised, 0 20px 25px -5px rgba(0, 0, 0, 0.1))',
+              maxHeight: '90vh',
+              overflowY: 'auto'
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ fontSize: '18px', fontWeight: 700, margin: 0 }}>Direct Grant Subscription</h3>
+              <button
+                onClick={() => setIsGrantSubModalOpen(false)}
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '4px' }}
+              >
+                <X size={20} color="var(--color-text-secondary, #64748b)" />
+              </button>
+            </div>
+
+            {grantSubError && (
+              <div style={{ padding: '12px', backgroundColor: 'var(--status-overdue-bg, #fef2f2)', border: '1px solid #fecaca', borderRadius: 'var(--radius-md, 8px)', color: 'var(--status-overdue, #ef4444)', fontSize: '13px', marginBottom: '16px' }}>
+                {grantSubError}
+              </div>
+            )}
+
+            <form onSubmit={handleGrantSubscription} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                  Target Home Workspace ID (UUID) *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. 770e8400-e29b-41d4-a716-446655440000"
+                  value={grantSubForm.home_id}
+                  onChange={(e) => setGrantSubForm({ ...grantSubForm, home_id: e.target.value })}
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                  Target User ID (Optional, defaults to home creator)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. 550e8400-e29b-41d4-a716-446655440000"
+                  value={grantSubForm.user_id}
+                  onChange={(e) => setGrantSubForm({ ...grantSubForm, user_id: e.target.value })}
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                  Subscription Plan *
+                </label>
+                <select
+                  required
+                  value={grantSubForm.plan_id}
+                  onChange={(e) => setGrantSubForm({ ...grantSubForm, plan_id: e.target.value })}
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
+                >
+                  <option value="">Select Plan...</option>
+                  {plans.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                    Duration (Days) *
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min="1"
+                    value={grantSubForm.duration_days}
+                    onChange={(e) => setGrantSubForm({ ...grantSubForm, duration_days: parseInt(e.target.value) || 365 })}
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                    Paid Extra Seats
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={grantSubForm.paid_member_seats}
+                    onChange={(e) => setGrantSubForm({ ...grantSubForm, paid_member_seats: parseInt(e.target.value) || 0 })}
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                  Grant Reason (Audited) *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. VIP partner household or non-profit sponsorship"
+                  value={grantSubForm.reason}
+                  onChange={(e) => setGrantSubForm({ ...grantSubForm, reason: e.target.value })}
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '12px' }}>
+                <button
+                  type="button"
+                  onClick={() => setIsGrantSubModalOpen(false)}
+                  disabled={isSubmittingSub}
+                  style={{ padding: '10px 18px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', backgroundColor: 'transparent', fontSize: '14px', fontWeight: 600, cursor: 'pointer', minHeight: '44px' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingSub}
+                  style={{ padding: '10px 20px', borderRadius: 'var(--radius-md, 10px)', border: 'none', backgroundColor: 'var(--color-primary-900, #0f172a)', color: 'var(--color-text-inverse, #ffffff)', fontSize: '14px', fontWeight: 600, cursor: isSubmittingSub ? 'not-allowed' : 'pointer', minHeight: '44px' }}
+                >
+                  {isSubmittingSub ? 'Granting...' : 'Activate Subscription'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Override Period */}
+      {isOverrideModalOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(15, 23, 42, 0.6)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 50,
+            padding: '16px'
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: 'var(--color-surface-card, #ffffff)',
+              borderRadius: 'var(--radius-lg, 16px)',
+              maxWidth: '460px',
+              width: '100%',
+              padding: '24px',
+              boxShadow: 'var(--shadow-raised, 0 20px 25px -5px rgba(0, 0, 0, 0.1))'
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Calendar size={18} color="var(--color-primary-900, #0f172a)" />
+                <h3 style={{ fontSize: '18px', fontWeight: 700, margin: 0 }}>Override Subscription Period</h3>
+              </div>
+              <button
+                onClick={() => setIsOverrideModalOpen(false)}
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '4px' }}
+              >
+                <X size={20} color="var(--color-text-secondary, #64748b)" />
+              </button>
+            </div>
+
+            <form onSubmit={handleOverridePeriod} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                  New Expiry / Renewal Date *
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={overrideDate}
+                  onChange={(e) => setOverrideDate(e.target.value)}
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                  Override Reason (Audited) *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Complimentary extension due to service upgrade"
+                  value={overrideReason}
+                  onChange={(e) => setOverrideReason(e.target.value)}
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '12px' }}>
+                <button
+                  type="button"
+                  onClick={() => setIsOverrideModalOpen(false)}
+                  disabled={isSubmittingOverride}
+                  style={{ padding: '10px 18px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', backgroundColor: 'transparent', fontSize: '14px', fontWeight: 600, cursor: 'pointer', minHeight: '44px' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingOverride}
+                  style={{ padding: '10px 20px', borderRadius: 'var(--radius-md, 10px)', border: 'none', backgroundColor: 'var(--color-primary-900, #0f172a)', color: 'var(--color-text-inverse, #ffffff)', fontSize: '14px', fontWeight: 600, cursor: isSubmittingOverride ? 'not-allowed' : 'pointer', minHeight: '44px' }}
+                >
+                  {isSubmittingOverride ? 'Saving...' : 'Update Expiry'}
                 </button>
               </div>
             </form>

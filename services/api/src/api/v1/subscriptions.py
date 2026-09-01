@@ -21,6 +21,7 @@ from src.infrastructure.database.models import (
     PaymentTransactionModel,
     PromotionModel,
     PromotionRedemptionModel,
+    SubscriptionCreditModel,
     SubscriptionFeatureModel,
     SubscriptionGrantModel,
     SubscriptionModel,
@@ -31,7 +32,10 @@ from src.infrastructure.database.models import (
     UserProfileModel
 )
 from src.domain.entitlements import (
+    consume_user_credits,
+    get_user_credit_balance,
     get_user_entitlement_summary,
+    provision_paid_home_entitlement,
     reserve_home_access_entitlement,
     verify_user_home_access_entitlement
 )
@@ -52,6 +56,7 @@ from src.schemas.subscription import (
     PaymentTransactionDTO,
     PromotionDTO,
     ReserveEntitlementRequest,
+    SubscriptionCreditDTO,
     SubscriptionFeatureDTO,
     SubscriptionPlanDetailDTO,
     SubscriptionPriceDTO,
@@ -645,7 +650,16 @@ async def calculate_subscription_price(
     seats_effective_total = (Decimal(payload.additional_seats) * unit_effective_price).quantize(Decimal("0.01"))
 
     intro_admin_free = bool(getattr(plan, "introductory_enabled", False))
-    total_payable = Decimal("0.00") if is_free_period else seats_effective_total
+    subtotal_before_credit = Decimal("0.00") if is_free_period else seats_effective_total
+
+    # 5. Evaluate Eligible User Subscription Credits (applied after coupon)
+    credit_avail = Decimal("0.00")
+    credit_appl = Decimal("0.00")
+    if payload.user_id:
+        credit_avail = await get_user_credit_balance(payload.user_id, price.currency, db)
+        credit_appl = min(subtotal_before_credit, credit_avail)
+
+    total_payable = max(Decimal("0.00"), subtotal_before_credit - credit_appl)
 
     return ApiSuccessResponse(
         data=CalculateSubscriptionResponse(
@@ -672,6 +686,8 @@ async def calculate_subscription_price(
             seats_discount_total=seats_discount_total,
             seats_effective_total=seats_effective_total,
             introductory_admin_free=intro_admin_free,
+            credit_available=credit_avail,
+            credit_applied=credit_appl,
             total_payable=total_payable,
             pricing_date=datetime.now(timezone.utc)
         )
@@ -827,8 +843,8 @@ async def checkout_subscription(
         )
         price = (await db.execute(price_q_fallback)).scalars().first()
 
-    list_amount = price.list_price if price else Decimal("0.00")
-    if list_amount == Decimal("0.00") and price and getattr(price, "additional_member_list_price", None):
+    list_amount = price.list_price if (price and hasattr(price, "list_price") and isinstance(price.list_price, Decimal)) else Decimal("0.00")
+    if list_amount == Decimal("0.00") and price and getattr(price, "additional_member_list_price", None) and isinstance(price.additional_member_list_price, Decimal):
         list_amount = price.additional_member_list_price
     if list_amount == Decimal("0.00"):
         list_amount = Decimal("20.00")
@@ -859,7 +875,21 @@ async def checkout_subscription(
             elif coupon.coupon_type == "FIXED_DISCOUNT":
                 discount_amt = min(list_amount, max(Decimal("0.00"), coupon.discount_value))
 
-    final_amount = max(Decimal("0.00"), list_amount - discount_amt)
+    subtotal_after_coupon = max(Decimal("0.00"), list_amount - discount_amt)
+
+    # 4. Evaluate & Atomically Consume Eligible User Subscription Credits (currency-aware, non-expired)
+    credit_avail = await get_user_credit_balance(current_user.id, payload.currency.upper(), db)
+    credit_to_apply = min(subtotal_after_coupon, credit_avail)
+
+    consumed_credit, affected_credits = await consume_user_credits(
+        user_id=current_user.id,
+        required_amount=credit_to_apply,
+        currency=payload.currency.upper(),
+        db=db,
+        description=f"Subscription checkout for plan {plan.code}"
+    )
+
+    final_amount = max(Decimal("0.00"), subtotal_after_coupon - consumed_credit)
     payment_required = final_amount > Decimal("0.00")
 
     provider = get_payment_provider()
@@ -880,29 +910,68 @@ async def checkout_subscription(
         coupon_id=applied_coupon.id if applied_coupon else None,
         amount=list_amount,
         discount_amount=discount_amt,
+        credit_amount=consumed_credit,
         tax_amount=Decimal("0.00"),
         final_amount=final_amount,
         currency=payload.currency.upper(),
-        provider=intent.provider,
-        provider_transaction_id=intent.provider_transaction_id,
+        provider=intent.provider if payment_required else "CREDIT_SETTLEMENT",
+        provider_transaction_id=intent.provider_transaction_id if payment_required else f"cred_{secrets.token_hex(8)}",
         idempotency_key=f"tx_chk_{secrets.token_hex(16)}",
         status="SUCCESS" if not payment_required else "PENDING",
-        metadata_json=json.dumps({"coupon": applied_coupon.code if applied_coupon else None})
+        metadata_json=json.dumps({
+            "coupon": applied_coupon.code if applied_coupon else None,
+            "credit_applied": str(consumed_credit)
+        })
     )
     db.add(transaction)
+
+    # Link transaction ID back to affected credit records
+    for c in affected_credits:
+        c.redeemed_transaction_id = transaction.id
+
+    # If 100% covered by credit or coupon, immediately activate subscription & provision entitlement
+    if not payment_required:
+        now = datetime.now(timezone.utc)
+        sub = SubscriptionModel(
+            id=uuid.uuid4(),
+            home_id=payload.home_id,
+            plan_id=plan.id,
+            status="ACTIVE",
+            current_period_starts_at=now,
+            current_period_ends_at=now + timedelta(days=365),
+            paid_member_seats=0,
+            currency=payload.currency.upper(),
+            created_at=now,
+            updated_at=now
+        )
+        db.add(sub)
+        transaction.subscription_id = sub.id
+
+        if payload.home_id:
+            home = await db.get(HomeModel, payload.home_id)
+            if home:
+                await provision_paid_home_entitlement(
+                    user=current_user,
+                    home=home,
+                    subscription_id=sub.id,
+                    db=db,
+                    expires_at=sub.current_period_ends_at
+                )
+
     await db.commit()
 
     return ApiSuccessResponse(
         data=CheckoutSubscriptionResponse(
             transaction_id=transaction.id,
-            provider=intent.provider,
-            provider_transaction_id=intent.provider_transaction_id,
+            provider=transaction.provider,
+            provider_transaction_id=transaction.provider_transaction_id or "",
             amount=list_amount,
             discount_amount=discount_amt,
+            credit_applied=consumed_credit,
             final_amount=final_amount,
             currency=payload.currency.upper(),
             status=transaction.status,
-            client_secret=intent.client_secret,
+            client_secret=intent.client_secret if payment_required else None,
             payment_required=payment_required
         )
     )
@@ -1436,6 +1505,47 @@ async def get_my_home_access_entitlements(
         )
 
     await db.commit()
+    return ApiSuccessResponse(data=dtos)
+
+
+@router.get("/my-credits", response_model=ApiSuccessResponse[List[SubscriptionCreditDTO]])
+async def get_my_credits(
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Returns the authenticated user's available and past subscription credits.
+    """
+    query = (
+        select(SubscriptionCreditModel, HomeModel.name.label("home_name"))
+        .outerjoin(HomeModel, SubscriptionCreditModel.home_id == HomeModel.id)
+        .where(SubscriptionCreditModel.user_id == current_user.id)
+        .order_by(SubscriptionCreditModel.created_at.desc())
+    )
+    res = await db.execute(query)
+    rows = res.all()
+
+    dtos = [
+        SubscriptionCreditDTO(
+            id=c.id,
+            user_id=c.user_id,
+            user_name=current_user.email.split("@")[0] if current_user.email else None,
+            user_email=current_user.email,
+            home_id=c.home_id,
+            home_name=hname,
+            amount=c.amount,
+            remaining_amount=c.remaining_amount,
+            currency=c.currency,
+            credit_type=c.credit_type,
+            status=c.status,
+            source_type=c.source_type,
+            reference=c.reference,
+            description=c.description,
+            expires_at=c.expires_at,
+            created_at=c.created_at
+        )
+        for c, hname in rows
+    ]
     return ApiSuccessResponse(data=dtos)
 
 

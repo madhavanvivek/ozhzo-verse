@@ -328,3 +328,23 @@ export interface SubscriptionAnalytics {
   currency: string;
 }
 
+export interface SubscriptionCredit {
+  id: string;
+  user_id: string;
+  user_name?: string | null;
+  user_email?: string | null;
+  home_id?: string | null;
+  home_name?: string | null;
+  amount: string | number;
+  remaining_amount: string | number;
+  currency: string;
+  credit_type: string;
+  status: string;
+  source_type?: string | null;
+  reference?: string | null;
+  description?: string | null;
+  expires_at?: string | null;
+  created_at: string;
+}
+
+

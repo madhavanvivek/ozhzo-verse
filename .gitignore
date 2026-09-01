@@ -58,8 +58,10 @@ playwright-report/
 Thumbs.db
 .idea/
 .vscode/
+scratch/
 *.swp
 *.swo
+.project
 
 # Docker
 *.cid

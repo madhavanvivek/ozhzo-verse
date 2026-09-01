@@ -165,6 +165,8 @@ class CalculateSubscriptionResponse(BaseModel):
     seats_effective_total: Decimal
     
     introductory_admin_free: bool
+    credit_available: Decimal = Decimal("0.00")
+    credit_applied: Decimal = Decimal("0.00")
     total_payable: Decimal
     pricing_date: datetime
 
@@ -312,6 +314,7 @@ class CheckoutSubscriptionResponse(BaseModel):
     provider_transaction_id: str
     amount: Decimal
     discount_amount: Decimal
+    credit_applied: Decimal = Decimal("0.00")
     final_amount: Decimal
     currency: str
     status: str
@@ -341,6 +344,7 @@ class PaymentTransactionDTO(BaseModel):
     plan_name: str
     amount: Decimal
     discount_amount: Decimal
+    credit_amount: Decimal = Decimal("0.00")
     final_amount: Decimal
     currency: str
     provider: str
@@ -385,5 +389,65 @@ class UserHomeAccessEntitlementDTO(BaseModel):
     expires_at: Optional[datetime] = None
     is_expired: bool
     days_remaining: int
+
+
+class SubscriptionCreditDTO(BaseModel):
+    id: UUID
+    user_id: UUID
+    user_name: Optional[str] = None
+    user_email: Optional[str] = None
+    home_id: Optional[UUID] = None
+    home_name: Optional[str] = None
+    amount: Decimal
+    remaining_amount: Decimal
+    currency: str
+    credit_type: str
+    status: str
+    source_type: Optional[str] = None
+    reference: Optional[str] = None
+    description: Optional[str] = None
+    expires_at: Optional[datetime] = None
+    created_at: datetime
+
+
+class UserCreditBalanceDTO(BaseModel):
+    user_id: UUID
+    currency: str
+    available_balance: Decimal
+    credits_count: int
+
+
+class GrantCreditRequest(BaseModel):
+    user_id: UUID
+    home_id: Optional[UUID] = None
+    amount: Decimal = Field(..., gt=0)
+    currency: str = Field(default="USD", min_length=3, max_length=3)
+    credit_type: str = Field(default="ADMIN_GRANT")
+    reason: str = Field(..., min_length=3)
+    expires_in_days: Optional[int] = Field(default=None, ge=1)
+    description: Optional[str] = None
+
+
+class RevokeCreditRequest(BaseModel):
+    reason: str = Field(..., min_length=3)
+
+
+class AdminGrantSubscriptionRequest(BaseModel):
+    home_id: UUID
+    user_id: Optional[UUID] = None
+    plan_id: UUID
+    duration_days: int = Field(default=365, ge=1, le=3650)
+    paid_member_seats: int = Field(default=0, ge=0)
+    reason: str = Field(..., min_length=3)
+
+
+class AdminOverrideSubscriptionPeriodRequest(BaseModel):
+    current_period_ends_at: datetime
+    reason: str = Field(..., min_length=3)
+
+
+class AdminCancelSubscriptionRequest(BaseModel):
+    reason: str = Field(..., min_length=3)
+
 
 

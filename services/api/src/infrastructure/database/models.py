@@ -133,6 +133,7 @@ class HomeModel(Base):
     event_categories = relationship("EventCategoryModel", back_populates="home", cascade="all, delete-orphan")
     events = relationship("EventModel", back_populates="home", cascade="all, delete-orphan")
     subscription = relationship("SubscriptionModel", back_populates="home", uselist=False, cascade="all, delete-orphan")
+    access_entitlements = relationship("HomeAccessEntitlementModel", back_populates="home", cascade="all, delete-orphan")
 
 
 class HomeJoinRequestModel(Base):
@@ -1296,4 +1297,44 @@ class PaymentTransactionModel(Base):
     plan = relationship("SubscriptionPlanModel", foreign_keys=[plan_id])
     price = relationship("SubscriptionPriceModel", foreign_keys=[price_id])
     coupon = relationship("CouponModel", foreign_keys=[coupon_id])
+
+
+# ==============================================================================
+# HOME ACCESS ENTITLEMENTS (PER PERSON + PER HOME ACCESS GRANTS & RESERVATIONS)
+# ==============================================================================
+
+class HomeAccessEntitlementModel(Base):
+    __tablename__ = "home_access_entitlements"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    home_id = Column(UUID(as_uuid=True), ForeignKey("homes.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    subscription_id = Column(UUID(as_uuid=True), ForeignKey("subscriptions.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    # Verified Identity Binding for Reservations
+    reserved_identifier_type = Column(String(16), nullable=True)  # PHONE, EMAIL
+    reserved_identifier_value = Column(String(255), nullable=True, index=True)  # Normalized phone or lowercase email
+
+    # Commercial Entitlement Classification
+    entitlement_type = Column(String(32), default="FIRST_YEAR_FREE", nullable=False)  # FIRST_YEAR_FREE, PAID_SEAT, RESERVATION, DIRECT_USER_SUBSCRIPTION, ADMIN_GRANT
+    status = Column(String(32), default="ACTIVE", nullable=False, index=True)  # PENDING, RESERVED, ACTIVE, EXPIRING, EXPIRED, CANCELLED
+
+    starts_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+    notes = Column(Text, nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    __table_args__ = (
+        Index("idx_entitlement_home_user", "home_id", "user_id", "status"),
+        Index("idx_entitlement_reservation", "reserved_identifier_value", "status"),
+        Index("idx_entitlement_expiry", "expires_at", "status"),
+    )
+
+    home = relationship("HomeModel", back_populates="access_entitlements")
+    user = relationship("UserModel", foreign_keys=[user_id])
+    subscription = relationship("SubscriptionModel", foreign_keys=[subscription_id])
+    creator = relationship("UserModel", foreign_keys=[created_by])
 

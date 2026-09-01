@@ -24,7 +24,11 @@ from src.infrastructure.database.models import (
     UserModel
 )
 from src.infrastructure.cache.redis_client import get_redis_client
-from src.domain.entitlements import check_can_create_home, check_and_reserve_home_member_seat
+from src.domain.entitlements import (
+    check_can_create_home,
+    check_and_reserve_home_member_seat,
+    provision_first_year_free_entitlement
+)
 from src.core.exceptions import TierLimitExceededException, MobileVerificationRequiredException
 from src.core.home_identity import generate_unique_public_home_id, generate_home_qr_token
 from src.schemas.common import ApiSuccessResponse
@@ -140,6 +144,9 @@ async def create_home(
         status="ACTIVE"
     )
     db.add(new_membership)
+
+    # 2b. Authoritatively provision 1-Year Free Access Entitlement for creator (Rule B & Rule D)
+    await provision_first_year_free_entitlement(current_user, new_home, db)
 
     # 3. Seed default inventory categories
     default_categories = [

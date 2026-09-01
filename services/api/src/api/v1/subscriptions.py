@@ -15,6 +15,7 @@ from src.infrastructure.database.models import (
     CampaignModel,
     CouponModel,
     CouponRedemptionModel,
+    HomeAccessEntitlementModel,
     HomeMemberModel,
     HomeModel,
     PaymentTransactionModel,
@@ -29,7 +30,11 @@ from src.infrastructure.database.models import (
     UserModel,
     UserProfileModel
 )
-from src.domain.entitlements import get_user_entitlement_summary
+from src.domain.entitlements import (
+    get_user_entitlement_summary,
+    reserve_home_access_entitlement,
+    verify_user_home_access_entitlement
+)
 from src.domain.payments import get_payment_provider
 from src.schemas.common import ApiSuccessResponse
 from src.schemas.auth import MessageResponse
@@ -41,15 +46,18 @@ from src.schemas.subscription import (
     CheckoutSubscriptionResponse,
     ConfirmPaymentRequest,
     ConfirmPaymentResponse,
+    HomeAccessEntitlementDTO,
     HomeSubscriptionOverviewDTO,
     MemberEntitlementDTO,
     PaymentTransactionDTO,
     PromotionDTO,
+    ReserveEntitlementRequest,
     SubscriptionFeatureDTO,
     SubscriptionPlanDetailDTO,
     SubscriptionPriceDTO,
     UpdateSubscriptionSeatsRequest,
-    UserEntitlementSummaryDTO
+    UserEntitlementSummaryDTO,
+    UserHomeAccessEntitlementDTO
 )
 
 router = APIRouter(prefix="/subscription", tags=["Subscriptions"])
@@ -1248,6 +1256,187 @@ async def handle_payment_webhook(
 
     # Unknown or unhandled event
     return {"status": "acknowledged", "event": event_type}
+
+
+# ------------------------------------------------------------------------------
+# Home Access Entitlements & Reservations APIs (Stage 2.1)
+# ------------------------------------------------------------------------------
+
+
+@router.get("/homes/{home_id}/entitlements", response_model=ApiSuccessResponse[List[HomeAccessEntitlementDTO]])
+async def list_home_access_entitlements(
+    home_ctx: HomeContext = Depends(require_home_permission("members:view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Lists all member access entitlements and pending seat reservations for a Home workspace.
+    Enforces Rule D & Rule E server-side inspection.
+    """
+    now = datetime.now(timezone.utc)
+    query = (
+        select(HomeAccessEntitlementModel, UserModel, UserProfileModel)
+        .outerjoin(UserModel, HomeAccessEntitlementModel.user_id == UserModel.id)
+        .outerjoin(UserProfileModel, UserModel.id == UserProfileModel.user_id)
+        .where(HomeAccessEntitlementModel.home_id == home_ctx.home_id)
+        .order_by(HomeAccessEntitlementModel.created_at.desc())
+    )
+    res = await db.execute(query)
+    rows = res.all()
+
+    dtos = []
+    for ent, user, profile in rows:
+        display_name = profile.display_name if profile else (user.email.split("@")[0] if user and user.email else None)
+        user_email = user.email if user else None
+        is_expired = ent.expires_at < now or ent.status == "EXPIRED"
+
+        dtos.append(
+            HomeAccessEntitlementDTO(
+                id=ent.id,
+                home_id=ent.home_id,
+                user_id=ent.user_id,
+                user_display_name=display_name,
+                user_email=user_email,
+                subscription_id=ent.subscription_id,
+                reserved_identifier_type=ent.reserved_identifier_type,
+                reserved_identifier_value=ent.reserved_identifier_value,
+                entitlement_type=ent.entitlement_type,
+                status=ent.status,
+                starts_at=ent.starts_at,
+                expires_at=ent.expires_at,
+                is_expired=is_expired,
+                notes=ent.notes,
+                created_at=ent.created_at
+            )
+        )
+
+    return ApiSuccessResponse(data=dtos)
+
+
+@router.post("/homes/{home_id}/entitlements/reserve", response_model=ApiSuccessResponse[HomeAccessEntitlementDTO])
+async def create_seat_reservation(
+    payload: ReserveEntitlementRequest,
+    home_ctx: HomeContext = Depends(require_home_permission("members:invite")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Reserves a paid subscription access seat for an individual identified by verified mobile or email.
+    """
+    sub_q = select(SubscriptionModel).where(
+        SubscriptionModel.home_id == home_ctx.home_id,
+        SubscriptionModel.status.in_(["ACTIVE", "TRIALING"])
+    )
+    sub_res = await db.execute(sub_q)
+    sub = sub_res.scalars().first()
+    sub_id = sub.id if sub else None
+
+    reservation = await reserve_home_access_entitlement(
+        home_id=home_ctx.home_id,
+        admin_user_id=home_ctx.user.id,
+        identifier_type=payload.identifier_type,
+        identifier_value=payload.identifier_value,
+        subscription_id=sub_id,
+        db=db,
+        duration_days=payload.duration_days,
+        notes=payload.notes
+    )
+    await db.commit()
+
+    return ApiSuccessResponse(
+        data=HomeAccessEntitlementDTO(
+            id=reservation.id,
+            home_id=reservation.home_id,
+            user_id=None,
+            user_display_name=None,
+            user_email=None,
+            subscription_id=reservation.subscription_id,
+            reserved_identifier_type=reservation.reserved_identifier_type,
+            reserved_identifier_value=reservation.reserved_identifier_value,
+            entitlement_type=reservation.entitlement_type,
+            status=reservation.status,
+            starts_at=reservation.starts_at,
+            expires_at=reservation.expires_at,
+            is_expired=False,
+            notes=reservation.notes,
+            created_at=reservation.created_at
+        ),
+        message=f"Subscription seat reserved for {payload.identifier_value}."
+    )
+
+
+@router.delete("/homes/{home_id}/entitlements/{entitlement_id}", response_model=ApiSuccessResponse[MessageResponse])
+async def revoke_access_entitlement(
+    entitlement_id: UUID,
+    home_ctx: HomeContext = Depends(require_home_permission("members:remove")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Cancels or revokes an unaccepted reservation or member access entitlement.
+    """
+    ent = await db.get(HomeAccessEntitlementModel, entitlement_id)
+    if not ent or ent.home_id != home_ctx.home_id:
+        raise HTTPException(status_code=404, detail="Access entitlement not found.")
+
+    ent.status = "CANCELLED"
+    ent.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    return ApiSuccessResponse(data=MessageResponse(message="Access entitlement has been cancelled."))
+
+
+@router.get("/users/me/home-entitlements", response_model=ApiSuccessResponse[List[UserHomeAccessEntitlementDTO]])
+async def get_my_home_access_entitlements(
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Returns the current user's authoritative access entitlement and validity countdown across all joined Homes.
+    """
+    now = datetime.now(timezone.utc)
+
+    # 1. Fetch user's active home memberships
+    q = (
+        select(HomeMemberModel, HomeModel)
+        .join(HomeModel, HomeMemberModel.home_id == HomeModel.id)
+        .where(
+            HomeMemberModel.user_id == current_user.id,
+            HomeMemberModel.status == "ACTIVE",
+            HomeModel.deleted_at.is_(None)
+        )
+    )
+    res = await db.execute(q)
+    rows = res.all()
+
+    dtos = []
+    for member, home in rows:
+        is_entitled, ent, _ = await verify_user_home_access_entitlement(current_user, home.id, db)
+
+        ent_type = ent.entitlement_type if ent else ("FIRST_YEAR_FREE" if home.created_by == current_user.id else "NONE")
+        ent_status = ent.status if ent else ("ACTIVE" if is_entitled else "EXPIRED")
+        starts_at = ent.starts_at if ent else getattr(home, "created_at", now)
+        expires_at = ent.expires_at if ent else (starts_at + timedelta(days=365) if home.created_by == current_user.id else None)
+
+        days_rem = 0
+        if expires_at:
+            delta = expires_at - now
+            days_rem = max(0, delta.days)
+
+        dtos.append(
+            UserHomeAccessEntitlementDTO(
+                home_id=home.id,
+                home_name=home.name,
+                role=member.role,
+                entitlement_id=ent.id if ent else None,
+                entitlement_type=ent_type,
+                status=ent_status,
+                starts_at=starts_at,
+                expires_at=expires_at,
+                is_expired=not is_entitled,
+                days_remaining=days_rem
+            )
+        )
+
+    await db.commit()
+    return ApiSuccessResponse(data=dtos)
 
 
 # ------------------------------------------------------------------------------

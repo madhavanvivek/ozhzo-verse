@@ -1,13 +1,14 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
-from uuid import UUID
+from uuid import UUID, uuid4
 from unittest.mock import AsyncMock
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import TierLimitExceededException
 from src.infrastructure.database.models import (
+    HomeAccessEntitlementModel,
     HomeModel,
     HomeMemberModel,
     InvitationModel,
@@ -263,3 +264,244 @@ async def check_and_reserve_home_member_seat(
         )
 
     return total_allowed
+
+
+async def provision_first_year_free_entitlement(
+    user: UserModel,
+    home: HomeModel,
+    db: AsyncSession
+) -> HomeAccessEntitlementModel:
+    """
+    Provisions the authoritative 1-Year Free Access Entitlement for the creator's first Home.
+    Enforces Rule B: FIRST_YEAR_FREE with 365-day access window.
+    """
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(days=365)
+
+    entitlement = HomeAccessEntitlementModel(
+        id=uuid4(),
+        home_id=home.id,
+        user_id=user.id,
+        subscription_id=None,
+        entitlement_type="FIRST_YEAR_FREE",
+        status="ACTIVE",
+        starts_at=now,
+        expires_at=expires_at,
+        notes="First-Year Free Entitlement for First Created Home",
+        created_by=user.id,
+        created_at=now,
+        updated_at=now
+    )
+    db.add(entitlement)
+    return entitlement
+
+
+async def provision_paid_home_entitlement(
+    user: UserModel,
+    home: HomeModel,
+    subscription_id: Optional[UUID],
+    db: AsyncSession,
+    expires_at: Optional[datetime] = None
+) -> HomeAccessEntitlementModel:
+    """
+    Provisions a Paid Access Entitlement for additional Homes or Paid Member Seats.
+    Enforces Rule C & Rule E.
+    """
+    now = datetime.now(timezone.utc)
+    if not expires_at:
+        expires_at = now + timedelta(days=365)
+
+    entitlement = HomeAccessEntitlementModel(
+        id=uuid4(),
+        home_id=home.id,
+        user_id=user.id,
+        subscription_id=subscription_id,
+        entitlement_type="PAID_SEAT",
+        status="ACTIVE",
+        starts_at=now,
+        expires_at=expires_at,
+        notes="Paid Subscription Home Access Entitlement",
+        created_by=user.id,
+        created_at=now,
+        updated_at=now
+    )
+    db.add(entitlement)
+    return entitlement
+
+
+async def reserve_home_access_entitlement(
+    home_id: UUID,
+    admin_user_id: UUID,
+    identifier_type: str,  # PHONE or EMAIL
+    identifier_value: str,
+    subscription_id: Optional[UUID],
+    db: AsyncSession,
+    duration_days: int = 365,
+    notes: Optional[str] = None
+) -> HomeAccessEntitlementModel:
+    """
+    Creates a pre-allocated subscription reservation for a specific person identified by unique verified mobile or email.
+    Status starts in 'RESERVED' and transitions to 'ACTIVE' upon authenticated user claim.
+    """
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(days=duration_days)
+
+    clean_val = identifier_value.strip().lower() if identifier_type.upper() == "EMAIL" else identifier_value.strip()
+
+    reservation = HomeAccessEntitlementModel(
+        id=uuid4(),
+        home_id=home_id,
+        user_id=None,
+        subscription_id=subscription_id,
+        reserved_identifier_type=identifier_type.upper(),
+        reserved_identifier_value=clean_val,
+        entitlement_type="RESERVATION",
+        status="RESERVED",
+        starts_at=now,
+        expires_at=expires_at,
+        notes=notes or f"Reserved seat for {clean_val}",
+        created_by=admin_user_id,
+        created_at=now,
+        updated_at=now
+    )
+    db.add(reservation)
+    return reservation
+
+
+async def claim_reserved_entitlement(
+    user: UserModel,
+    home_id: UUID,
+    db: AsyncSession
+) -> Optional[HomeAccessEntitlementModel]:
+    """
+    Binds and activates any pending RESERVED access entitlement matching the user's verified phone or email.
+    """
+    identifiers = []
+    if getattr(user, "email", None):
+        identifiers.append(user.email.strip().lower())
+    if getattr(user, "phone_number", None):
+        identifiers.append(user.phone_number.strip())
+
+    if not identifiers:
+        return None
+
+    entitlement = None
+    try:
+        query = select(HomeAccessEntitlementModel).where(
+            HomeAccessEntitlementModel.home_id == home_id,
+            HomeAccessEntitlementModel.status == "RESERVED",
+            HomeAccessEntitlementModel.reserved_identifier_value.in_(identifiers)
+        )
+        res = await db.execute(query)
+        if hasattr(res, "scalars"):
+            scalars_obj = res.scalars()
+            entitlement = scalars_obj.first() if hasattr(scalars_obj, "first") else None
+        elif hasattr(res, "scalar_one_or_none"):
+            entitlement = res.scalar_one_or_none()
+    except (Exception, StopAsyncIteration):
+        entitlement = None
+
+    if entitlement:
+        now = datetime.now(timezone.utc)
+        entitlement.user_id = user.id
+        entitlement.status = "ACTIVE"
+        entitlement.starts_at = now
+        entitlement.expires_at = now + timedelta(days=365)
+        entitlement.updated_at = now
+        return entitlement
+
+    return None
+
+
+async def verify_user_home_access_entitlement(
+    user: UserModel,
+    home_id: UUID,
+    db: AsyncSession
+) -> Tuple[bool, Optional[HomeAccessEntitlementModel], str]:
+    """
+    Authoritatively evaluates server-side:
+      "Does this particular user have valid access entitlement to this particular Home?"
+    Returns:
+      (is_authorized: bool, entitlement: Optional[HomeAccessEntitlementModel], reason: str)
+    """
+    # 1. Super Admin is completely separate and exempt (Rule F)
+    is_super_admin = getattr(user, "is_super_admin", False) or (getattr(user, "system_role", "USER") in ["SUPER_ADMIN", "PLATFORM_ADMIN"])
+    if is_super_admin:
+        return True, None, "Super Admin platform bypass."
+
+    now = datetime.now(timezone.utc)
+
+    # 2. Check for explicit HomeAccessEntitlementModel
+    try:
+        query = select(HomeAccessEntitlementModel).where(
+            HomeAccessEntitlementModel.home_id == home_id,
+            HomeAccessEntitlementModel.user_id == user.id
+        ).order_by(HomeAccessEntitlementModel.expires_at.desc())
+        res = await db.execute(query)
+        entitlements = []
+        if hasattr(res, "scalars"):
+            scalars_obj = res.scalars()
+            entitlements = scalars_obj.all() if hasattr(scalars_obj, "all") else []
+        elif hasattr(res, "all"):
+            entitlements = res.all()
+    except Exception:
+        entitlements = []
+
+    for ent in entitlements:
+        if not isinstance(ent, HomeAccessEntitlementModel):
+            continue
+        if ent.status == "ACTIVE":
+            if ent.expires_at >= now:
+                return True, ent, "Valid active access entitlement."
+            else:
+                # Expired entitlement
+                ent.status = "EXPIRED"
+                ent.updated_at = now
+                return False, ent, "Your access entitlement to this Home has expired. A valid subscription is required to access this Home."
+
+    # 3. Check for matching reservation to auto-claim
+    claimed = await claim_reserved_entitlement(user, home_id, db)
+    if claimed:
+        return True, claimed, "Claimed reserved access entitlement."
+
+    # 4. Fallback / backward-compatibility check for existing Stage 1 & Stage 2 active members
+    try:
+        home = await db.get(HomeModel, home_id)
+    except Exception:
+        home = None
+
+    if home:
+        # Check if user is the creator of the Home
+        if home.created_by == user.id:
+            home_created_at = getattr(home, "created_at", None) or now
+            # First year window: created_at + 365 days
+            first_year_expiry = home_created_at + timedelta(days=365)
+            if first_year_expiry >= now:
+                # Auto-provision First Year Free entitlement
+                try:
+                    new_ent = await provision_first_year_free_entitlement(user, home, db)
+                    new_ent.starts_at = home_created_at
+                    new_ent.expires_at = first_year_expiry
+                    return True, new_ent, "First-Year Free Entitlement active."
+                except Exception:
+                    return True, None, "First-Year Free Entitlement active."
+            else:
+                return False, None, "Your first-year free access entitlement to this Home has expired. A valid subscription is required."
+
+        # Check if home has an active subscription with member seats
+        try:
+            sub_q = select(SubscriptionModel).where(
+                SubscriptionModel.home_id == home_id,
+                SubscriptionModel.status.in_(["ACTIVE", "TRIALING"])
+            )
+            sub_res = await db.execute(sub_q)
+            sub = sub_res.scalars().first() if hasattr(sub_res, "scalars") else None
+            if sub and (not sub.current_period_ends_at or sub.current_period_ends_at >= now):
+                new_ent = await provision_paid_home_entitlement(
+                    user, home, sub.id, db, expires_at=sub.current_period_ends_at
+                )
+                return True, new_ent, "Active subscription entitlement allocated."
+        except Exception:
+            pass
+
+    return False, None, "No valid access entitlement found for this Home."

@@ -756,6 +756,23 @@ CREATE TABLE IF NOT EXISTS subscription_audit_logs (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS home_access_entitlements (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    home_id UUID NOT NULL REFERENCES homes(id) ON DELETE CASCADE,
+    user_id UUID NULL REFERENCES users(id) ON DELETE CASCADE,
+    subscription_id UUID NULL REFERENCES subscriptions(id) ON DELETE SET NULL,
+    reserved_identifier_type VARCHAR(16) NULL, -- PHONE, EMAIL
+    reserved_identifier_value VARCHAR(255) NULL, -- Normalized phone or lowercase email
+    entitlement_type VARCHAR(32) NOT NULL DEFAULT 'FIRST_YEAR_FREE', -- FIRST_YEAR_FREE, PAID_SEAT, RESERVATION, DIRECT_USER_SUBSCRIPTION, ADMIN_GRANT
+    status VARCHAR(32) NOT NULL DEFAULT 'ACTIVE', -- PENDING, RESERVED, ACTIVE, EXPIRING, EXPIRED, CANCELLED
+    starts_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    notes TEXT NULL,
+    created_by UUID NULL REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Multi-Tenant & Pricing Compound Indexes
 CREATE INDEX IF NOT EXISTS idx_inv_items_home_search ON inventory_items(home_id, name);
 CREATE INDEX IF NOT EXISTS idx_shopping_items_search ON shopping_list_items(home_id, name);
@@ -774,3 +791,6 @@ CREATE INDEX IF NOT EXISTS idx_subscriptions_user_status ON subscriptions(user_i
 CREATE INDEX IF NOT EXISTS idx_pay_trans_user_status ON payment_transactions(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_pay_trans_created ON payment_transactions(created_at);
 CREATE INDEX IF NOT EXISTS idx_sub_audit_entity ON subscription_audit_logs(entity_type, entity_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_entitlement_home_user ON home_access_entitlements(home_id, user_id, status);
+CREATE INDEX IF NOT EXISTS idx_entitlement_reservation ON home_access_entitlements(reserved_identifier_value, status);
+CREATE INDEX IF NOT EXISTS idx_entitlement_expiry ON home_access_entitlements(expires_at, status);

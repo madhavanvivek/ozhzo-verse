@@ -47,7 +47,12 @@ def generate_invitation_code() -> str:
     return f"OZ-{random_part}"
 
 
-from src.domain.entitlements import check_and_reserve_home_member_seat
+from src.domain.entitlements import (
+    check_and_reserve_home_member_seat,
+    claim_reserved_entitlement,
+    provision_paid_home_entitlement,
+    reserve_home_access_entitlement
+)
 
 
 async def check_home_member_seat_limit(home_id: UUID, db: AsyncSession, include_pending: bool = False):
@@ -284,6 +289,21 @@ async def create_invitation(
         updated_at=now
     )
     db.add(new_invite)
+
+    # 1b. If invitation mode is with subscription, reserve entitlement seat
+    if payload.invitation_mode == "INVITE_WITH_SUBSCRIPTION":
+        target_type = "EMAIL" if normalized_email else "PHONE"
+        target_val = normalized_email or normalized_phone
+        if target_val:
+            await reserve_home_access_entitlement(
+                home_id=home_ctx.home_id,
+                admin_user_id=home_ctx.user.id,
+                identifier_type=target_type,
+                identifier_value=target_val,
+                subscription_id=None,
+                db=db,
+                notes=f"Reserved seat via invitation {invitation_code}"
+            )
 
     # 2. Fetch Home details
     try:
@@ -725,6 +745,12 @@ async def _execute_join_invitation(
             updated_at=now
         )
         db.add(new_membership)
+
+    # 7b. Claim or activate Access Entitlement for this joining user (Rule D & Rule E)
+    claimed_ent = await claim_reserved_entitlement(current_user, home.id, db)
+    if not claimed_ent and invitation.invitation_mode == "INVITE_WITH_SUBSCRIPTION":
+        sub_id = home.subscription.id if (hasattr(home, "subscription") and home.subscription) else None
+        await provision_paid_home_entitlement(current_user, home, sub_id, db)
 
     # 8. Mark invitation as ACCEPTED (single-use)
     invitation.status = "ACCEPTED"

@@ -348,3 +348,42 @@ class PaymentTransactionDTO(BaseModel):
     status: str
     created_at: datetime
 
+
+class HomeAccessEntitlementDTO(BaseModel):
+    id: UUID
+    home_id: UUID
+    user_id: Optional[UUID] = None
+    user_display_name: Optional[str] = None
+    user_email: Optional[str] = None
+    subscription_id: Optional[UUID] = None
+    reserved_identifier_type: Optional[str] = None
+    reserved_identifier_value: Optional[str] = None
+    entitlement_type: str
+    status: str
+    starts_at: datetime
+    expires_at: datetime
+    is_expired: bool
+    notes: Optional[str] = None
+    created_at: datetime
+
+
+class ReserveEntitlementRequest(BaseModel):
+    identifier_type: str = Field(default="EMAIL")  # PHONE or EMAIL
+    identifier_value: str
+    duration_days: int = Field(default=365, ge=1, le=3650)
+    notes: Optional[str] = None
+
+
+class UserHomeAccessEntitlementDTO(BaseModel):
+    home_id: UUID
+    home_name: str
+    role: str
+    entitlement_id: Optional[UUID] = None
+    entitlement_type: str
+    status: str
+    starts_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    is_expired: bool
+    days_remaining: int
+
+

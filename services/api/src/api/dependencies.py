@@ -9,6 +9,7 @@ import redis.asyncio as redis
 from src.core.security import decode_token
 from src.core.exceptions import PermissionDeniedException
 from src.domain.permissions import has_permission, has_platform_permission
+from src.domain.entitlements import verify_user_home_access_entitlement
 from src.infrastructure.database.session import get_db
 from src.infrastructure.database.models import HomeMemberModel, HomeModel, UserModel
 from src.infrastructure.cache.redis_client import get_redis_client
@@ -136,6 +137,14 @@ def require_home_permission(required_permission: str):
 
         if not has_permission(membership.role, required_permission):
             raise PermissionDeniedException(required_permission)
+
+        # Enforce server-side Home-Access Entitlement (Rule D & Rule E)
+        is_entitled, entitlement, reason = await verify_user_home_access_entitlement(current_user, home_id, db)
+        if not is_entitled:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=reason or "Your access entitlement to this Home has expired. A valid subscription is required to access this Home."
+            )
 
         return HomeContext(home_id=home_id, user=current_user, role=membership.role)
 

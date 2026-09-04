@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -408,6 +408,127 @@ async def get_home_dashboard(
 
     recent_activity.sort(key=lambda x: x.timestamp, reverse=True)
 
+    # 7. Live Household Module Previews
+    pending_tasks: List[DashboardTaskItemDTO] = []
+    tsks_res = await _safe_execute(
+        select(TaskModel).where(
+            TaskModel.home_id == eff_home_id,
+            TaskModel.deleted_at.is_(None),
+            TaskModel.status.in_(["TODO", "IN_PROGRESS"])
+        ).order_by(TaskModel.due_date.asc().nullslast(), TaskModel.created_at.desc()).limit(5)
+    )
+    for t in (tsks_res.scalars().all() if tsks_res else []):
+        pending_tasks.append(
+            DashboardTaskItemDTO(
+                id=t.id,
+                title=t.title,
+                priority=t.priority or "NORMAL",
+                status=t.status or "TODO",
+                due_date=t.due_date,
+                assigned_to_id=t.assigned_to,
+                assigned_to_name=None
+            )
+        )
+
+    upcoming_bills: List[DashboardBillItemDTO] = []
+    if role not in ("CHILD", "GUEST"):
+        bills_res = await _safe_execute(
+            select(BillModel).where(
+                BillModel.home_id == eff_home_id,
+                BillModel.deleted_at.is_(None),
+                BillModel.status.in_(["UNPAID", "PARTIALLY_PAID"])
+            ).order_by(BillModel.due_date.asc()).limit(5)
+        )
+        for b in (bills_res.scalars().all() if bills_res else []):
+            upcoming_bills.append(
+                DashboardBillItemDTO(
+                    id=b.id,
+                    title=b.title,
+                    amount=b.expected_amount,
+                    currency=b.currency,
+                    due_date=b.due_date,
+                    status=b.status
+                )
+            )
+
+    upcoming_events: List[DashboardEventItemDTO] = []
+    evts_res = await _safe_execute(
+        select(EventModel).where(
+            EventModel.home_id == eff_home_id,
+            EventModel.deleted_at.is_(None),
+            EventModel.start_time >= now - timedelta(hours=2)
+        ).order_by(EventModel.start_time.asc()).limit(5)
+    )
+    for e in (evts_res.scalars().all() if evts_res else []):
+        upcoming_events.append(
+            DashboardEventItemDTO(
+                id=e.id,
+                title=e.title,
+                start_time=e.start_time,
+                end_time=e.end_time,
+                is_all_day=e.is_all_day,
+                location=e.location
+            )
+        )
+
+    low_stock_inventory: List[DashboardInventoryItemDTO] = []
+    inv_res = await _safe_execute(
+        select(InventoryItemModel).where(
+            InventoryItemModel.home_id == eff_home_id,
+            InventoryItemModel.deleted_at.is_(None),
+            InventoryItemModel.item_type == "CONSUMABLE",
+            InventoryItemModel.quantity <= InventoryItemModel.min_threshold
+        ).order_by(InventoryItemModel.quantity.asc()).limit(5)
+    )
+    for i in (inv_res.scalars().all() if inv_res else []):
+        low_stock_inventory.append(
+            DashboardInventoryItemDTO(
+                id=i.id,
+                name=i.name,
+                quantity=i.quantity,
+                unit=i.unit or "pcs",
+                status=i.status or "LOW_STOCK",
+                min_threshold=i.min_threshold
+            )
+        )
+
+    shopping_items: List[DashboardShoppingItemDTO] = []
+    purch_res = await _safe_execute(
+        select(PurchaseItemModel).where(
+            PurchaseItemModel.home_id == eff_home_id,
+            PurchaseItemModel.deleted_at.is_(None),
+            PurchaseItemModel.status == "PENDING"
+        ).order_by(PurchaseItemModel.created_at.desc()).limit(5)
+    )
+    for p in (purch_res.scalars().all() if purch_res else []):
+        shopping_items.append(
+            DashboardShoppingItemDTO(
+                id=p.id,
+                name=p.name,
+                quantity=p.quantity,
+                unit=p.unit or "pcs",
+                is_checked=False
+            )
+        )
+
+    notifications: List[DashboardNotificationItemDTO] = []
+    notif_res = await _safe_execute(
+        select(NotificationModel).where(
+            NotificationModel.user_id == user.id,
+            or_(NotificationModel.home_id == eff_home_id, NotificationModel.home_id.is_(None))
+        ).order_by(NotificationModel.created_at.desc()).limit(5)
+    )
+    for n in (notif_res.scalars().all() if notif_res else []):
+        notifications.append(
+            DashboardNotificationItemDTO(
+                id=n.id,
+                title=n.title,
+                body=n.body,
+                type=n.type,
+                created_at=n.created_at
+            )
+        )
+
     return ApiSuccessResponse(
         data=DashboardResponseDTO(
             greeting=greeting_dto,
@@ -416,12 +537,26 @@ async def get_home_dashboard(
             attention_items=attention_items,
             today_timeline=today_timeline,
             recent_activity=recent_activity[:5],
-            pending_tasks=[],
-            upcoming_bills=[],
-            upcoming_events=[],
-            low_stock_inventory=[],
-            shopping_items=[],
-            notifications=[],
+            pending_tasks=pending_tasks,
+            upcoming_bills=upcoming_bills,
+            upcoming_events=upcoming_events,
+            low_stock_inventory=low_stock_inventory,
+            shopping_items=shopping_items,
+            notifications=notifications,
             role=role
         )
     )
+
+
+@router.get("/summary", response_model=ApiSuccessResponse[DashboardSummaryDTO])
+async def get_home_dashboard_summary(
+    home_id: Optional[UUID] = None,
+    home_ctx: HomeContext = Depends(require_home_permission("dashboard:view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Ultra-lightweight aggregated summary endpoint for rapid workspace headers.
+    """
+    dash_res = await get_home_dashboard(home_id=home_id, home_ctx=home_ctx, db=db)
+    return ApiSuccessResponse(data=dash_res.data.summary)
+

@@ -50,20 +50,28 @@ async def send_bill_due_notification(
     due_date: date,
     db: AsyncSession
 ) -> None:
-    from src.infrastructure.database.models import NotificationModel, HomeMemberModel
+    from src.infrastructure.database.models import HomeMemberModel
+    from src.services.notification_service import notification_service
     members_res = await db.execute(
-        select(HomeMemberModel.user_id).where(HomeMemberModel.home_id == home_id)
+        select(HomeMemberModel.user_id).where(HomeMemberModel.home_id == home_id, HomeMemberModel.status == "ACTIVE")
     )
     user_ids = members_res.scalars().all()
     for uid in user_ids:
-        notif = NotificationModel(
+        await notification_service.dispatch_notification(
+            db=db,
             user_id=uid,
             home_id=home_id,
             title="Bill Due",
             body=f"{bill_title} of {currency} {amount} is due on {due_date}.",
-            notification_type="BILL_DUE"
+            notification_type="BILL_DUE",
+            priority="HIGH" if due_date <= date.today() else "NORMAL",
+            requires_action=True,
+            action_type="RECORD_PAYMENT",
+            action_url=f"/bills",
+            action_label="Record Payment",
+            dedup_key=f"bill_due_{home_id}_{bill_title}_{due_date}_{uid}"
         )
-        db.add(notif)
+
 
 
 def calculate_next_bill_due_date(
@@ -961,6 +969,10 @@ async def record_bill_payment(
     target_amount = bill.expected_amount or Decimal("0.00")
     if bill.amount_paid >= target_amount:
         bill.status = "PAID"
+        # Auto-resolve bill due notifications
+        from src.services.notification_service import notification_service
+        await notification_service.resolve_by_dedup_prefix(db, f"bill_due_{bill.home_id}_{bill.title}")
+
         # 3. If Recurring, atomically schedule the next cycle occurrence without duplicates
         if bill.recurrence_type != "NONE":
             next_due = calculate_next_bill_due_date(

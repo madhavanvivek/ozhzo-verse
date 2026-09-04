@@ -142,13 +142,34 @@ export interface SubscriptionPrice {
   id: string;
   plan_id: string;
   country: string;
+  country_name?: string;
+  country_iso3?: string;
   region: string;
   currency: string;
+  currency_symbol?: string;
   billing_period: string;
+  
+  // Commercial Pricing
+  regular_price?: string | number;
   list_price: string | number;
   additional_member_list_price: string | number;
-  base_price: string | number;
-  additional_member_price: string | number;
+  
+  // Campaign & Offer Metadata
+  offer_price?: string | number | null;
+  campaign_name?: string | null;
+  campaign_description?: string | null;
+  offer_status?: string; // DRAFT, SCHEDULED, ACTIVE, EXPIRED, CANCELLED
+  offer_start_date?: string | null;
+  offer_end_date?: string | null;
+  calculated_discount_percentage?: string | number | null;
+  current_selling_price?: string | number;
+  
+  // Tax & Policy
+  tax_percentage?: string | number;
+  allow_coupon_stacking?: boolean;
+  
+  base_price?: string | number;
+  additional_member_price?: string | number;
   version: number;
   is_active: boolean;
   effective_from: string;

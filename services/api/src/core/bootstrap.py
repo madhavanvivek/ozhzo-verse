@@ -1,4 +1,6 @@
 import logging
+import secrets
+import os
 from unittest.mock import MagicMock
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
@@ -55,7 +57,7 @@ async def seed_demo_super_admin(db: AsyncSession) -> UserModel | None:
                 pass
 
         if not matching_users:
-            default_pwd = (initial_password or "Caseno@123").strip()
+            default_pwd = (initial_password or settings.DEMO_SUPER_ADMIN_PASSWORD or secrets.token_urlsafe(16)).strip()
             user = UserModel(
                 email=email,
                 password_hash=hash_password(default_pwd),
@@ -70,7 +72,7 @@ async def seed_demo_super_admin(db: AsyncSession) -> UserModel | None:
 
             profile = UserProfileModel(
                 user_id=user.id,
-                display_name="Vivek",
+                display_name="Super Admin",
                 timezone="UTC",
                 preferred_language="en"
             )
@@ -94,9 +96,9 @@ async def seed_demo_super_admin(db: AsyncSession) -> UserModel | None:
                 logger.info("Deduplicated %d extra records for %s", len(matching_users) - 1, email)
 
             # Synchronize password hash
-            target_pwd = (initial_password or "").strip()
+            target_pwd = (initial_password or settings.DEMO_SUPER_ADMIN_PASSWORD or "").strip()
             if not user.password_hash:
-                user.password_hash = hash_password(target_pwd or "Caseno@123")
+                user.password_hash = hash_password(target_pwd or secrets.token_urlsafe(16))
                 logger.info("Synchronized authoritative password hash for Super Admin: %s", email)
             elif target_pwd and settings.FORCE_SUPER_ADMIN_PASSWORD_RESET and not verify_password(target_pwd, user.password_hash):
                 user.password_hash = hash_password(target_pwd)

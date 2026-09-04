@@ -143,7 +143,15 @@ export default function BillsPage() {
 
   useEffect(() => {
     loadData();
+
+    const handleHomeChanged = () => {
+      loadData();
+    };
+
+    window.addEventListener('home-changed', handleHomeChanged);
+    return () => window.removeEventListener('home-changed', handleHomeChanged);
   }, []);
+
 
   const commonTemplates = [
     { title: 'Electricity Bill', cat: 'Utilities', amount: 2000, rec: 'MONTHLY' },

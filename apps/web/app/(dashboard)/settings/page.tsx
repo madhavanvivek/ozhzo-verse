@@ -40,6 +40,7 @@ interface HomeDetailDTO {
   currency: string;
   timezone: string;
   address?: string | null;
+  join_policy?: string;
   role: string;
   member_count: number;
 }
@@ -81,6 +82,7 @@ export default function HomeSettingsPage() {
   const [currency, setCurrency] = useState('USD');
   const [timezone, setTimezone] = useState('UTC');
   const [address, setAddress] = useState('');
+  const [joinPolicy, setJoinPolicy] = useState('REQUEST_TO_JOIN');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
@@ -119,6 +121,7 @@ export default function HomeSettingsPage() {
           setCurrency(data.currency || 'USD');
           setTimezone(data.timezone || 'UTC');
           setAddress(data.address || '');
+          setJoinPolicy(data.join_policy || 'REQUEST_TO_JOIN');
         }
 
         const role = (data?.role || '').toUpperCase();
@@ -163,7 +166,8 @@ export default function HomeSettingsPage() {
         name: homeName.trim(),
         currency,
         timezone,
-        address: address.trim() || undefined
+        address: address.trim() || undefined,
+        join_policy: joinPolicy
       });
 
       setHomeDetail((prev) => (prev ? { ...prev, ...updated } : updated));
@@ -689,6 +693,31 @@ export default function HomeSettingsPage() {
             </div>
           </div>
 
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <label htmlFor="joinPolicy" style={{ fontSize: '13px', fontWeight: 600 }}>
+              Join Policy & Discovery Mode
+            </label>
+            <select
+              id="joinPolicy"
+              value={joinPolicy}
+              onChange={(e) => setJoinPolicy(e.target.value)}
+              disabled={!isOwnerOrAdmin}
+              style={{
+                height: '42px',
+                padding: '0 12px',
+                borderRadius: 'var(--radius-md)',
+                border: '1px solid var(--color-border-strong)',
+                backgroundColor: 'var(--color-surface-card)',
+                color: 'var(--color-text-primary)',
+                fontSize: '14px'
+              }}
+            >
+              <option value="REQUEST_TO_JOIN">Request to Join (Admin Approval Required)</option>
+              <option value="INVITE_ONLY">Invite Only (QR Direct Join Requests Blocked)</option>
+              <option value="PUBLIC_JOIN">Public Join (Open Membership)</option>
+            </select>
+          </div>
+
           <Input
             id="address"
             label="Address / Location (Optional)"
@@ -746,6 +775,83 @@ export default function HomeSettingsPage() {
           </Link>
         </div>
       </Card>
+
+      {/* 7. Privacy, Data Governance & Export */}
+      <Card style={{ padding: 'var(--space-5)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ width: '40px', height: '40px', borderRadius: 'var(--radius-md)', backgroundColor: 'rgba(16, 185, 129, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--status-in-stock)' }}>
+              <ShieldCheck size={22} />
+            </div>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <h2 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--color-primary-900)', margin: 0 }}>
+                  Privacy & Data Governance
+                </h2>
+                <Badge variant="in-stock">GDPR Article 20</Badge>
+              </div>
+              <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginTop: '2px', margin: 0 }}>
+                Transparent data management, retention policies, and structured archive export.
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={async () => {
+              if (!activeHomeId) return;
+              try {
+                const res = await apiClient.get<any>(`/homes/${activeHomeId}/privacy/export`);
+                const blob = new Blob([JSON.stringify(res, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `ozhzo-household-export-${activeHomeId}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+              } catch (err: any) {
+                alert('Export failed: ' + (err.message || 'Unable to download export'));
+              }
+            }}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '8px 14px',
+              borderRadius: 'var(--radius-md)',
+              border: '1px solid var(--color-border)',
+              backgroundColor: 'var(--color-surface-card)',
+              color: 'var(--color-text-primary)',
+              fontSize: '13px',
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+          >
+            <Download size={14} />
+            <span>Export Household Data (JSON)</span>
+          </button>
+        </div>
+
+        <div style={{ backgroundColor: 'var(--color-surface-subtle)', borderRadius: 'var(--radius-md)', padding: '14px', marginTop: '10px' }}>
+          <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--color-primary-900)', textTransform: 'uppercase', marginBottom: '8px' }}>
+            Active Retention Policies
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '10px', fontSize: '12px' }}>
+            <div style={{ padding: '8px', backgroundColor: 'var(--color-surface-card)', borderRadius: '6px', border: '1px solid var(--color-border-subtle)' }}>
+              <strong>Notifications:</strong> Purged 60 days after read
+            </div>
+            <div style={{ padding: '8px', backgroundColor: 'var(--color-surface-card)', borderRadius: '6px', border: '1px solid var(--color-border-subtle)' }}>
+              <strong>AI Conversations:</strong> Expired after 30 days
+            </div>
+            <div style={{ padding: '8px', backgroundColor: 'var(--color-surface-card)', borderRadius: '6px', border: '1px solid var(--color-border-subtle)' }}>
+              <strong>Automation Logs:</strong> Kept for 90-day history
+            </div>
+            <div style={{ padding: '8px', backgroundColor: 'var(--color-surface-card)', borderRadius: '6px', border: '1px solid var(--color-border-subtle)' }}>
+              <strong>Statutory Audit:</strong> Anonymized on user erasure
+            </div>
+          </div>
+        </div>
+      </Card>
+
 
       {/* 7. Danger Zone: Delete Workspace */}
       {isOwnerOrAdmin && (

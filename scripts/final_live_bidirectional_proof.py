@@ -1,3 +1,4 @@
+import os
 import urllib.request
 import urllib.error
 import json
@@ -54,10 +55,11 @@ ts = int(time.time())
 # ==============================================================================
 # A. Authenticate Real Super Admin Account: vivek@zinfog.com
 # ==============================================================================
-super_admin_email = "vivek@zinfog.com"
+super_admin_email = os.getenv("SUPER_ADMIN_EMAIL", "admin@example.com")
+super_admin_pwd = os.getenv("SUPER_ADMIN_PASSWORD", "")
 sa_st, sa_data, sa_err = api("POST", "/auth/login", {
     "email": super_admin_email,
-    "password": "Caseno@123"
+    "password": super_admin_pwd
 })
 admin_token = sa_data.get("data", {}).get("access_token") if sa_data else None
 admin_user_id = sa_data.get("data", {}).get("user_id") if sa_data else None
@@ -111,7 +113,7 @@ record(
 # ==============================================================================
 temp_user_email = f"audit_user_{ts}@ozhzo.com"
 temp_phone = f"+1555{str(ts)[-4:]}"
-temp_pwd = "Password123!"
+temp_pwd = os.getenv("TEST_USER_PASSWORD", f"Pass_{ts}!Aa1")
 
 reg_st, reg_data, _ = api("POST", "/auth/register", {
     "email": temp_user_email,
@@ -223,8 +225,8 @@ record(
 # ==============================================================================
 u1_email = f"bulk1_{ts}@ozhzo.com"
 u2_email = f"bulk2_{ts}@ozhzo.com"
-_, u1_reg, _ = api("POST", "/auth/register", {"email": u1_email, "phone_number": f"+1555{str(ts+1)[-4:]}", "password": "Password123!", "full_name": "Bulk User 1"})
-_, u2_reg, _ = api("POST", "/auth/register", {"email": u2_email, "phone_number": f"+1555{str(ts+2)[-4:]}", "password": "Password123!", "full_name": "Bulk User 2"})
+_, u1_reg, _ = api("POST", "/auth/register", {"email": u1_email, "phone_number": f"+1555{str(ts+1)[-4:]}", "password": temp_pwd, "full_name": "Bulk User 1"})
+_, u2_reg, _ = api("POST", "/auth/register", {"email": u2_email, "phone_number": f"+1555{str(ts+2)[-4:]}", "password": temp_pwd, "full_name": "Bulk User 2"})
 u1_id = u1_reg.get("data", {}).get("user_id") if u1_reg else None
 u2_id = u2_reg.get("data", {}).get("user_id") if u2_reg else None
 
@@ -234,8 +236,8 @@ bulk_susp_st, _, _ = api("POST", "/admin/users/bulk-action", {
     "reason": "Bulk security test"
 }, token=admin_token)
 
-u1_chk_st, _, _ = api("POST", "/auth/login", {"email": u1_email, "password": "Password123!"})
-u2_chk_st, _, _ = api("POST", "/auth/login", {"email": u2_email, "password": "Password123!"})
+u1_chk_st, _, _ = api("POST", "/auth/login", {"email": u1_email, "password": temp_pwd})
+u2_chk_st, _, _ = api("POST", "/auth/login", {"email": u2_email, "password": temp_pwd})
 
 bulk_react_st, _, _ = api("POST", "/admin/users/bulk-action", {
     "user_ids": [u1_id, u2_id],
@@ -243,8 +245,8 @@ bulk_react_st, _, _ = api("POST", "/admin/users/bulk-action", {
     "reason": "Bulk reactivation test"
 }, token=admin_token)
 
-u1_react_st, _, _ = api("POST", "/auth/login", {"email": u1_email, "password": "Password123!"})
-u2_react_st, _, _ = api("POST", "/auth/login", {"email": u2_email, "password": "Password123!"})
+u1_react_st, _, _ = api("POST", "/auth/login", {"email": u1_email, "password": temp_pwd})
+u2_react_st, _, _ = api("POST", "/auth/login", {"email": u2_email, "password": temp_pwd})
 
 record(
     "G. Bulk User Actions (Bulk Suspend & Activate)",

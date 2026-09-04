@@ -122,7 +122,12 @@ class UpdateCouponRequest(BaseModel):
     discount_value: Optional[Decimal] = None
     free_period_value: Optional[int] = None
     free_period_unit: Optional[str] = None
+    eligibility_type: Optional[str] = None
+    country: Optional[str] = None
+    state: Optional[str] = None
+    applicable_plan_id: Optional[UUID] = None
     status: Optional[str] = None
+    start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
     maximum_total_redemptions: Optional[int] = None
     maximum_redemptions_per_user: Optional[int] = None

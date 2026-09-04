@@ -89,12 +89,7 @@ test.describe('Ozhzo Verse — Home Admin, Invitations & UI End-to-End Tests', (
     });
 
     // Default single home endpoint
-    await page.route(`**/api/v1/homes/${homeId}*`, async (route) => {
-      const url = route.request().url();
-      if (url.includes('/members') || url.includes('/invitations') || url.includes('/identity') || url.includes('/join-requests')) {
-        await route.continue();
-        return;
-      }
+    await page.route(`**/api/v1/homes/${homeId}`, async (route) => {
       if (route.request().method() === 'GET') {
         await route.fulfill({
           status: 200,
@@ -276,15 +271,79 @@ test.describe('Ozhzo Verse — Home Admin, Invitations & UI End-to-End Tests', (
       });
     });
 
+    await page.route('**/api/v1/homes**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: [] })
+      });
+    });
+
+    await page.route('**/api/v1/admin/system/config**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: {
+            environment: 'production',
+            supported_currencies: ['INR', 'USD'],
+            default_timezone: 'UTC',
+            rate_limiting_enabled: true,
+            feature_flags: {}
+          }
+        })
+      });
+    });
+
+    await page.route('**/api/v1/admin/system/analytics-summary**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          success: true,
+          data: {
+            total_users: 10,
+            active_users: 8,
+            suspended_users: 2,
+            total_homes: 5,
+            active_homes: 5,
+            suspended_homes: 0,
+            average_members_per_home: 2.4,
+            total_active_subscriptions: 4,
+            total_paid_member_seats: 8
+          }
+        })
+      });
+    });
+
+    await page.route('**/api/v1/admin/analytics/countries**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: [] })
+      });
+    });
+
+    await page.route('**/api/v1/admin/analytics/retention**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: null })
+      });
+    });
+
     await page.goto('/admin/login');
     await expect(page.locator('h1')).toContainText('Platform Administration');
 
-    await page.fill('#admin-login-email', 'vivek@zinfog.com');
-    await page.fill('#admin-login-password', 'Caseno@123');
+    const testAdminEmail = process.env.ADMIN_EMAIL || 'admin@example.com';
+    const testAdminPassword = process.env.ADMIN_PASSWORD || 'TestAdminPassword123!';
+    await page.fill('#admin-login-email', testAdminEmail);
+    await page.fill('#admin-login-password', testAdminPassword);
     await page.click('#admin-submit-btn');
 
     await page.waitForURL('**/admin', { timeout: 15000 });
-    await expect(page.getByText('Platform Administration Console').or(page.getByText('Platform Overview'))).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('Platform Overview & Operational Control Center').or(page.getByText('Platform Overview'))).toBeVisible({ timeout: 10000 });
   });
 
   test('2. Home Admin Edit Home Settings Flow (/settings)', async ({ page, context }) => {

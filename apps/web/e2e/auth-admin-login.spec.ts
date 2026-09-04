@@ -165,8 +165,8 @@ test.describe('Ozhzo Verse Authentication and Super Admin Access Flow', () => {
       });
     });
 
-    // Intercept admin analytics to allow /admin dashboard rendering
-    await page.route('**/api/v1/admin/system/analytics/summary', async (route) => {
+    // Intercept admin system endpoints to allow /admin dashboard rendering
+    await page.route('**/api/v1/admin/system/**', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',

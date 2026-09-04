@@ -8,10 +8,15 @@ import {
   Gift,
   Award,
   CheckCircle,
-  X
+  Edit2,
+  Search,
+  Eye,
+  Archive,
+  Power
 } from 'lucide-react';
 import { apiClient } from '@/lib/apiClient';
 import { AdminBadge } from '../components/AdminBadge';
+import { Modal } from '@/components/ui/Modal';
 import { Coupon, Campaign, SubscriptionGrant, CouponAnalytics } from '../types';
 
 export default function AdminCouponsPage() {
@@ -26,7 +31,11 @@ export default function AdminCouponsPage() {
   // Active Tab
   const [activeTab, setActiveTab] = useState<'coupons' | 'campaigns' | 'grants'>('coupons');
 
-  // Coupon Modal State
+  // Filter & Search State
+  const [couponSearch, setCouponSearch] = useState('');
+  const [couponStatusFilter, setCouponStatusFilter] = useState('ALL');
+
+  // Create Coupon Modal State
   const [isCouponModalOpen, setIsCouponModalOpen] = useState(false);
   const [isSubmittingCoupon, setIsSubmittingCoupon] = useState(false);
   const [couponModalError, setCouponModalError] = useState<string | null>(null);
@@ -34,8 +43,8 @@ export default function AdminCouponsPage() {
     name: '',
     code: '',
     description: '',
-    coupon_type: 'FREE_PERIOD',
-    discount_value: '0.00',
+    coupon_type: 'PERCENTAGE_DISCOUNT',
+    discount_value: '50.00',
     free_period_value: 6,
     free_period_unit: 'MONTHS',
     eligibility_type: 'ANY_USER',
@@ -46,6 +55,34 @@ export default function AdminCouponsPage() {
     country: '',
     state: ''
   });
+
+  // Edit Coupon Modal State
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
+  const [editModalError, setEditModalError] = useState<string | null>(null);
+  const [selectedCoupon, setSelectedCoupon] = useState<Coupon | null>(null);
+  const [editForm, setEditForm] = useState({
+    name: '',
+    description: '',
+    coupon_type: 'PERCENTAGE_DISCOUNT',
+    discount_value: '0.00',
+    free_period_value: 0,
+    free_period_unit: 'MONTHS',
+    eligibility_type: 'ANY_USER',
+    country: '',
+    state: '',
+    status: 'ACTIVE',
+    end_date: '',
+    maximum_total_redemptions: '',
+    maximum_redemptions_per_user: 1,
+    internal_reason: ''
+  });
+
+  // Redemptions History Modal
+  const [isRedemptionsModalOpen, setIsRedemptionsModalOpen] = useState(false);
+  const [redemptionsList, setRedemptionsList] = useState<any[]>([]);
+  const [isLoadingRedemptions, setIsLoadingRedemptions] = useState(false);
+  const [viewingCouponCode, setViewingCouponCode] = useState('');
 
   // Grant Modal State
   const [isGrantModalOpen, setIsGrantModalOpen] = useState(false);
@@ -119,6 +156,104 @@ export default function AdminCouponsPage() {
     }
   };
 
+  const openEditModal = (coupon: Coupon) => {
+    setSelectedCoupon(coupon);
+    setEditForm({
+      name: coupon.name,
+      description: coupon.description || '',
+      coupon_type: coupon.coupon_type,
+      discount_value: String(coupon.discount_value || '0.00'),
+      free_period_value: coupon.free_period_value || 0,
+      free_period_unit: coupon.free_period_unit || 'MONTHS',
+      eligibility_type: coupon.eligibility_type || 'ANY_USER',
+      country: coupon.country || '',
+      state: coupon.state || '',
+      status: coupon.status || 'ACTIVE',
+      end_date: coupon.end_date ? coupon.end_date.split('T')[0] : '',
+      maximum_total_redemptions: coupon.maximum_total_redemptions ? String(coupon.maximum_total_redemptions) : '',
+      maximum_redemptions_per_user: coupon.maximum_redemptions_per_user || 1,
+      internal_reason: coupon.internal_reason || ''
+    });
+    setEditModalError(null);
+    setIsEditModalOpen(true);
+  };
+
+  const handleUpdateCoupon = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedCoupon) return;
+    setIsSubmittingEdit(true);
+    setEditModalError(null);
+    try {
+      await apiClient.patch(`/admin/coupons/${selectedCoupon.id}`, {
+        name: editForm.name.trim(),
+        description: editForm.description.trim() || undefined,
+        coupon_type: editForm.coupon_type,
+        discount_value: parseFloat(editForm.discount_value) || 0,
+        free_period_value: Number(editForm.free_period_value) || 0,
+        free_period_unit: editForm.free_period_unit,
+        eligibility_type: editForm.eligibility_type,
+        country: editForm.country.trim() ? editForm.country.toUpperCase().trim() : undefined,
+        state: editForm.state.trim() || undefined,
+        status: editForm.status,
+        end_date: editForm.end_date ? new Date(editForm.end_date).toISOString() : undefined,
+        maximum_total_redemptions: editForm.maximum_total_redemptions
+          ? parseInt(editForm.maximum_total_redemptions)
+          : undefined,
+        maximum_redemptions_per_user: Number(editForm.maximum_redemptions_per_user) || 1,
+        internal_reason: editForm.internal_reason.trim() || undefined
+      });
+      setIsEditModalOpen(false);
+      setSuccessMessage(`Coupon "${selectedCoupon.code}" updated successfully.`);
+      fetchData();
+    } catch (err: any) {
+      setEditModalError(err?.message || 'Failed to update coupon.');
+    } finally {
+      setIsSubmittingEdit(false);
+    }
+  };
+
+  const handleToggleCouponStatus = async (coupon: Coupon) => {
+    const newStatus = coupon.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
+    try {
+      await apiClient.patch(`/admin/coupons/${coupon.id}`, {
+        status: newStatus,
+        internal_reason: `Super Admin toggled status to ${newStatus}`
+      });
+      setSuccessMessage(`Coupon "${coupon.code}" status changed to ${newStatus}.`);
+      fetchData();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to update coupon status.');
+    }
+  };
+
+  const handleArchiveCoupon = async (coupon: Coupon) => {
+    if (!confirm(`Are you sure you want to archive coupon "${coupon.code}"? It will no longer be redeemable.`)) return;
+    try {
+      await apiClient.patch(`/admin/coupons/${coupon.id}`, {
+        status: 'ARCHIVED',
+        internal_reason: 'Super Admin archived coupon'
+      });
+      setSuccessMessage(`Coupon "${coupon.code}" archived successfully.`);
+      fetchData();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to archive coupon.');
+    }
+  };
+
+  const openRedemptionsModal = async (coupon: Coupon) => {
+    setViewingCouponCode(coupon.code);
+    setIsRedemptionsModalOpen(true);
+    setIsLoadingRedemptions(true);
+    try {
+      const res = await apiClient.get<any[]>(`/admin/coupons/${coupon.id}/redemptions`);
+      setRedemptionsList(res || []);
+    } catch {
+      setRedemptionsList([]);
+    } finally {
+      setIsLoadingRedemptions(false);
+    }
+  };
+
   const handleCreateGrant = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmittingGrant(true);
@@ -155,6 +290,14 @@ export default function AdminCouponsPage() {
     }
   };
 
+  const filteredCoupons = coupons.filter((c) => {
+    const matchesSearch =
+      c.code.toLowerCase().includes(couponSearch.toLowerCase()) ||
+      c.name.toLowerCase().includes(couponSearch.toLowerCase());
+    const matchesStatus = couponStatusFilter === 'ALL' || c.status === couponStatusFilter;
+    return matchesSearch && matchesStatus;
+  });
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
       {/* Header */}
@@ -185,7 +328,7 @@ export default function AdminCouponsPage() {
               marginTop: '4px'
             }}
           >
-            Issue free period codes, manage regional campaign allocations, and grant direct workspace entitlements.
+            Create, edit, activate/deactivate commercial discount vouchers, campaign allocations, and direct household entitlements.
           </p>
         </div>
 
@@ -195,6 +338,7 @@ export default function AdminCouponsPage() {
               setCouponModalError(null);
               setIsCouponModalOpen(true);
             }}
+            data-testid="create-coupon-btn"
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -410,41 +554,74 @@ export default function AdminCouponsPage() {
             borderRadius: 'var(--radius-lg, 16px)',
             border: '1px solid var(--color-border-subtle, #e2e8f0)',
             padding: '24px',
-            boxShadow: 'var(--shadow-subtle)'
+            boxShadow: 'var(--shadow-subtle)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '16px'
           }}
         >
-          {coupons.length === 0 ? (
+          {/* Search & Status Filter Bar */}
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: '240px', backgroundColor: '#f8fafc', padding: '8px 14px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+              <Search size={16} color="#64748b" />
+              <input
+                type="text"
+                placeholder="Search coupons by code or name..."
+                value={couponSearch}
+                onChange={(e) => setCouponSearch(e.target.value)}
+                style={{ border: 'none', background: 'transparent', outline: 'none', width: '100%', fontSize: '13px' }}
+              />
+            </div>
+
+            <select
+              value={couponStatusFilter}
+              onChange={(e) => setCouponStatusFilter(e.target.value)}
+              style={{ padding: '8px 14px', borderRadius: '10px', border: '1px solid #e2e8f0', backgroundColor: '#ffffff', fontSize: '13px', fontWeight: 600 }}
+            >
+              <option value="ALL">All Statuses</option>
+              <option value="ACTIVE">Active</option>
+              <option value="INACTIVE">Inactive</option>
+              <option value="EXPIRED">Expired</option>
+              <option value="ARCHIVED">Archived</option>
+            </select>
+          </div>
+
+          {filteredCoupons.length === 0 ? (
             <div style={{ padding: '32px', textAlign: 'center', color: 'var(--color-text-secondary, #64748b)', fontSize: '14px' }}>
-              No coupons created. Click "+ Create Coupon" to generate a free trial code.
+              No coupons found matching your query. Click "+ Create Coupon" to generate a voucher.
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '14px' }}>
-              {coupons.map((c) => (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '14px' }}>
+              {filteredCoupons.map((c) => (
                 <div
                   key={c.id}
+                  data-testid={`coupon-card-${c.id}`}
                   style={{
                     padding: '18px',
-                    borderRadius: 'var(--radius-md, 10px)',
-                    border: '1px solid var(--color-border-subtle, #e2e8f0)',
-                    backgroundColor: 'var(--color-surface-subtle, #f1f5f9)',
+                    borderRadius: 'var(--radius-md, 12px)',
+                    border: '1px solid var(--color-border-subtle, #cbd5e1)',
+                    backgroundColor: '#ffffff',
+                    boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.05)',
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: '10px'
+                    gap: '12px'
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <div>
-                      <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--color-text-primary, #0f172a)' }}>
+                      <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--color-text-primary, #0f172a)' }}>
                         {c.code}
                       </div>
-                      <div style={{ fontSize: '12px', color: 'var(--color-text-secondary, #64748b)' }}>
+                      <div style={{ fontSize: '13px', color: 'var(--color-text-secondary, #64748b)', marginTop: '2px' }}>
                         {c.name}
                       </div>
                     </div>
-                    <AdminBadge variant={c.status === 'ACTIVE' ? 'success' : 'neutral'}>{c.status}</AdminBadge>
+                    <AdminBadge variant={c.status === 'ACTIVE' ? 'success' : c.status === 'ARCHIVED' ? 'neutral' : 'warning'}>
+                      {c.status}
+                    </AdminBadge>
                   </div>
 
-                  <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-accent-amber, #f59e0b)' }}>
+                  <div style={{ fontSize: '16px', fontWeight: 800, color: '#2563eb' }} data-testid={`coupon-discount-${c.id}`}>
                     {c.coupon_type === 'FREE_PERIOD'
                       ? `🎁 ${c.free_period_value} ${c.free_period_unit} 100% Free`
                       : c.coupon_type === 'PERCENTAGE_DISCOUNT'
@@ -452,16 +629,96 @@ export default function AdminCouponsPage() {
                       : `$${c.discount_value} Off`}
                   </div>
 
-                  <div style={{ fontSize: '12px', color: 'var(--color-text-secondary, #64748b)' }}>
-                    Eligibility: <strong>{c.eligibility_type}</strong>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', fontSize: '12px', color: 'var(--color-text-secondary, #64748b)' }}>
+                    <div>Country: <strong>{c.country || 'Global (All)'}</strong></div>
+                    <div>Usage: <strong>{c.redemptions_count}</strong> {c.maximum_total_redemptions ? `/ ${c.maximum_total_redemptions}` : '(Unlimited)'}</div>
+                    <div>Per User: <strong>{c.maximum_redemptions_per_user || 1}</strong></div>
+                    <div>Valid Until: <strong>{formatDate(c.end_date)}</strong></div>
                   </div>
 
-                  <div style={{ fontSize: '12px', color: 'var(--color-text-secondary, #64748b)' }}>
-                    Usage: <strong>{c.redemptions_count}</strong> {c.maximum_total_redemptions ? `/ ${c.maximum_total_redemptions}` : '(Unlimited)'}
-                  </div>
+                  {/* Actions Row */}
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '6px', paddingTop: '10px', borderTop: '1px solid #e2e8f0' }}>
+                    <button
+                      onClick={() => openEditModal(c)}
+                      data-testid={`edit-coupon-btn-${c.id}`}
+                      style={{
+                        padding: '8px 14px',
+                        borderRadius: '8px',
+                        border: '1px solid #2563eb',
+                        backgroundColor: '#eff6ff',
+                        color: '#1d4ed8',
+                        fontSize: '12px',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        minHeight: '36px'
+                      }}
+                    >
+                      <Edit2 size={13} />
+                      <span>Edit Coupon</span>
+                    </button>
 
-                  <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary, #94a3b8)' }}>
-                    Created: {formatDate(c.created_at)}
+                    <button
+                      onClick={() => handleToggleCouponStatus(c)}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: '6px',
+                        border: '1px solid #cbd5e1',
+                        backgroundColor: '#ffffff',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px'
+                      }}
+                    >
+                      <Power size={13} color={c.status === 'ACTIVE' ? '#ef4444' : '#10b981'} />
+                      <span>{c.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}</span>
+                    </button>
+
+                    <button
+                      onClick={() => openRedemptionsModal(c)}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: '6px',
+                        border: '1px solid #cbd5e1',
+                        backgroundColor: '#ffffff',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px'
+                      }}
+                    >
+                      <Eye size={13} />
+                      <span>Redemptions ({c.redemptions_count})</span>
+                    </button>
+
+                    {c.status !== 'ARCHIVED' && (
+                      <button
+                        onClick={() => handleArchiveCoupon(c)}
+                        style={{
+                          padding: '6px 12px',
+                          borderRadius: '6px',
+                          border: 'none',
+                          backgroundColor: '#f1f5f9',
+                          color: '#64748b',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}
+                      >
+                        <Archive size={13} />
+                        <span>Archive</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -500,19 +757,20 @@ export default function AdminCouponsPage() {
                     gap: '8px'
                   }}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <div>
-                      <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--color-text-primary, #0f172a)' }}>
-                        {camp.name}
-                      </div>
-                      <div style={{ fontSize: '12px', color: 'var(--color-text-secondary, #64748b)' }}>
-                        Code: <code>{camp.code}</code>
-                      </div>
-                    </div>
-                    <AdminBadge variant="success">{camp.status}</AdminBadge>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '15px', fontWeight: 700, color: 'var(--color-text-primary, #0f172a)' }}>
+                      {camp.name} ({camp.code})
+                    </span>
+                    <AdminBadge variant={camp.status === 'ACTIVE' ? 'success' : 'neutral'}>{camp.status}</AdminBadge>
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--color-text-secondary, #64748b)' }}>
+                    {camp.description || 'Targeted customer acquisition campaign.'}
                   </div>
                   <div style={{ fontSize: '12px', color: 'var(--color-text-secondary, #64748b)' }}>
                     Redemptions: <strong>{camp.redemptions_count}</strong> {camp.maximum_redemptions ? `/ ${camp.maximum_redemptions}` : ''}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary, #94a3b8)' }}>
+                    Valid: {formatDate(camp.start_date)} - {formatDate(camp.end_date)}
                   </div>
                 </div>
               ))}
@@ -534,10 +792,10 @@ export default function AdminCouponsPage() {
         >
           {grants.length === 0 ? (
             <div style={{ padding: '32px', textAlign: 'center', color: 'var(--color-text-secondary, #64748b)', fontSize: '14px' }}>
-              No direct entitlement grants issued yet.
+              No direct Super Admin grants issued. Click "Grant Entitlement" to issue direct VIP access to a workspace.
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '14px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '12px' }}>
               {grants.map((g) => (
                 <div
                   key={g.id}
@@ -551,17 +809,17 @@ export default function AdminCouponsPage() {
                     gap: '8px'
                   }}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-text-primary, #0f172a)' }}>
-                      Home ID: {g.home_id.slice(0, 8)}...
-                    </div>
-                    <AdminBadge variant="success">{g.status}</AdminBadge>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-text-primary, #0f172a)' }}>
+                      Home: {g.home_id.slice(0, 8)}...
+                    </span>
+                    <AdminBadge variant={g.status === 'ACTIVE' ? 'success' : 'neutral'}>{g.status}</AdminBadge>
                   </div>
                   <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--status-in-stock, #10b981)' }}>
-                    Grant: {g.duration_value} {g.duration_unit} Free Entitlement
+                    🎁 {g.duration_value} {g.duration_unit} Direct Entitlement
                   </div>
                   <div style={{ fontSize: '12px', color: 'var(--color-text-secondary, #64748b)' }}>
-                    Reason: {g.reason}
+                    Reason: <strong>{g.reason}</strong>
                   </div>
                   <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary, #94a3b8)' }}>
                     Expires: {formatDate(g.expiry_date)}
@@ -574,364 +832,424 @@ export default function AdminCouponsPage() {
       )}
 
       {/* Modal: Create Coupon */}
-      {isCouponModalOpen && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            backgroundColor: 'rgba(15, 23, 42, 0.6)',
-            backdropFilter: 'blur(4px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '16px',
-            zIndex: 9999
-          }}
-          onClick={(e) => {
-            if (e.target === e.currentTarget && !isSubmittingCoupon) setIsCouponModalOpen(false);
-          }}
-        >
-          <div
-            style={{
-              backgroundColor: 'var(--color-surface-card, #ffffff)',
-              borderRadius: 'var(--radius-lg, 16px)',
-              padding: '24px',
-              maxWidth: '520px',
-              width: '100%',
-              boxShadow: 'var(--shadow-modal)',
-              border: '1px solid var(--color-border-subtle, #e2e8f0)',
-              position: 'relative',
-              maxHeight: '90vh',
-              overflowY: 'auto'
-            }}
-          >
-            <button
-              onClick={() => setIsCouponModalOpen(false)}
-              aria-label="Close"
-              style={{
-                position: 'absolute',
-                top: '16px',
-                right: '16px',
-                background: 'none',
-                border: 'none',
-                cursor: 'pointer',
-                padding: '8px',
-                minHeight: '44px',
-                minWidth: '44px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}
-            >
-              <X size={20} />
-            </button>
-
-            <h2 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--color-text-primary, #0f172a)', margin: '0 0 16px' }}>
-              Create New Coupon Code
-            </h2>
-
-            {couponModalError && (
-              <div
-                style={{
-                  padding: '12px',
-                  backgroundColor: 'var(--status-overdue-bg, #fef2f2)',
-                  border: '1px solid #fecaca',
-                  borderRadius: 'var(--radius-md, 10px)',
-                  color: 'var(--status-overdue, #ef4444)',
-                  fontSize: '13px',
-                  marginBottom: '16px'
-                }}
-              >
-                {couponModalError}
-              </div>
-            )}
-
-            <form onSubmit={handleCreateCoupon} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
-                  Coupon Code (e.g. WELCOME6M) *
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="WELCOME6M"
-                  value={couponForm.code}
-                  onChange={(e) => setCouponForm({ ...couponForm, code: e.target.value })}
-                  style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
-                />
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
-                  Display Name *
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="6 Months Free Early Adopter Access"
-                  value={couponForm.name}
-                  onChange={(e) => setCouponForm({ ...couponForm, name: e.target.value })}
-                  style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
-                />
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
-                    Coupon Type
-                  </label>
-                  <select
-                    value={couponForm.coupon_type}
-                    onChange={(e) => setCouponForm({ ...couponForm, coupon_type: e.target.value })}
-                    style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
-                  >
-                    <option value="FREE_PERIOD">100% Free Period</option>
-                    <option value="PERCENTAGE_DISCOUNT">Percentage Discount</option>
-                    <option value="FIXED_DISCOUNT">Fixed Currency Discount</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
-                    Eligibility
-                  </label>
-                  <select
-                    value={couponForm.eligibility_type}
-                    onChange={(e) => setCouponForm({ ...couponForm, eligibility_type: e.target.value })}
-                    style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
-                  >
-                    <option value="ANY_USER">Any User</option>
-                    <option value="NEW_USER">New Users Only</option>
-                    <option value="EXISTING_USER">Existing Users</option>
-                  </select>
-                </div>
-              </div>
-
-              {couponForm.coupon_type === 'FREE_PERIOD' && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                  <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
-                      Free Duration Value *
-                    </label>
-                    <input
-                      type="number"
-                      min="1"
-                      required
-                      value={couponForm.free_period_value}
-                      onChange={(e) => setCouponForm({ ...couponForm, free_period_value: parseInt(e.target.value) || 1 })}
-                      style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
-                    />
-                  </div>
-
-                  <div>
-                    <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
-                      Unit
-                    </label>
-                    <select
-                      value={couponForm.free_period_unit}
-                      onChange={(e) => setCouponForm({ ...couponForm, free_period_unit: e.target.value })}
-                      style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
-                    >
-                      <option value="DAYS">Days</option>
-                      <option value="MONTHS">Months</option>
-                      <option value="YEARS">Years</option>
-                    </select>
-                  </div>
-                </div>
-              )}
-
-              {couponForm.coupon_type !== 'FREE_PERIOD' && (
-                <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
-                    Discount Value *
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    required
-                    value={couponForm.discount_value}
-                    onChange={(e) => setCouponForm({ ...couponForm, discount_value: e.target.value })}
-                    style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
-                  />
-                </div>
-              )}
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
-                    Redemption Valid From
-                  </label>
-                  <input
-                    type="date"
-                    value={couponForm.start_date}
-                    onChange={(e) => setCouponForm({ ...couponForm, start_date: e.target.value })}
-                    style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
-                    Redemption Valid Until
-                  </label>
-                  <input
-                    type="date"
-                    value={couponForm.end_date}
-                    onChange={(e) => setCouponForm({ ...couponForm, end_date: e.target.value })}
-                    style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '12px' }}>
-                <button
-                  type="button"
-                  onClick={() => setIsCouponModalOpen(false)}
-                  disabled={isSubmittingCoupon}
-                  style={{ padding: '10px 18px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', backgroundColor: 'transparent', fontSize: '14px', fontWeight: 600, cursor: 'pointer', minHeight: '44px' }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmittingCoupon}
-                  style={{ padding: '10px 20px', borderRadius: 'var(--radius-md, 10px)', border: 'none', backgroundColor: 'var(--color-primary-900, #0f172a)', color: 'var(--color-text-inverse, #ffffff)', fontSize: '14px', fontWeight: 600, cursor: isSubmittingCoupon ? 'not-allowed' : 'pointer', minHeight: '44px' }}
-                >
-                  {isSubmittingCoupon ? 'Creating...' : 'Create Coupon'}
-                </button>
-              </div>
-            </form>
+      <Modal isOpen={isCouponModalOpen} onClose={() => setIsCouponModalOpen(false)} title="Create New Coupon Code">
+        {couponModalError && (
+          <div style={{ padding: '12px', backgroundColor: 'var(--status-overdue-bg, #fef2f2)', border: '1px solid #fecaca', borderRadius: 'var(--radius-md, 10px)', color: 'var(--status-overdue, #ef4444)', fontSize: '13px', marginBottom: '16px' }}>
+            {couponModalError}
           </div>
-        </div>
-      )}
+        )}
+
+        <form onSubmit={handleCreateCoupon} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                Coupon Code *
+              </label>
+              <input
+                type="text"
+                required
+                data-testid="create-coupon-code-input"
+                placeholder="WELCOME6M"
+                value={couponForm.code}
+                onChange={(e) => setCouponForm({ ...couponForm, code: e.target.value })}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', textTransform: 'uppercase' }}
+              />
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                Display Name *
+              </label>
+              <input
+                type="text"
+                required
+                data-testid="create-coupon-name-input"
+                placeholder="6 Months Free Early Adopter Access"
+                value={couponForm.name}
+                onChange={(e) => setCouponForm({ ...couponForm, name: e.target.value })}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+              Description
+            </label>
+            <input
+              type="text"
+              placeholder="Commercial promotional code description"
+              value={couponForm.description}
+              onChange={(e) => setCouponForm({ ...couponForm, description: e.target.value })}
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+            />
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                Discount Type
+              </label>
+              <select
+                value={couponForm.coupon_type}
+                onChange={(e) => setCouponForm({ ...couponForm, coupon_type: e.target.value })}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+              >
+                <option value="PERCENTAGE_DISCOUNT">Percentage Discount (%)</option>
+                <option value="FIXED_DISCOUNT">Fixed Cash Discount ($)</option>
+                <option value="FREE_PERIOD">100% Free Period Access</option>
+              </select>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                {couponForm.coupon_type === 'PERCENTAGE_DISCOUNT' ? 'Discount Percentage (%) *' : 'Discount Value *'}
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                required
+                data-testid="create-coupon-discount-input"
+                value={couponForm.discount_value}
+                onChange={(e) => setCouponForm({ ...couponForm, discount_value: e.target.value })}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                Target Country (ISO-2)
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. IN, AE, US (Leave blank for Global)"
+                value={couponForm.country}
+                onChange={(e) => setCouponForm({ ...couponForm, country: e.target.value })}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', textTransform: 'uppercase' }}
+              />
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                Max Total Redemptions
+              </label>
+              <input
+                type="number"
+                placeholder="Blank for unlimited"
+                value={couponForm.maximum_total_redemptions}
+                onChange={(e) => setCouponForm({ ...couponForm, maximum_total_redemptions: e.target.value })}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '12px' }}>
+            <button
+              type="button"
+              onClick={() => setIsCouponModalOpen(false)}
+              disabled={isSubmittingCoupon}
+              style={{ padding: '10px 18px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', backgroundColor: 'transparent', fontSize: '14px', fontWeight: 600, cursor: 'pointer' }}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              data-testid="create-coupon-submit-btn"
+              disabled={isSubmittingCoupon}
+              style={{ padding: '10px 20px', borderRadius: 'var(--radius-md, 10px)', border: 'none', backgroundColor: 'var(--color-primary-900, #0f172a)', color: 'var(--color-text-inverse, #ffffff)', fontSize: '14px', fontWeight: 600, cursor: isSubmittingCoupon ? 'not-allowed' : 'pointer' }}
+            >
+              {isSubmittingCoupon ? 'Creating...' : 'Create Coupon'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Modal: Edit Coupon */}
+      <Modal isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} title={`Edit Coupon: ${selectedCoupon?.code}`}>
+        {editModalError && (
+          <div style={{ padding: '12px', backgroundColor: 'var(--status-overdue-bg, #fef2f2)', border: '1px solid #fecaca', borderRadius: 'var(--radius-md, 10px)', color: 'var(--status-overdue, #ef4444)', fontSize: '13px', marginBottom: '16px' }}>
+            {editModalError}
+          </div>
+        )}
+
+        <form onSubmit={handleUpdateCoupon} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <div>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+              Coupon Name *
+            </label>
+            <input
+              type="text"
+              required
+              value={editForm.name}
+              onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+            />
+          </div>
+
+          <div>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+              Description
+            </label>
+            <input
+              type="text"
+              value={editForm.description}
+              onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+            />
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                Discount Type
+              </label>
+              <select
+                value={editForm.coupon_type}
+                onChange={(e) => setEditForm({ ...editForm, coupon_type: e.target.value })}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+              >
+                <option value="PERCENTAGE_DISCOUNT">Percentage Discount (%)</option>
+                <option value="FIXED_DISCOUNT">Fixed Cash Discount ($)</option>
+                <option value="FREE_PERIOD">100% Free Period Access</option>
+              </select>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                Discount Percentage / Value *
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                required
+                data-testid="edit-coupon-discount-input"
+                value={editForm.discount_value}
+                onChange={(e) => setEditForm({ ...editForm, discount_value: e.target.value })}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                Target Country (ISO-2)
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. IN, AE, US"
+                data-testid="edit-coupon-country-input"
+                value={editForm.country}
+                onChange={(e) => setEditForm({ ...editForm, country: e.target.value })}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', textTransform: 'uppercase' }}
+              />
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                Status
+              </label>
+              <select
+                data-testid="edit-coupon-status-select"
+                value={editForm.status}
+                onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+              >
+                <option value="ACTIVE">ACTIVE</option>
+                <option value="INACTIVE">INACTIVE</option>
+                <option value="EXPIRED">EXPIRED</option>
+                <option value="ARCHIVED">ARCHIVED</option>
+              </select>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                Max Total Redemptions
+              </label>
+              <input
+                type="number"
+                placeholder="Blank for unlimited"
+                data-testid="edit-coupon-max-redemptions-input"
+                value={editForm.maximum_total_redemptions}
+                onChange={(e) => setEditForm({ ...editForm, maximum_total_redemptions: e.target.value })}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+              />
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                Max Per User
+              </label>
+              <input
+                type="number"
+                min="1"
+                data-testid="edit-coupon-per-user-input"
+                value={editForm.maximum_redemptions_per_user}
+                onChange={(e) => setEditForm({ ...editForm, maximum_redemptions_per_user: parseInt(e.target.value) || 1 })}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+              Operational Reason for Edit
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. Adjusted campaign discount percentage for Q4 launch"
+              data-testid="edit-coupon-reason-input"
+              value={editForm.internal_reason}
+              onChange={(e) => setEditForm({ ...editForm, internal_reason: e.target.value })}
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+            />
+          </div>
+
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '12px' }}>
+            <button
+              type="button"
+              onClick={() => setIsEditModalOpen(false)}
+              disabled={isSubmittingEdit}
+              style={{ padding: '10px 18px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', backgroundColor: 'transparent', fontSize: '14px', fontWeight: 600, cursor: 'pointer' }}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              data-testid="save-coupon-submit-btn"
+              disabled={isSubmittingEdit}
+              style={{ padding: '10px 20px', borderRadius: 'var(--radius-md, 10px)', border: 'none', backgroundColor: '#2563eb', color: '#ffffff', fontSize: '14px', fontWeight: 600, cursor: isSubmittingEdit ? 'not-allowed' : 'pointer' }}
+            >
+              {isSubmittingEdit ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Modal: Redemptions History */}
+      <Modal isOpen={isRedemptionsModalOpen} onClose={() => setIsRedemptionsModalOpen(false)} title={`Redemptions Audit Log: ${viewingCouponCode}`}>
+        {isLoadingRedemptions ? (
+          <div style={{ padding: '32px', textAlign: 'center', color: '#64748b' }}>Loading redemptions log...</div>
+        ) : redemptionsList.length === 0 ? (
+          <div style={{ padding: '32px', textAlign: 'center', color: '#64748b' }}>No redemptions recorded for this coupon yet.</div>
+        ) : (
+          <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid #e2e8f0', textAlign: 'left', color: '#64748b' }}>
+                  <th style={{ padding: '8px' }}>Redeemed At</th>
+                  <th style={{ padding: '8px' }}>User ID</th>
+                  <th style={{ padding: '8px' }}>Home ID</th>
+                  <th style={{ padding: '8px' }}>Discount Applied</th>
+                </tr>
+              </thead>
+              <tbody>
+                {redemptionsList.map((r) => (
+                  <tr key={r.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                    <td style={{ padding: '8px' }}>{formatDate(r.redeemed_at)}</td>
+                    <td style={{ padding: '8px', fontFamily: 'monospace' }}>{r.user_id?.slice(0, 8)}...</td>
+                    <td style={{ padding: '8px', fontFamily: 'monospace' }}>{r.home_id?.slice(0, 8)}...</td>
+                    <td style={{ padding: '8px', fontWeight: 600, color: '#10b981' }}>
+                      {r.discount_amount_applied ? `$${r.discount_amount_applied}` : `${r.free_days_granted} Free Days`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Modal>
 
       {/* Modal: Direct Grant */}
-      {isGrantModalOpen && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            backgroundColor: 'rgba(15, 23, 42, 0.6)',
-            backdropFilter: 'blur(4px)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '16px',
-            zIndex: 9999
-          }}
-          onClick={(e) => {
-            if (e.target === e.currentTarget && !isSubmittingGrant) setIsGrantModalOpen(false);
-          }}
-        >
-          <div
-            style={{
-              backgroundColor: 'var(--color-surface-card, #ffffff)',
-              borderRadius: 'var(--radius-lg, 16px)',
-              padding: '24px',
-              maxWidth: '500px',
-              width: '100%',
-              boxShadow: 'var(--shadow-modal)',
-              border: '1px solid var(--color-border-subtle, #e2e8f0)',
-              position: 'relative'
-            }}
-          >
-            <button
-              onClick={() => setIsGrantModalOpen(false)}
-              aria-label="Close"
-              style={{ position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', cursor: 'pointer', padding: '8px', minHeight: '44px', minWidth: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-            >
-              <X size={20} />
-            </button>
-
-            <h2 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--color-text-primary, #0f172a)', margin: '0 0 16px' }}>
-              Issue Direct Entitlement Grant
-            </h2>
-
-            {grantModalError && (
-              <div style={{ padding: '12px', backgroundColor: 'var(--status-overdue-bg, #fef2f2)', border: '1px solid #fecaca', borderRadius: 'var(--radius-md, 10px)', color: 'var(--status-overdue, #ef4444)', fontSize: '13px', marginBottom: '16px' }}>
-                {grantModalError}
-              </div>
-            )}
-
-            <form onSubmit={handleCreateGrant} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
-                  Target Home Workspace UUID *
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. 123e4567-e89b-12d3-a456-426614174000"
-                  value={grantForm.home_id}
-                  onChange={(e) => setGrantForm({ ...grantForm, home_id: e.target.value })}
-                  style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
-                />
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
-                    Duration Value *
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    required
-                    value={grantForm.duration_value}
-                    onChange={(e) => setGrantForm({ ...grantForm, duration_value: parseInt(e.target.value) || 1 })}
-                    style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
-                    Unit
-                  </label>
-                  <select
-                    value={grantForm.duration_unit}
-                    onChange={(e) => setGrantForm({ ...grantForm, duration_unit: e.target.value })}
-                    style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', minHeight: '44px' }}
-                  >
-                    <option value="MONTHS">Months</option>
-                    <option value="DAYS">Days</option>
-                    <option value="YEARS">Years</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
-                  Administrative Grant Reason *
-                </label>
-                <textarea
-                  required
-                  rows={2}
-                  value={grantForm.reason}
-                  onChange={(e) => setGrantForm({ ...grantForm, reason: e.target.value })}
-                  style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
-                />
-              </div>
-
-              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '12px' }}>
-                <button
-                  type="button"
-                  onClick={() => setIsGrantModalOpen(false)}
-                  disabled={isSubmittingGrant}
-                  style={{ padding: '10px 18px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', backgroundColor: 'transparent', fontSize: '14px', fontWeight: 600, cursor: 'pointer', minHeight: '44px' }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmittingGrant}
-                  style={{ padding: '10px 20px', borderRadius: 'var(--radius-md, 10px)', border: 'none', backgroundColor: 'var(--status-in-stock, #10b981)', color: 'var(--color-text-inverse, #ffffff)', fontSize: '14px', fontWeight: 600, cursor: isSubmittingGrant ? 'not-allowed' : 'pointer', minHeight: '44px' }}
-                >
-                  {isSubmittingGrant ? 'Issuing...' : 'Grant Entitlement'}
-                </button>
-              </div>
-            </form>
+      <Modal isOpen={isGrantModalOpen} onClose={() => setIsGrantModalOpen(false)} title="Issue Direct Entitlement Grant">
+        {grantModalError && (
+          <div style={{ padding: '12px', backgroundColor: 'var(--status-overdue-bg, #fef2f2)', border: '1px solid #fecaca', borderRadius: 'var(--radius-md, 10px)', color: 'var(--status-overdue, #ef4444)', fontSize: '13px', marginBottom: '16px' }}>
+            {grantModalError}
           </div>
-        </div>
-      )}
+        )}
+
+        <form onSubmit={handleCreateGrant} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <div>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+              Target Home Workspace UUID *
+            </label>
+            <input
+              type="text"
+              required
+              placeholder="e.g. 123e4567-e89b-12d3-a456-426614174000"
+              value={grantForm.home_id}
+              onChange={(e) => setGrantForm({ ...grantForm, home_id: e.target.value })}
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+            />
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                Duration Value *
+              </label>
+              <input
+                type="number"
+                min="1"
+                required
+                value={grantForm.duration_value}
+                onChange={(e) => setGrantForm({ ...grantForm, duration_value: parseInt(e.target.value) || 1 })}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+              />
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                Unit
+              </label>
+              <select
+                value={grantForm.duration_unit}
+                onChange={(e) => setGrantForm({ ...grantForm, duration_unit: e.target.value })}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+              >
+                <option value="MONTHS">Months</option>
+                <option value="DAYS">Days</option>
+                <option value="YEARS">Years</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+              Administrative Grant Reason *
+            </label>
+            <textarea
+              required
+              rows={2}
+              value={grantForm.reason}
+              onChange={(e) => setGrantForm({ ...grantForm, reason: e.target.value })}
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+            />
+          </div>
+
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '12px' }}>
+            <button
+              type="button"
+              onClick={() => setIsGrantModalOpen(false)}
+              disabled={isSubmittingGrant}
+              style={{ padding: '10px 18px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', backgroundColor: 'transparent', fontSize: '14px', fontWeight: 600, cursor: 'pointer' }}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={isSubmittingGrant}
+              style={{ padding: '10px 20px', borderRadius: 'var(--radius-md, 10px)', border: 'none', backgroundColor: 'var(--status-in-stock, #10b981)', color: 'var(--color-text-inverse, #ffffff)', fontSize: '14px', fontWeight: 600, cursor: isSubmittingGrant ? 'not-allowed' : 'pointer' }}
+            >
+              {isSubmittingGrant ? 'Issuing...' : 'Grant Entitlement'}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

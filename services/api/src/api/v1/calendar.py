@@ -2,7 +2,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, List, Optional
 from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import joinedload, selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -160,9 +160,11 @@ async def list_home_events(
     ]
 
     if start_date:
-        filters.append(EventModel.end_time >= start_date)
+        s_date = start_date if start_date.tzinfo is not None else start_date.replace(tzinfo=timezone.utc)
+        filters.append(EventModel.end_time >= s_date)
     if end_date:
-        filters.append(EventModel.start_time <= end_date)
+        e_date = end_date if end_date.tzinfo is not None else end_date.replace(tzinfo=timezone.utc)
+        filters.append(EventModel.start_time <= e_date)
     if category_id:
         filters.append(EventModel.category_id == category_id)
     if status:
@@ -316,14 +318,17 @@ async def create_event(
         if not cat:
             raise HTTPException(status_code=400, detail="Invalid event category.")
 
+    start_time = payload.start_time if payload.start_time.tzinfo is not None else payload.start_time.replace(tzinfo=timezone.utc)
+    end_time = payload.end_time if payload.end_time.tzinfo is not None else payload.end_time.replace(tzinfo=timezone.utc)
+
     event = EventModel(
         home_id=home_ctx.home_id,
         category_id=category_id,
         title=payload.title.strip(),
         description=payload.description.strip() if payload.description else None,
         location=payload.location.strip() if payload.location else None,
-        start_time=payload.start_time,
-        end_time=payload.end_time,
+        start_time=start_time,
+        end_time=end_time,
         is_all_day=payload.is_all_day,
         recurrence_type=payload.recurrence_type or "NONE",
         recurrence_interval_days=payload.recurrence_interval_days,
@@ -533,9 +538,9 @@ async def update_event(
     if payload.location is not None:
         event.location = payload.location.strip() if payload.location else None
     if payload.start_time is not None:
-        event.start_time = payload.start_time
+        event.start_time = payload.start_time if payload.start_time.tzinfo is not None else payload.start_time.replace(tzinfo=timezone.utc)
     if payload.end_time is not None:
-        event.end_time = payload.end_time
+        event.end_time = payload.end_time if payload.end_time.tzinfo is not None else payload.end_time.replace(tzinfo=timezone.utc)
     if payload.is_all_day is not None:
         event.is_all_day = payload.is_all_day
 
@@ -745,6 +750,9 @@ async def get_calendar_projection(
     total_tasks = 0
     total_bills = 0
 
+    s_date = start_date if start_date.tzinfo is not None else start_date.replace(tzinfo=timezone.utc)
+    e_date = end_date if end_date.tzinfo is not None else end_date.replace(tzinfo=timezone.utc)
+
     # 1. Fetch Calendar Events
     event_query = (
         select(EventModel)
@@ -752,8 +760,8 @@ async def get_calendar_projection(
         .where(
             EventModel.home_id == home_ctx.home_id,
             EventModel.deleted_at.is_(None),
-            EventModel.end_time >= start_date,
-            EventModel.start_time <= end_date
+            EventModel.end_time >= s_date,
+            EventModel.start_time <= e_date
         )
     )
     events = (await db.execute(event_query)).unique().scalars().all()
@@ -767,7 +775,7 @@ async def get_calendar_projection(
                 title=e.title,
                 start=e.start_time,
                 end=e.end_time,
-                all_day=e.is_all_day,
+                all_day=bool(e.is_all_day),
                 editable=True,
                 navigation_target=f"/calendar/{e.id}",
                 status=e.status,
@@ -783,8 +791,8 @@ async def get_calendar_projection(
 
     # 2. Fetch Tasks (Projection: Zero database duplication)
     if include_tasks:
-        start_d = start_date.date()
-        end_d = end_date.date()
+        start_d = s_date.date()
+        end_d = e_date.date()
         task_query = (
             select(TaskModel)
             .options(joinedload(TaskModel.category))
@@ -793,8 +801,10 @@ async def get_calendar_projection(
                 TaskModel.deleted_at.is_(None),
                 TaskModel.status != "COMPLETED",
                 TaskModel.due_date.is_not(None),
-                TaskModel.due_date >= start_d,
-                TaskModel.due_date <= end_d
+                or_(
+                    and_(TaskModel.due_date >= s_date, TaskModel.due_date <= e_date),
+                    and_(TaskModel.due_date >= start_d, TaskModel.due_date <= end_d)
+                )
             )
         )
         tasks = (await db.execute(task_query)).unique().scalars().all()
@@ -802,7 +812,13 @@ async def get_calendar_projection(
 
         for t in tasks:
             # Anchor task start & end to due date in UTC
-            task_dt = datetime.combine(t.due_date, time(18, 0), tzinfo=timezone.utc)
+            if isinstance(t.due_date, datetime):
+                task_dt = t.due_date if t.due_date.tzinfo is not None else t.due_date.replace(tzinfo=timezone.utc)
+            elif isinstance(t.due_date, date):
+                task_dt = datetime.combine(t.due_date, time(18, 0), tzinfo=timezone.utc)
+            else:
+                continue
+
             timeline_items.append(
                 TimelineItemDTO(
                     source_type="TASK",
@@ -823,10 +839,11 @@ async def get_calendar_projection(
                 )
             )
 
+
     # 3. Fetch Bills (Projection: Zero database duplication)
     if include_bills:
-        start_d = start_date.date()
-        end_d = end_date.date()
+        start_d = s_date.date()
+        end_d = e_date.date()
         bill_query = (
             select(BillModel)
             .options(joinedload(BillModel.category))
@@ -871,9 +888,10 @@ async def get_calendar_projection(
 
     return ApiSuccessResponse(
         data=CalendarProjectionResponse(
-            start_date=start_date,
-            end_date=end_date,
+            start_date=s_date,
+            end_date=e_date,
             items=timeline_items,
+            timeline_items=timeline_items,
             total_events=total_events,
             total_tasks=total_tasks,
             total_bills=total_bills

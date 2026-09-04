@@ -1,3 +1,4 @@
+import os
 import pytest
 from uuid import uuid4
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -17,17 +18,19 @@ from src.api.v1.admin_users import bulk_user_action, suspend_user, hold_user, de
 from src.api.v1.admin_security import change_admin_password
 from src.api.dependencies import require_super_admin, require_admin_permission
 
+TEST_ADMIN_PASSWORD = os.getenv("TEST_ADMIN_PASSWORD", "TestSuperAdminSecret123!")
+
 
 # ==============================================================================
 # TEST 1: Dedicated admin login succeeds with Super Admin credentials
 # ==============================================================================
 @pytest.mark.asyncio
 async def test_01_admin_login_succeeds_with_super_admin_credentials():
-    """TEST 1: vivek@zinfog.com + Caseno@123 authenticates successfully via POST /api/v1/admin/auth/login."""
+    """TEST 1: Super Admin credentials authenticate successfully via POST /api/v1/admin/auth/login."""
     super_admin = UserModel(
         id=uuid4(),
         email="vivek@zinfog.com",
-        password_hash=hash_password("Caseno@123"),
+        password_hash=hash_password(TEST_ADMIN_PASSWORD),
         is_active=True,
         is_verified=True,
         mobile_verified=True,
@@ -43,7 +46,7 @@ async def test_01_admin_login_succeeds_with_super_admin_credentials():
     mock_redis = AsyncMock()
     mock_redis.incr.return_value = 1
 
-    payload = AdminLoginRequest(email="vivek@zinfog.com", password="Caseno@123")
+    payload = AdminLoginRequest(email="vivek@zinfog.com", password=TEST_ADMIN_PASSWORD)
     res = await admin_login(payload, db=mock_db, redis_client=mock_redis)
 
     assert res.success is True
@@ -60,7 +63,7 @@ async def test_02_admin_login_validates_super_admin_dependencies():
     super_admin = UserModel(
         id=uuid4(),
         email="vivek@zinfog.com",
-        password_hash=hash_password("Caseno@123"),
+        password_hash=hash_password(TEST_ADMIN_PASSWORD),
         is_active=True,
         is_verified=True,
         mobile_verified=True,
@@ -75,7 +78,7 @@ async def test_02_admin_login_validates_super_admin_dependencies():
     mock_redis = AsyncMock()
     mock_redis.incr.return_value = 1
 
-    payload = AdminLoginRequest(email="vivek@zinfog.com", password="Caseno@123")
+    payload = AdminLoginRequest(email="vivek@zinfog.com", password=TEST_ADMIN_PASSWORD)
     token_res = await admin_login(payload, db=mock_db, redis_client=mock_redis)
 
     assert token_res.success is True
@@ -94,7 +97,7 @@ async def test_03_get_users_me_returns_is_super_admin_true():
     super_admin = UserModel(
         id=uuid4(),
         email="vivek@zinfog.com",
-        password_hash=hash_password("Caseno@123"),
+        password_hash=hash_password(TEST_ADMIN_PASSWORD),
         is_active=True,
         is_verified=True,
         mobile_verified=True,
@@ -127,7 +130,7 @@ async def test_04_get_users_me_returns_system_role_super_admin():
     super_admin = UserModel(
         id=uuid4(),
         email="vivek@zinfog.com",
-        password_hash=hash_password("Caseno@123"),
+        password_hash=hash_password(TEST_ADMIN_PASSWORD),
         is_active=True,
         is_verified=True,
         mobile_verified=True,
@@ -225,7 +228,7 @@ async def test_08_admin_change_password_workflow():
     super_admin = UserModel(
         id=uuid4(),
         email="vivek@zinfog.com",
-        password_hash=hash_password("Caseno@123"),
+        password_hash=hash_password(TEST_ADMIN_PASSWORD),
         is_active=True,
         is_verified=True,
         mobile_verified=True,
@@ -313,7 +316,7 @@ async def test_11_admin_login_issues_admin_scoped_token():
     super_admin = UserModel(
         id=uuid4(),
         email="vivek@zinfog.com",
-        password_hash=hash_password("Caseno@123"),
+        password_hash=hash_password(TEST_ADMIN_PASSWORD),
         is_active=True,
         is_verified=True,
         mobile_verified=True,
@@ -328,7 +331,7 @@ async def test_11_admin_login_issues_admin_scoped_token():
     mock_redis = AsyncMock()
     mock_redis.incr.return_value = 1
 
-    token = await admin_login(AdminLoginRequest(email="vivek@zinfog.com", password="Caseno@123"), db=mock_db, redis_client=mock_redis)
+    token = await admin_login(AdminLoginRequest(email="vivek@zinfog.com", password=TEST_ADMIN_PASSWORD), db=mock_db, redis_client=mock_redis)
     assert token.data.access_token is not None
     assert token.data.user_id == super_admin.id
 
@@ -342,7 +345,7 @@ async def test_12_super_admin_household_login_guard():
     super_admin = UserModel(
         id=uuid4(),
         email="vivek@zinfog.com",
-        password_hash=hash_password("Caseno@123"),
+        password_hash=hash_password(TEST_ADMIN_PASSWORD),
         is_active=True,
         is_verified=True,
         mobile_verified=True,
@@ -359,7 +362,7 @@ async def test_12_super_admin_household_login_guard():
     mock_redis.incr.return_value = 1
 
     with pytest.raises(HTTPException) as exc:
-        await login(LoginRequest(email="vivek@zinfog.com", password="Caseno@123"), db=mock_db, redis_client=mock_redis)
+        await login(LoginRequest(email="vivek@zinfog.com", password=TEST_ADMIN_PASSWORD), db=mock_db, redis_client=mock_redis)
 
     assert exc.value.status_code == 403
     assert "/admin/login" in exc.value.detail

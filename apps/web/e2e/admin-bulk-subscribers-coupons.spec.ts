@@ -256,6 +256,15 @@ test.describe('Super Admin End-to-End Platform Integration Suite', () => {
     await page.goto('/admin/login');
     await page.evaluate(() => {
       localStorage.setItem('access_token', 'mock-super-admin-jwt');
+      const user = {
+        id: '99999999-9999-9999-9999-999999999999',
+        email: 'vivek@zinfog.com',
+        display_name: 'Vivek',
+        is_super_admin: true,
+        system_role: 'SUPER_ADMIN',
+        homes: [{ home_id: '77777777-7777-7777-7777-777777777777', name: "Ichu's home", role: 'OWNER', status: 'ACTIVE' }]
+      };
+      localStorage.setItem('user', JSON.stringify(user));
     });
 
     await page.route('**/api/v1/users/me', async (route) => {
@@ -264,12 +273,41 @@ test.describe('Super Admin End-to-End Platform Integration Suite', () => {
         contentType: 'application/json',
         body: JSON.stringify({
           success: true,
-          data: { id: 'admin-id', email: 'vivek@zinfog.com', is_super_admin: true, system_role: 'SUPER_ADMIN', homes: [] }
+          data: {
+            id: '99999999-9999-9999-9999-999999999999',
+            email: 'vivek@zinfog.com',
+            display_name: 'Vivek',
+            is_super_admin: true,
+            system_role: 'SUPER_ADMIN',
+            homes: [{ home_id: '77777777-7777-7777-7777-777777777777', name: "Ichu's home", role: 'OWNER', status: 'ACTIVE' }]
+          }
         })
       });
     });
 
-    await page.route('**/api/v1/admin/coupons', async (route) => {
+    await page.route('**/api/v1/homes**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: [] })
+      });
+    });
+
+    await page.route('**/api/v1/admin/coupons/campaigns**', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: [] }) });
+    });
+    await page.route('**/api/v1/admin/coupons/grants**', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: [] }) });
+    });
+    await page.route('**/api/v1/admin/coupons/analytics**', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: { total_coupons: 2, total_redemptions: 15 } }) });
+    });
+    await page.route('**/api/v1/admin/coupons**', async (route) => {
+      const url = route.request().url();
+      if (url.includes('/campaigns') || url.includes('/grants') || url.includes('/analytics')) {
+        await route.fallback();
+        return;
+      }
       if (route.request().method() === 'GET') {
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: [] }) });
       } else if (route.request().method() === 'POST') {
@@ -279,15 +317,6 @@ test.describe('Super Admin End-to-End Platform Integration Suite', () => {
         expect(payload.free_period_unit).toBe('MONTHS');
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: payload }) });
       }
-    });
-    await page.route('**/api/v1/admin/coupons/campaigns', async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: [] }) });
-    });
-    await page.route('**/api/v1/admin/coupons/grants', async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: [] }) });
-    });
-    await page.route('**/api/v1/admin/coupons/analytics', async (route) => {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: { total_coupons: 2, total_redemptions: 15 } }) });
     });
 
     await page.goto('/admin/coupons');

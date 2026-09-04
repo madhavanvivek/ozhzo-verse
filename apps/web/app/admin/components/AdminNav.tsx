@@ -14,6 +14,10 @@ import {
   LogOut,
   ShieldCheck,
   Settings,
+  Globe,
+  Mail,
+  Flag,
+  Bot,
   X
 } from 'lucide-react';
 import { Logo } from '@/components/brand/Logo';
@@ -40,10 +44,14 @@ export function AdminNav({
 
   const navItems = [
     { href: '/admin', label: 'Dashboard', icon: LayoutDashboard, exact: true },
-    { href: '/admin/users', label: 'Users', icon: Users, exact: false },
-    { href: '/admin/homes', label: 'Homes', icon: Home, exact: false },
-    { href: '/admin/subscriptions', label: 'Subscriptions', icon: CreditCard, exact: false },
+    { href: '/admin/subscriptions', label: 'Subscriptions & Plans', icon: CreditCard, exact: false },
+    { href: '/admin/regions', label: 'Regional Pricing', icon: Globe, exact: false },
     { href: '/admin/coupons', label: 'Coupons & Grants', icon: Tag, exact: false },
+    { href: '/admin/users', label: 'Users', icon: Users, exact: false },
+    { href: '/admin/homes', label: 'Households', icon: Home, exact: false },
+    { href: '/admin/invitations', label: 'Global Invitations', icon: Mail, exact: false },
+    { href: '/admin/feature-flags', label: 'Feature Flags', icon: Flag, exact: false },
+    { href: '/admin/ai-automations', label: 'AI & Automations', icon: Bot, exact: false },
     { href: '/admin/activity', label: 'Activity Logs', icon: Activity, exact: false },
     { href: '/admin/settings', label: 'Security & Settings', icon: Settings, exact: false }
   ];

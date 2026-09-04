@@ -112,7 +112,9 @@ async def test_bill_due_notification():
 
     mock_res = MagicMock()
     mock_res.scalars.return_value.all.return_value = [user_id]
+    mock_res.scalar_one_or_none.return_value = None
     mock_db.execute.return_value = mock_res
+
 
     await send_bill_due_notification(
         home_id=home_id,

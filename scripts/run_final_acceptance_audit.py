@@ -51,7 +51,7 @@ def record(test_name, request_info, status_code, db_effect, follow_up, result):
 ts = int(time.time())
 test_user_email = f"audit_user_{ts}@ozhzo.com"
 test_phone = f"+1555{str(ts)[-4:]}"
-test_password = "Password123!"
+test_password = os.getenv("TEST_CUSTOMER_PASSWORD", f"Pass_{ts}!Aa1")
 
 # 1. Register test user with phone
 reg_st, reg_data, reg_err = api("POST", "/auth/register", {

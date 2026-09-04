@@ -16,9 +16,12 @@ from src.core.security import decode_token
 from src.infrastructure.database.session import get_db
 from src.infrastructure.database.models import (
     AuditLogModel,
+    HomeAccessEntitlementModel,
+    HomeJoinRequestModel,
     HomeModel,
     HomeMemberModel,
     InvitationModel,
+    NotificationModel,
     SubscriptionModel,
     UserModel,
     UserProfileModel
@@ -29,9 +32,12 @@ from src.schemas.common import ApiSuccessResponse
 from src.schemas.home import (
     AcceptInvitationResponse,
     CreateInvitationRequest,
+    HomeAdminSummaryDTO,
     InvitationDTO,
     InvitationDetailDTO,
+    MemberActivityItemDTO,
     MemberDTO,
+    MemberDetailDTO,
     MessageResponse,
     RedeemInvitationRequest,
     UpdateMemberRoleRequest,
@@ -72,8 +78,13 @@ async def _extract_optional_user(
         if not user_id_str:
             return None
         user_id = UUID(user_id_str)
-        user = await db.get(UserModel, user_id)
-        return user if (user and user.is_active and user.deleted_at is None) else None
+        query = (
+            select(UserModel)
+            .options(selectinload(UserModel.profile))
+            .where(UserModel.id == user_id, UserModel.is_active == True, UserModel.deleted_at == None)
+        )
+        res = await db.execute(query)
+        return res.scalar_one_or_none() if hasattr(res, "scalar_one_or_none") else None
     except Exception:
         return None
 
@@ -84,27 +95,128 @@ async def _extract_optional_user(
 
 @router.get("/homes/{home_id}/members", response_model=ApiSuccessResponse[List[MemberDTO]])
 async def list_home_members(
+    search: Optional[str] = None,
+    status: Optional[str] = "ACTIVE",
+    role: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 100,
     home_ctx: HomeContext = Depends(require_home_permission("members:view")),
     db: AsyncSession = Depends(get_db)
 ):
+    """
+    List members of a Home workspace with server-side search, filtering, and batched access entitlement resolution.
+    """
     query = (
         select(HomeMemberModel, UserModel, UserProfileModel)
         .join(UserModel, HomeMemberModel.user_id == UserModel.id)
         .outerjoin(UserProfileModel, UserModel.id == UserProfileModel.user_id)
-        .where(
-            HomeMemberModel.home_id == home_ctx.home_id,
-            HomeMemberModel.status == "ACTIVE"
-        )
-        .order_by(HomeMemberModel.joined_at.asc())
+        .where(HomeMemberModel.home_id == home_ctx.home_id)
     )
+
+    if status and status.upper() != "ALL":
+        query = query.where(HomeMemberModel.status == status.upper())
+
+    if role:
+        query = query.where(HomeMemberModel.role == role.upper())
+
+    if search:
+        s = f"%{search.strip().lower()}%"
+        query = query.where(
+            func.lower(UserProfileModel.display_name).like(s) |
+            func.lower(UserModel.email).like(s) |
+            UserModel.phone_number.like(s)
+        )
+
+    query = query.order_by(HomeMemberModel.joined_at.asc()).offset((max(1, page) - 1) * page_size).limit(page_size)
     result = await db.execute(query)
     rows = result.all()
+
+    # Batched Entitlement resolution
+    user_ids = [member.user_id for member, user, profile in rows]
+    entitlements_by_user = {}
+    if user_ids:
+        try:
+            ent_q = select(HomeAccessEntitlementModel).where(
+                HomeAccessEntitlementModel.home_id == home_ctx.home_id,
+                HomeAccessEntitlementModel.user_id.in_(user_ids)
+            ).order_by(HomeAccessEntitlementModel.expires_at.desc())
+            ent_res = await db.execute(ent_q)
+            ents = ent_res.scalars().all() if hasattr(ent_res, "scalars") else []
+            for ent in ents:
+                if ent.user_id not in entitlements_by_user:
+                    entitlements_by_user[ent.user_id] = ent
+        except Exception:
+            entitlements_by_user = {}
+
+    home = await db.get(HomeModel, home_ctx.home_id)
+    now = datetime.now(timezone.utc)
 
     members_dto = []
     for member, user, profile in rows:
         display_name = profile.display_name if profile else (user.email.split("@")[0] if user.email else user.phone_number or "Member")
         avatar_url = profile.avatar_url if profile else None
         phone_number = user.phone_number or (profile.phone_number if profile else None)
+
+        if member.status in ["REMOVED", "LEFT", "SUSPENDED"]:
+            acc_status = member.status
+            acc_expires = None
+            days_left = None
+            expiring_soon = False
+            plan_name = None
+            is_res = False
+        else:
+            ent = entitlements_by_user.get(member.user_id)
+            if ent and ent.status == "ACTIVE":
+                acc_expires = ent.expires_at
+                days_left = max(0, (ent.expires_at - now).days) if ent.expires_at else None
+                if ent.expires_at < now:
+                    acc_status = "EXPIRED"
+                    expiring_soon = False
+                elif days_left is not None and days_left <= 7:
+                    acc_status = "EXPIRING"
+                    expiring_soon = True
+                else:
+                    acc_status = "ACTIVE"
+                    expiring_soon = False
+                plan_name = getattr(ent, "notes", None) or "Active Entitlement"
+                is_res = False
+            elif ent and ent.status == "RESERVED":
+                acc_status = "PENDING"
+                acc_expires = ent.expires_at
+                days_left = max(0, (ent.expires_at - now).days) if ent.expires_at else None
+                expiring_soon = False
+                plan_name = "Reserved Seat"
+                is_res = True
+            else:
+                # Check first-year free or home subscription
+                if home and home.created_by == member.user_id:
+                    home_created_at = getattr(home, "created_at", None) or now
+                    first_year_expiry = home_created_at + timedelta(days=365)
+                    acc_expires = first_year_expiry
+                    days_left = max(0, (first_year_expiry - now).days)
+                    if first_year_expiry >= now:
+                        acc_status = "EXPIRING" if days_left <= 7 else "ACTIVE"
+                        expiring_soon = days_left <= 7
+                        plan_name = "First-Year Free Home"
+                    else:
+                        acc_status = "EXPIRED"
+                        expiring_soon = False
+                        plan_name = "First-Year Free Home (Expired)"
+                elif home and hasattr(home, "subscription") and home.subscription and home.subscription.status in ["ACTIVE", "TRIALING"]:
+                    sub = home.subscription
+                    acc_expires = sub.current_period_ends_at
+                    days_left = max(0, (sub.current_period_ends_at - now).days) if sub.current_period_ends_at else None
+                    acc_status = "EXPIRING" if (days_left is not None and days_left <= 7) else "ACTIVE"
+                    expiring_soon = (days_left is not None and days_left <= 7)
+                    plan_name = "Household Subscription"
+                else:
+                    acc_status = "EXPIRED"
+                    acc_expires = None
+                    days_left = 0
+                    expiring_soon = False
+                    plan_name = None
+                is_res = False
+
         members_dto.append(
             MemberDTO(
                 id=member.id,
@@ -115,11 +227,125 @@ async def list_home_members(
                 avatar_url=avatar_url,
                 role=member.role,
                 status=member.status,
-                joined_at=member.joined_at
+                joined_at=member.joined_at,
+                access_status=acc_status,
+                access_expires_at=acc_expires,
+                days_until_expiry=days_left,
+                is_expiring_soon=expiring_soon,
+                plan_name=plan_name,
+                is_reserved=is_res
             )
         )
 
     return ApiSuccessResponse(data=members_dto)
+
+
+@router.get("/homes/{home_id}/members/{member_id}", response_model=ApiSuccessResponse[MemberDetailDTO])
+async def get_home_member_detail(
+    member_id: UUID,
+    home_ctx: HomeContext = Depends(require_home_permission("members:view")),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get detailed member information, entitlement status, and recent activity timeline.
+    """
+    query = (
+        select(HomeMemberModel, UserModel, UserProfileModel)
+        .join(UserModel, HomeMemberModel.user_id == UserModel.id)
+        .outerjoin(UserProfileModel, UserModel.id == UserProfileModel.user_id)
+        .where(
+            HomeMemberModel.id == member_id,
+            HomeMemberModel.home_id == home_ctx.home_id
+        )
+    )
+    res = await db.execute(query)
+    row = res.first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Home member not found.")
+
+    member, user, profile = row
+    display_name = profile.display_name if profile else (user.email.split("@")[0] if user.email else user.phone_number or "Member")
+    avatar_url = profile.avatar_url if profile else None
+    phone_number = user.phone_number or (profile.phone_number if profile else None)
+
+    # Entitlement status
+    ent_q = select(HomeAccessEntitlementModel).where(
+        HomeAccessEntitlementModel.home_id == home_ctx.home_id,
+        HomeAccessEntitlementModel.user_id == member.user_id
+    ).order_by(HomeAccessEntitlementModel.expires_at.desc())
+    ent_res = await db.execute(ent_q)
+    ent = ent_res.scalars().first() if hasattr(ent_res, "scalars") else None
+
+    now = datetime.now(timezone.utc)
+    if member.status in ["REMOVED", "LEFT", "SUSPENDED"]:
+        acc_status = member.status
+        acc_expires = None
+        days_left = None
+        expiring_soon = False
+        plan_name = None
+        is_res = False
+    elif ent and ent.status == "ACTIVE":
+        acc_expires = ent.expires_at
+        days_left = max(0, (ent.expires_at - now).days) if ent.expires_at else None
+        acc_status = "EXPIRED" if ent.expires_at < now else ("EXPIRING" if days_left is not None and days_left <= 7 else "ACTIVE")
+        expiring_soon = (days_left is not None and days_left <= 7)
+        plan_name = getattr(ent, "notes", None) or "Active Entitlement"
+        is_res = False
+    elif ent and ent.status == "RESERVED":
+        acc_status = "PENDING"
+        acc_expires = ent.expires_at
+        days_left = max(0, (ent.expires_at - now).days) if ent.expires_at else None
+        expiring_soon = False
+        plan_name = "Reserved Seat"
+        is_res = True
+    else:
+        acc_status = "ACTIVE" if member.status == "ACTIVE" else member.status
+        acc_expires = None
+        days_left = None
+        expiring_soon = False
+        plan_name = "Standard Member"
+        is_res = False
+
+    # Recent activity logs for this member
+    audit_q = select(AuditLogModel).where(
+        (AuditLogModel.entity_type == "HOME_MEMBER") & (AuditLogModel.entity_id == member.id) |
+        (AuditLogModel.performed_by == member.user_id)
+    ).order_by(AuditLogModel.created_at.desc()).limit(10)
+    audit_res = await db.execute(audit_q)
+    audits = audit_res.scalars().all() if hasattr(audit_res, "scalars") else []
+
+    activity_items = []
+    for a in audits:
+        activity_items.append(
+            MemberActivityItemDTO(
+                id=a.id,
+                action=a.action,
+                description=f"Action '{a.action}' performed on {a.entity_type}",
+                created_at=a.created_at
+            )
+        )
+
+    return ApiSuccessResponse(
+        data=MemberDetailDTO(
+            id=member.id,
+            user_id=user.id,
+            display_name=display_name,
+            email=user.email,
+            phone_number=phone_number,
+            avatar_url=avatar_url,
+            role=member.role,
+            status=member.status,
+            joined_at=member.joined_at,
+            access_status=acc_status,
+            access_expires_at=acc_expires,
+            days_until_expiry=days_left,
+            is_expiring_soon=expiring_soon,
+            plan_name=plan_name,
+            is_reserved=is_res,
+            mobile_verified=getattr(user, "mobile_verified", False) or False,
+            recent_activity=activity_items
+        )
+    )
 
 
 @router.patch("/homes/{home_id}/members/{member_id}/role", response_model=ApiSuccessResponse[MessageResponse])
@@ -141,12 +367,29 @@ async def update_member_role(
     if not target_member:
         raise HTTPException(status_code=404, detail="Home member not found.")
 
-    if target_member.role == "OWNER" and target_member.user_id != home_ctx.user.id:
+    # 1. Owner Protection
+    if target_member.role == "OWNER":
         raise HTTPException(status_code=400, detail="Cannot modify the role of the workspace Owner.")
 
     if target_member.role in ["OWNER", "HOME_ADMIN"] and target_member.user_id != home_ctx.user.id:
         if home_ctx.role not in ["OWNER", "HOME_ADMIN"]:
             raise HTTPException(status_code=403, detail="Only a Home Admin can modify another Admin's role.")
+
+    # 2. Last Admin Protection
+    if target_member.role in ["OWNER", "HOME_ADMIN", "ADMIN"] and payload.role not in ["OWNER", "HOME_ADMIN", "ADMIN"]:
+        other_admin_q = select(func.count(HomeMemberModel.id)).where(
+            HomeMemberModel.home_id == home_ctx.home_id,
+            HomeMemberModel.status == "ACTIVE",
+            HomeMemberModel.id != target_member.id,
+            HomeMemberModel.role.in_(["OWNER", "HOME_ADMIN", "ADMIN"])
+        )
+        other_admin_res = await db.execute(other_admin_q)
+        other_admin_count = other_admin_res.scalar() if hasattr(other_admin_res, "scalar") else 0
+        if not other_admin_count or other_admin_count == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot demote the last remaining administrator of this Home. Assign another administrator first."
+            )
 
     old_role = target_member.role
     target_member.role = payload.role
@@ -190,12 +433,29 @@ async def remove_home_member(
     if not target_member:
         raise HTTPException(status_code=404, detail="Home member not found.")
 
+    # 1. Owner Protection
     if target_member.role == "OWNER":
         raise HTTPException(status_code=400, detail="Cannot remove the Home workspace Owner.")
 
     if target_member.role in ["OWNER", "HOME_ADMIN"] and target_member.user_id != home_ctx.user.id:
         if home_ctx.role not in ["OWNER", "HOME_ADMIN"]:
             raise HTTPException(status_code=403, detail="Only a Home Admin can remove another Admin.")
+
+    # 2. Last Admin Protection
+    if target_member.role in ["OWNER", "HOME_ADMIN", "ADMIN"]:
+        other_admin_q = select(func.count(HomeMemberModel.id)).where(
+            HomeMemberModel.home_id == home_ctx.home_id,
+            HomeMemberModel.status == "ACTIVE",
+            HomeMemberModel.id != target_member.id,
+            HomeMemberModel.role.in_(["OWNER", "HOME_ADMIN", "ADMIN"])
+        )
+        other_admin_res = await db.execute(other_admin_q)
+        other_admin_count = other_admin_res.scalar() if hasattr(other_admin_res, "scalar") else 0
+        if not other_admin_count or other_admin_count == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot remove the last remaining administrator of this Home."
+            )
 
     target_member.status = "REMOVED"
     target_member.updated_at = datetime.now(timezone.utc)
@@ -218,6 +478,187 @@ async def remove_home_member(
 
     return ApiSuccessResponse(
         data=MessageResponse(message="Member has been removed from this Home.")
+    )
+
+
+@router.post("/homes/{home_id}/members/{member_id}/remind", response_model=ApiSuccessResponse[MessageResponse])
+async def remind_member_access_expiry(
+    member_id: UUID,
+    home_ctx: HomeContext = Depends(require_home_permission("members:view")),
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis_client),
+):
+    """
+    Sends a controlled, deduplicated renewal reminder notification to a member.
+    """
+    query = select(HomeMemberModel).where(
+        HomeMemberModel.id == member_id,
+        HomeMemberModel.home_id == home_ctx.home_id,
+        HomeMemberModel.status == "ACTIVE"
+    )
+    member = (await db.execute(query)).scalar_one_or_none()
+    if not member:
+        raise HTTPException(status_code=404, detail="Active home member not found.")
+
+    home = await db.get(HomeModel, home_ctx.home_id)
+    home_name = home.name if home else "the Home"
+
+    # Deduplicate reminder
+    dedup_key = f"remind:{member.user_id}:{home_ctx.home_id}"
+    try:
+        if redis_client:
+            already_reminded = await redis_client.get(dedup_key)
+            if already_reminded:
+                return ApiSuccessResponse(
+                    data=MessageResponse(message="A reminder has already been sent to this member recently.")
+                )
+            await redis_client.setex(dedup_key, 86400, "1")
+    except Exception:
+        pass
+
+    # Create notification
+    notif = NotificationModel(
+        id=uuid4(),
+        home_id=home_ctx.home_id,
+        user_id=member.user_id,
+        title=f"Access Renewal Reminder for {home_name}",
+        body=f"Your subscription access for {home_name} expires soon. Please renew your subscription to maintain continuous access.",
+        type="ACCESS_EXPIRY_REMINDER",
+        is_read=False,
+        created_at=datetime.now(timezone.utc)
+    )
+    db.add(notif)
+
+    audit = AuditLogModel(
+        entity_type="HOME_MEMBER",
+        entity_id=member.id,
+        action="MEMBER_REMINDED",
+        performed_by=home_ctx.user.id,
+        details=json.dumps({"target_user_id": str(member.user_id), "home_id": str(home_ctx.home_id)})
+    )
+    db.add(audit)
+    await db.commit()
+
+    return ApiSuccessResponse(
+        data=MessageResponse(message="Access renewal reminder sent successfully.")
+    )
+
+
+@router.get("/homes/{home_id}/admin/summary", response_model=ApiSuccessResponse[HomeAdminSummaryDTO])
+async def get_home_admin_summary(
+    home_ctx: HomeContext = Depends(require_home_permission("home:view")),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    High-performance consolidated summary counts for Home Admin overview.
+    """
+    home = await db.get(HomeModel, home_ctx.home_id)
+    if not home:
+        raise HTTPException(status_code=404, detail="Home workspace not found.")
+
+    # 1. Active members count
+    mem_q = select(func.count(HomeMemberModel.id)).where(
+        HomeMemberModel.home_id == home_ctx.home_id,
+        HomeMemberModel.status == "ACTIVE"
+    )
+    mem_count = (await db.execute(mem_q)).scalar() or 0
+
+    # 2. Pending invitations count
+    inv_q = select(func.count(InvitationModel.id)).where(
+        InvitationModel.home_id == home_ctx.home_id,
+        InvitationModel.status == "PENDING"
+    )
+    inv_count = (await db.execute(inv_q)).scalar() or 0
+
+    # 3. Pending join requests count
+    req_q = select(func.count(HomeJoinRequestModel.id)).where(
+        HomeJoinRequestModel.home_id == home_ctx.home_id,
+        HomeJoinRequestModel.status == "PENDING"
+    )
+    req_count = (await db.execute(req_q)).scalar() or 0
+
+    # 4. Expiring & expired entitlements
+    now = datetime.now(timezone.utc)
+    week_ahead = now + timedelta(days=7)
+
+    expiring_q = select(func.count(HomeAccessEntitlementModel.id)).where(
+        HomeAccessEntitlementModel.home_id == home_ctx.home_id,
+        HomeAccessEntitlementModel.status == "ACTIVE",
+        HomeAccessEntitlementModel.expires_at >= now,
+        HomeAccessEntitlementModel.expires_at <= week_ahead
+    )
+    expiring_count = (await db.execute(expiring_q)).scalar() or 0
+
+    expired_q = select(func.count(HomeAccessEntitlementModel.id)).where(
+        HomeAccessEntitlementModel.home_id == home_ctx.home_id,
+        (HomeAccessEntitlementModel.status == "EXPIRED") | (
+            (HomeAccessEntitlementModel.status == "ACTIVE") & (HomeAccessEntitlementModel.expires_at < now)
+        )
+    )
+    expired_count = (await db.execute(expired_q)).scalar() or 0
+
+    return ApiSuccessResponse(
+        data=HomeAdminSummaryDTO(
+            home_id=home.id,
+            home_name=home.name,
+            public_home_id=home.public_home_id or "OZH-UNKNOWN",
+            qr_status=home.home_qr_status or "ACTIVE",
+            join_policy=getattr(home, "join_policy", "REQUEST_TO_JOIN") or "REQUEST_TO_JOIN",
+            active_members_count=mem_count,
+            pending_invitations_count=inv_count,
+            pending_join_requests_count=req_count,
+            expiring_access_count=expiring_count,
+            expired_access_count=expired_count
+        )
+    )
+
+
+@router.post("/homes/{home_id}/leave", response_model=ApiSuccessResponse[MessageResponse])
+async def leave_home_workspace(
+    home_ctx: HomeContext = Depends(require_home_permission("home:view")),
+    db: AsyncSession = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis_client),
+):
+    """
+    Voluntarily leave a Home workspace.
+    Invariant: Workspace Owner cannot leave without transferring ownership or deleting the workspace.
+    """
+    if home_ctx.role == "OWNER":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The workspace Owner cannot leave the Home. You must transfer ownership or delete the workspace."
+        )
+
+    query = select(HomeMemberModel).where(
+        HomeMemberModel.home_id == home_ctx.home_id,
+        HomeMemberModel.user_id == home_ctx.user.id,
+        HomeMemberModel.status == "ACTIVE"
+    )
+    member = (await db.execute(query)).scalar_one_or_none()
+    if not member:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Active membership not found.")
+
+    member.status = "LEFT"
+    member.updated_at = datetime.now(timezone.utc)
+
+    audit = AuditLogModel(
+        entity_type="HOME_MEMBER",
+        entity_id=member.id,
+        action="MEMBER_LEFT",
+        performed_by=home_ctx.user.id,
+        details=json.dumps({"home_id": str(home_ctx.home_id), "user_id": str(home_ctx.user.id), "role": member.role})
+    )
+    db.add(audit)
+    await db.commit()
+
+    try:
+        await redis_client.delete(f"user:{home_ctx.user.id}:homes")
+        await redis_client.delete(f"user:{home_ctx.user.id}:home:{home_ctx.home_id}:perms")
+    except Exception:
+        pass
+
+    return ApiSuccessResponse(
+        data=MessageResponse(message="You have successfully left this Home workspace.")
     )
 
 
@@ -339,21 +780,29 @@ async def create_invitation(
             pass
 
         try:
+            reserved_suffix = " Subscription reserved for you." if getattr(new_invite, "is_reserved", False) else ""
             await notification_service.dispatch(
                 home_id=home_ctx.home_id,
                 user_id=existing_user.id,
                 title=f"Invitation to join {home_name}",
-                body=f"{inviter_name} invited you to join '{home_name}' as a {payload.role}.",
+                body=f"{inviter_name} invited you to join '{home_name}' as a {payload.role}.{reserved_suffix}",
                 type="HOME_INVITATION",
                 db=db,
                 redis_client=redis_client,
+                priority="HIGH",
+                requires_action=True,
+                action_type="JOIN_HOME",
+                action_url=f"/invite/{token}",
+                action_label="Accept / Decline",
+                dedup_key=f"inv_received_{new_invite.id}",
                 metadata={
                     "invitation_id": str(new_invite.id),
                     "token": token,
                     "invitation_code": invitation_code,
                     "home_id": str(home_ctx.home_id),
                     "home_name": home_name,
-                    "role": payload.role
+                    "role": payload.role,
+                    "is_reserved": getattr(new_invite, "is_reserved", False)
                 }
             )
         except Exception:
@@ -400,6 +849,8 @@ async def create_invitation(
 
 @router.get("/homes/{home_id}/invitations", response_model=ApiSuccessResponse[List[InvitationDTO]])
 async def list_home_invitations(
+    status: Optional[str] = "PENDING",
+    search: Optional[str] = None,
     home_ctx: HomeContext = Depends(require_home_permission("members:view")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -408,18 +859,26 @@ async def list_home_invitations(
         .join(HomeModel, InvitationModel.home_id == HomeModel.id)
         .outerjoin(UserModel, InvitationModel.invited_by == UserModel.id)
         .outerjoin(UserProfileModel, UserModel.id == UserProfileModel.user_id)
-        .where(
-            InvitationModel.home_id == home_ctx.home_id,
-            InvitationModel.status == "PENDING"
-        )
-        .order_by(InvitationModel.created_at.desc())
+        .where(InvitationModel.home_id == home_ctx.home_id)
     )
+
+    if status and status.upper() != "ALL":
+        query = query.where(InvitationModel.status == status.upper())
+
+    if search:
+        s = f"%{search.strip().lower()}%"
+        query = query.where(
+            func.lower(InvitationModel.email).like(s) |
+            InvitationModel.phone_number.like(s) |
+            func.lower(InvitationModel.invitation_code).like(s)
+        )
+
+    query = query.order_by(InvitationModel.created_at.desc())
     result = await db.execute(query)
     rows = result.all()
 
     invitations = []
     for inv, home_name, inv_email, inv_disp in rows:
-        # Check if code exists; if legacy invitation has no code, assign one
         if not inv.invitation_code:
             inv.invitation_code = generate_invitation_code()
             db.add(inv)
@@ -456,14 +915,16 @@ async def cancel_home_invitation(
 ):
     query = select(InvitationModel).where(
         InvitationModel.id == invitation_id,
-        InvitationModel.home_id == home_ctx.home_id,
-        InvitationModel.status == "PENDING"
+        InvitationModel.home_id == home_ctx.home_id
     )
     result = await db.execute(query)
     inv = result.scalar_one_or_none()
 
     if not inv:
-        raise HTTPException(status_code=404, detail="Pending invitation not found.")
+        raise HTTPException(status_code=404, detail="Invitation not found.")
+
+    if inv.status == "ACCEPTED":
+        raise HTTPException(status_code=400, detail="Cannot cancel an invitation that has already been accepted.")
 
     inv.status = "REVOKED"
     inv.revoked_at = datetime.now(timezone.utc)
@@ -477,6 +938,8 @@ async def cancel_home_invitation(
         details=json.dumps({"home_id": str(home_ctx.home_id), "email": inv.email, "phone_number": inv.phone_number, "invitation_code": inv.invitation_code})
     )
     db.add(audit)
+    # Auto-resolve pending recipient alert
+    await notification_service.resolve_by_dedup_prefix(f"inv_received_{inv.id}", db)
     await db.commit()
 
     return ApiSuccessResponse(data=MessageResponse(message="Invitation has been cancelled and revoked."))
@@ -490,19 +953,22 @@ async def resend_home_invitation(
 ):
     query = select(InvitationModel).where(
         InvitationModel.id == invitation_id,
-        InvitationModel.home_id == home_ctx.home_id,
-        InvitationModel.status == "PENDING"
+        InvitationModel.home_id == home_ctx.home_id
     )
     result = await db.execute(query)
     inv = result.scalar_one_or_none()
 
     if not inv:
-        raise HTTPException(status_code=404, detail="Pending invitation not found.")
+        raise HTTPException(status_code=404, detail="Invitation not found.")
+
+    if inv.status == "ACCEPTED":
+        raise HTTPException(status_code=400, detail="Cannot resend an invitation that has already been accepted.")
 
     # Refresh token & code, extend expiry by 7 days
     inv.token = secrets.token_urlsafe(24)
     inv.invitation_code = generate_invitation_code()
     inv.expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+    inv.status = "PENDING"
     inv.updated_at = datetime.now(timezone.utc)
 
     audit = AuditLogModel(
@@ -525,8 +991,8 @@ async def resend_home_invitation(
             home_name=home_name,
             phone_number=inv.phone_number,
             email=inv.email,
-            role=inv.role,
-            invitation_mode=inv.invitation_mode,
+            role=inv.role or "MEMBER",
+            invitation_mode=getattr(inv, "invitation_mode", "INVITE_ONLY") or "INVITE_ONLY",
             token=inv.token,
             invitation_code=inv.invitation_code,
             invite_url=f"/invite/{inv.token}",
@@ -586,6 +1052,9 @@ async def get_invitation_details(
 
     # Check if currently authenticated user is already a member
     is_already_member = False
+    is_identity_matched: Optional[bool] = None
+    identity_mismatch_reason: Optional[str] = None
+
     opt_user = await _extract_optional_user(credentials, db)
     if opt_user:
         mem_query = select(HomeMemberModel).where(
@@ -596,6 +1065,30 @@ async def get_invitation_details(
         mem = (await db.execute(mem_query)).scalar_one_or_none()
         if mem:
             is_already_member = True
+
+        # Compute identity matching for authenticated user
+        matched = True
+        if inv.phone_number:
+            opt_phone = opt_user.phone_number
+            if not opt_phone and getattr(opt_user, "profile", None) and opt_user.profile.phone_number:
+                opt_phone = opt_user.profile.phone_number
+
+            if not opt_phone or not opt_user.mobile_verified:
+                matched = False
+                identity_mismatch_reason = "Please verify your mobile number before accepting this invitation."
+            elif normalize_phone_number(opt_phone) != normalize_phone_number(inv.phone_number):
+                matched = False
+                identity_mismatch_reason = "This invitation was issued to a different mobile number."
+
+        if inv.email and matched:
+            if not opt_user.email or opt_user.email.lower().strip() != inv.email.lower().strip():
+                matched = False
+                identity_mismatch_reason = "This invitation was issued to a different email address."
+            elif (hasattr(opt_user, "is_verified") and opt_user.is_verified is False) or (hasattr(opt_user, "email_verified") and opt_user.email_verified is False):
+                matched = False
+                identity_mismatch_reason = "Please verify your email address before accepting this invitation."
+
+        is_identity_matched = matched
 
     return ApiSuccessResponse(
         data=InvitationDetailDTO(
@@ -613,7 +1106,9 @@ async def get_invitation_details(
             expires_at=inv.expires_at,
             created_at=inv.created_at,
             is_expired=is_expired,
-            is_already_member=is_already_member
+            is_already_member=is_already_member,
+            is_identity_matched=is_identity_matched,
+            identity_mismatch_reason=identity_mismatch_reason
         )
     )
 
@@ -682,13 +1177,7 @@ async def _execute_join_invitation(
         if not user_phone and getattr(current_user, "profile", None) and current_user.profile.phone_number:
             user_phone = current_user.profile.phone_number
 
-        if not user_phone:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Please verify your mobile number before accepting this invitation."
-            )
-
-        if not current_user.mobile_verified:
+        if not user_phone or not current_user.mobile_verified:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Please verify your mobile number before accepting this invitation."
@@ -700,11 +1189,21 @@ async def _execute_join_invitation(
                 detail="This invitation was issued to a different mobile number."
             )
 
-    if invitation.email and current_user.email:
+    if invitation.email:
+        if not current_user.email:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This invitation was issued to a different email address."
+            )
         if current_user.email.lower().strip() != invitation.email.lower().strip():
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="This invitation was issued to a different email address."
+            )
+        if (hasattr(current_user, "is_verified") and current_user.is_verified is False) or (hasattr(current_user, "email_verified") and current_user.email_verified is False):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Please verify your email address before accepting this invitation."
             )
 
     # 5. Check duplicate active membership
@@ -800,13 +1299,19 @@ async def _execute_join_invitation(
                 user_id=invitation.invited_by,
                 title=f"New member joined {home.name}",
                 body=f"{user_name} accepted your invitation and joined '{home.name}'.",
-                type="HOME_INVITATION",
+                type="INVITATION_ACCEPTED",
+                priority="HIGH",
+                requires_action=False,
+                action_status="RESOLVED",
                 db=db,
                 redis_client=redis_client,
                 metadata={"home_id": str(home.id), "user_id": str(current_user.id)}
             )
         except Exception:
             pass
+
+    # Auto-resolve recipient's invitation notification
+    await notification_service.resolve_by_dedup_prefix(f"inv_received_{invitation.id}", db)
 
     await db.commit()
 
@@ -892,6 +1397,10 @@ async def decline_invitation(
         details=json.dumps({"home_id": str(invitation.home_id), "invitation_code": invitation.invitation_code})
     )
     db.add(audit)
+
+    # Auto-resolve recipient's invitation notification
+    await notification_service.resolve_by_dedup_prefix(f"inv_received_{invitation.id}", db)
+
     await db.commit()
 
     return ApiSuccessResponse(

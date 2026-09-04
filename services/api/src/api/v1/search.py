@@ -84,7 +84,7 @@ async def unified_home_search(
                     location_path=a.location_path,
                     status=a.asset_status,
                     relevance=1.0,
-                    navigation_target=f"/inventory/assets/{a.id}",
+                    navigation_target="/inventory",
                     meta_info={"condition": a.condition, "holder": a.current_holder_name}
                 )
             )
@@ -118,7 +118,7 @@ async def unified_home_search(
                     location_path=item.location_path,
                     status=item.status,
                     relevance=0.9,
-                    navigation_target=f"/inventory/{item.id}",
+                    navigation_target="/inventory",
                     meta_info={"quantity": str(item.quantity), "unit": item.unit}
                 )
             )
@@ -149,7 +149,7 @@ async def unified_home_search(
                     location_path=l.name,
                     status="ACTIVE",
                     relevance=0.8,
-                    navigation_target=f"/locations/{l.id}"
+                    navigation_target="/inventory"
                 )
             )
         domain_counts["LOCATION"] = len(loc_items)
@@ -178,7 +178,7 @@ async def unified_home_search(
                     subtitle=f"{s.quantity} {s.unit}",
                     status=check_str,
                     relevance=0.7,
-                    navigation_target="/purchase-list",
+                    navigation_target="/shopping",
                     meta_info={"status": s.status}
                 )
             )
@@ -209,7 +209,7 @@ async def unified_home_search(
                     subtitle=f"Status: {t.status}{due_str}",
                     status=t.status,
                     relevance=0.7,
-                    navigation_target=f"/tasks/{t.id}",
+                    navigation_target="/tasks",
                     meta_info={"priority": t.priority, "due_date": t.due_date.isoformat() if t.due_date else None}
                 )
             )
@@ -239,7 +239,7 @@ async def unified_home_search(
                     subtitle=f"{b.currency} {b.expected_amount:.2f} • Due: {b.due_date} • {b.status}",
                     status=b.status,
                     relevance=0.7,
-                    navigation_target=f"/bills/{b.id}",
+                    navigation_target="/bills",
                     meta_info={"amount": str(b.expected_amount), "currency": b.currency, "due_date": b.due_date.isoformat()}
                 )
             )
@@ -272,7 +272,7 @@ async def unified_home_search(
                     subtitle=f"Date: {time_str}{loc_str}",
                     status=e.status,
                     relevance=0.6,
-                    navigation_target=f"/calendar/{e.id}",
+                    navigation_target="/calendar",
                     meta_info={"start_time": e.start_time.isoformat(), "is_all_day": e.is_all_day}
                 )
             )
@@ -303,7 +303,7 @@ async def unified_home_search(
                         subtitle=f"Role: {m.role} • {email}",
                         status="ACTIVE",
                         relevance=0.5,
-                        navigation_target="/settings/members",
+                        navigation_target="/members",
                         meta_info={"email": email, "role": m.role}
                     )
                 )
@@ -312,6 +312,7 @@ async def unified_home_search(
 
     # Sort results by relevance descending
     results.sort(key=lambda x: x.relevance, reverse=True)
+
 
     return ApiSuccessResponse(
         data=UnifiedSearchResponse(

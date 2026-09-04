@@ -69,6 +69,134 @@ router = APIRouter(prefix="/subscription", tags=["Subscriptions"])
 
 
 # ------------------------------------------------------------------------------
+# Authoritative Pricing Engine & Commercial Resolver
+# ------------------------------------------------------------------------------
+
+def resolve_current_selling_price(price: SubscriptionPriceModel, now: Optional[datetime] = None) -> Tuple[Decimal, str, Optional[Decimal]]:
+    """
+    Authoritative Pricing Engine Resolver.
+    Returns: (current_selling_price, price_tier_type, calculated_discount_percentage)
+    - Before Start Date: Regular Price
+    - During Active Campaign: Offer Price
+    - After End Date: Regular Price
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+
+    # Regular price authoritative baseline
+    regular = Decimal(str(price.regular_price if price.regular_price and price.regular_price > 0 else (price.additional_member_list_price or price.list_price or "0.00")))
+    offer = price.offer_price
+
+    is_offer_active = False
+    if offer is not None and Decimal(str(offer)) > 0:
+        status = (price.offer_status or "DRAFT").upper()
+        
+        start = price.offer_start_date
+        if start and start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+            
+        end = price.offer_end_date
+        if end and end.tzinfo is None:
+            end = end.replace(tzinfo=timezone.utc)
+
+        if status == "ACTIVE":
+            if start and now < start:
+                is_offer_active = False
+            elif end and now > end:
+                is_offer_active = False
+            else:
+                is_offer_active = True
+        elif status == "SCHEDULED":
+            if start and end and start <= now <= end:
+                is_offer_active = True
+
+    discount_pct = None
+    if offer is not None and regular > Decimal("0.00"):
+        discount_pct = round(((regular - Decimal(str(offer))) / regular) * Decimal("100.00"), 2)
+
+    if is_offer_active and offer is not None:
+        return (Decimal(str(offer)), "OFFER_PRICE", discount_pct)
+    else:
+        return (regular, "REGULAR_PRICE", discount_pct)
+
+
+COUNTRY_METADATA_DEFAULTS = {
+    "IN": {"iso3": "IND", "name": "India", "symbol": "₹", "currency": "INR"},
+    "US": {"iso3": "USA", "name": "United States", "symbol": "$", "currency": "USD"},
+    "AE": {"iso3": "ARE", "name": "United Arab Emirates", "symbol": "AED", "currency": "AED"},
+    "SA": {"iso3": "SAU", "name": "Saudi Arabia", "symbol": "SAR", "currency": "SAR"},
+    "GB": {"iso3": "GBR", "name": "United Kingdom", "symbol": "£", "currency": "GBP"},
+    "SG": {"iso3": "SGP", "name": "Singapore", "symbol": "S$", "currency": "SGD"},
+    "AU": {"iso3": "AUS", "name": "Australia", "symbol": "A$", "currency": "AUD"},
+    "CA": {"iso3": "CAN", "name": "Canada", "symbol": "C$", "currency": "CAD"},
+    "DE": {"iso3": "DEU", "name": "Germany", "symbol": "€", "currency": "EUR"},
+    "FR": {"iso3": "FRA", "name": "France", "symbol": "€", "currency": "EUR"},
+    "JP": {"iso3": "JPN", "name": "Japan", "symbol": "¥", "currency": "JPY"},
+    "QA": {"iso3": "QAT", "name": "Qatar", "symbol": "QAR", "currency": "QAR"},
+    "KW": {"iso3": "KWT", "name": "Kuwait", "symbol": "KWD", "currency": "KWD"},
+    "OM": {"iso3": "OMN", "name": "Oman", "symbol": "OMR", "currency": "OMR"},
+    "BH": {"iso3": "BHR", "name": "Bahrain", "symbol": "BHD", "currency": "BHD"},
+    "GLOBAL": {"iso3": "GLB", "name": "Global / International", "symbol": "$", "currency": "USD"},
+}
+
+CURRENCY_SYMBOLS = {
+    "INR": "₹",
+    "GBP": "£",
+    "EUR": "€",
+    "AED": "AED",
+    "SAR": "SAR",
+    "SGD": "S$",
+    "AUD": "A$",
+    "CAD": "C$",
+    "JPY": "¥",
+    "USD": "$",
+}
+
+
+def serialize_subscription_price_dto(price: SubscriptionPriceModel, now: Optional[datetime] = None) -> SubscriptionPriceDTO:
+    current_selling, tier, discount_pct = resolve_current_selling_price(price, now)
+    reg_price = Decimal(str(price.regular_price if price.regular_price and price.regular_price > 0 else (price.additional_member_list_price or price.list_price or "0.00")))
+    
+    c_meta = COUNTRY_METADATA_DEFAULTS.get(price.country.upper(), {})
+    curr_sym = price.currency_symbol or CURRENCY_SYMBOLS.get(price.currency.upper()) or c_meta.get("symbol", "$")
+    iso3 = price.country_iso3 or c_meta.get("iso3", price.country.upper()[:3])
+    cname = price.country_name or c_meta.get("name", price.country)
+    
+    return SubscriptionPriceDTO(
+        id=price.id,
+        plan_id=price.plan_id,
+        country=price.country,
+        country_name=cname,
+        country_iso3=iso3,
+        region=price.region,
+        currency=price.currency,
+        currency_symbol=curr_sym,
+        billing_period=price.billing_period,
+        regular_price=reg_price,
+        list_price=price.list_price,
+        additional_member_list_price=price.additional_member_list_price,
+        offer_price=price.offer_price,
+        campaign_name=price.campaign_name,
+        campaign_description=price.campaign_description,
+        offer_status=price.offer_status or "DRAFT",
+        offer_start_date=price.offer_start_date,
+        offer_end_date=price.offer_end_date,
+        calculated_discount_percentage=discount_pct,
+        current_selling_price=current_selling,
+        tax_percentage=price.tax_percentage or Decimal("0.00"),
+        allow_coupon_stacking=price.allow_coupon_stacking or False,
+        base_price=price.base_price,
+        additional_member_price=price.additional_member_price,
+        version=price.version,
+        is_active=price.is_active,
+        effective_from=price.effective_from,
+        effective_until=price.effective_until
+    )
+
+
+# ------------------------------------------------------------------------------
 # Default Data Bootstrapper
 # ------------------------------------------------------------------------------
 
@@ -94,33 +222,103 @@ async def bootstrap_default_subscription_data(db: AsyncSession) -> SubscriptionP
         db.add(plan)
         await db.flush()
 
-        # Regional Standard / List Prices (Development Seed Values)
-        price_us = SubscriptionPriceModel(
-            plan_id=plan.id, country="US", region="NORTH_AMERICA", currency="USD", billing_period="ANNUAL",
-            list_price=Decimal("0.00"), additional_member_list_price=Decimal("20.00"),
-            base_price=Decimal("0.00"), additional_member_price=Decimal("10.00"), version=1, is_active=True
-        )
-        price_global = SubscriptionPriceModel(
-            plan_id=plan.id, country="GLOBAL", region="GLOBAL", currency="USD", billing_period="ANNUAL",
-            list_price=Decimal("0.00"), additional_member_list_price=Decimal("20.00"),
-            base_price=Decimal("0.00"), additional_member_price=Decimal("10.00"), version=1, is_active=True
-        )
+        # Regional Commercial Prices with Baseline Campaigns
         price_in = SubscriptionPriceModel(
-            plan_id=plan.id, country="IN", region="SOUTH_ASIA", currency="INR", billing_period="ANNUAL",
-            list_price=Decimal("0.00"), additional_member_list_price=Decimal("1799.00"),
-            base_price=Decimal("0.00"), additional_member_price=Decimal("899.50"), version=1, is_active=True
+            plan_id=plan.id, country="IN", country_name="India", country_iso3="IND",
+            region="SOUTH_ASIA", currency="INR", currency_symbol="₹", billing_period="ANNUAL",
+            regular_price=Decimal("2499.00"),
+            list_price=Decimal("2499.00"),
+            additional_member_list_price=Decimal("1799.00"),
+            offer_price=Decimal("1799.00"),
+            campaign_name="Launch Offer 2026",
+            campaign_description="Launch promotional pricing for Indian households",
+            offer_status="ACTIVE",
+            offer_start_date=datetime(2026, 9, 1, 0, 0, 0, tzinfo=timezone.utc),
+            offer_end_date=datetime(2026, 12, 31, 23, 59, 59, tzinfo=timezone.utc),
+            tax_percentage=Decimal("18.00"),
+            allow_coupon_stacking=False,
+            base_price=Decimal("0.00"),
+            additional_member_price=Decimal("1799.00"),
+            version=1,
+            is_active=True
+        )
+        price_us = SubscriptionPriceModel(
+            plan_id=plan.id, country="US", country_name="United States", country_iso3="USA",
+            region="NORTH_AMERICA", currency="USD", currency_symbol="$", billing_period="ANNUAL",
+            regular_price=Decimal("29.99"),
+            list_price=Decimal("29.99"),
+            additional_member_list_price=Decimal("20.00"),
+            offer_price=Decimal("19.99"),
+            campaign_name="Launch Offer 2026",
+            campaign_description="Launch promotional pricing for US households",
+            offer_status="ACTIVE",
+            offer_start_date=datetime(2026, 9, 1, 0, 0, 0, tzinfo=timezone.utc),
+            offer_end_date=datetime(2026, 12, 31, 23, 59, 59, tzinfo=timezone.utc),
+            tax_percentage=Decimal("0.00"),
+            allow_coupon_stacking=False,
+            base_price=Decimal("0.00"),
+            additional_member_price=Decimal("20.00"),
+            version=1,
+            is_active=True
         )
         price_ae = SubscriptionPriceModel(
-            plan_id=plan.id, country="AE", region="MIDDLE_EAST", currency="AED", billing_period="ANNUAL",
-            list_price=Decimal("0.00"), additional_member_list_price=Decimal("99.00"),
-            base_price=Decimal("0.00"), additional_member_price=Decimal("49.50"), version=1, is_active=True
+            plan_id=plan.id, country="AE", country_name="United Arab Emirates", country_iso3="ARE",
+            region="MIDDLE_EAST", currency="AED", currency_symbol="AED", billing_period="ANNUAL",
+            regular_price=Decimal("149.00"),
+            list_price=Decimal("149.00"),
+            additional_member_list_price=Decimal("99.00"),
+            offer_price=Decimal("99.00"),
+            campaign_name="Launch Offer 2026",
+            campaign_description="Launch promotional pricing for UAE households",
+            offer_status="ACTIVE",
+            offer_start_date=datetime(2026, 9, 1, 0, 0, 0, tzinfo=timezone.utc),
+            offer_end_date=datetime(2026, 12, 31, 23, 59, 59, tzinfo=timezone.utc),
+            tax_percentage=Decimal("5.00"),
+            allow_coupon_stacking=False,
+            base_price=Decimal("0.00"),
+            additional_member_price=Decimal("99.00"),
+            version=1,
+            is_active=True
         )
         price_gb = SubscriptionPriceModel(
-            plan_id=plan.id, country="GB", region="EUROPE", currency="GBP", billing_period="ANNUAL",
-            list_price=Decimal("0.00"), additional_member_list_price=Decimal("16.00"),
-            base_price=Decimal("0.00"), additional_member_price=Decimal("8.00"), version=1, is_active=True
+            plan_id=plan.id, country="GB", country_name="United Kingdom", country_iso3="GBR",
+            region="EUROPE", currency="GBP", currency_symbol="£", billing_period="ANNUAL",
+            regular_price=Decimal("24.99"),
+            list_price=Decimal("24.99"),
+            additional_member_list_price=Decimal("16.00"),
+            offer_price=Decimal("16.99"),
+            campaign_name="Launch Offer 2026",
+            campaign_description="Launch promotional pricing for UK households",
+            offer_status="ACTIVE",
+            offer_start_date=datetime(2026, 9, 1, 0, 0, 0, tzinfo=timezone.utc),
+            offer_end_date=datetime(2026, 12, 31, 23, 59, 59, tzinfo=timezone.utc),
+            tax_percentage=Decimal("20.00"),
+            allow_coupon_stacking=False,
+            base_price=Decimal("0.00"),
+            additional_member_price=Decimal("16.00"),
+            version=1,
+            is_active=True
         )
-        db.add_all([price_us, price_global, price_in, price_ae, price_gb])
+        price_global = SubscriptionPriceModel(
+            plan_id=plan.id, country="GLOBAL", country_name="Global / International", country_iso3="GLB",
+            region="GLOBAL", currency="USD", currency_symbol="$", billing_period="ANNUAL",
+            regular_price=Decimal("29.99"),
+            list_price=Decimal("29.99"),
+            additional_member_list_price=Decimal("20.00"),
+            offer_price=Decimal("19.99"),
+            campaign_name="Launch Offer 2026",
+            campaign_description="Launch promotional pricing globally",
+            offer_status="ACTIVE",
+            offer_start_date=datetime(2026, 9, 1, 0, 0, 0, tzinfo=timezone.utc),
+            offer_end_date=datetime(2026, 12, 31, 23, 59, 59, tzinfo=timezone.utc),
+            tax_percentage=Decimal("0.00"),
+            allow_coupon_stacking=False,
+            base_price=Decimal("0.00"),
+            additional_member_price=Decimal("20.00"),
+            version=1,
+            is_active=True
+        )
+        db.add_all([price_in, price_us, price_ae, price_gb, price_global])
 
         # Default Launch Campaign & Promotion
         launch_promo = PromotionModel(
@@ -180,7 +378,7 @@ async def get_or_init_home_subscription(home_id: UUID, db: AsyncSession) -> Subs
             SubscriptionPriceModel.country == "GLOBAL",
             SubscriptionPriceModel.is_active == True
         )
-        price = (await db.execute(price_query)).scalar_one_or_none()
+        price = (await db.execute(price_query)).scalars().first()
 
         now = datetime.now(timezone.utc)
         intro_ends = now + timedelta(days=plan.introductory_duration_days)
@@ -399,22 +597,7 @@ async def list_subscription_plans(
             filtered_prices = [pr for pr in filtered_prices if pr.currency == currency.upper()]
 
         price_dtos = [
-            SubscriptionPriceDTO(
-                id=pr.id,
-                plan_id=pr.plan_id,
-                country=pr.country,
-                region=pr.region,
-                currency=pr.currency,
-                billing_period=pr.billing_period,
-                list_price=pr.list_price,
-                additional_member_list_price=pr.additional_member_list_price,
-                base_price=pr.base_price,
-                additional_member_price=pr.additional_member_price,
-                version=pr.version,
-                is_active=pr.is_active,
-                effective_from=pr.effective_from,
-                effective_until=pr.effective_until
-            )
+            serialize_subscription_price_dto(pr)
             for pr in filtered_prices if pr.is_active
         ]
 
@@ -452,6 +635,33 @@ async def list_subscription_plans(
     return ApiSuccessResponse(data=dtos)
 
 
+def _resolve_scalar(res):
+    if res is None:
+        return None
+    if hasattr(res, "scalar_one_or_none"):
+        try:
+            val = res.scalar_one_or_none()
+            if val is not None:
+                return val
+        except Exception:
+            pass
+    if hasattr(res, "scalars"):
+        try:
+            val = res.scalars().first()
+            if val is not None:
+                return val
+        except Exception:
+            pass
+    if hasattr(res, "scalar"):
+        try:
+            val = res.scalar()
+            if val is not None:
+                return val
+        except Exception:
+            pass
+    return None
+
+
 @router.get("/pricing/current", response_model=ApiSuccessResponse[SubscriptionPriceDTO])
 async def get_current_pricing(
     country: str = Query(default="GLOBAL"),
@@ -473,7 +683,7 @@ async def get_current_pricing(
         )
         .order_by(SubscriptionPriceModel.version.desc())
     )
-    price = (await db.execute(query)).scalar_one_or_none()
+    price = _resolve_scalar(await db.execute(query))
 
     if not price:
         query_global = (
@@ -487,29 +697,12 @@ async def get_current_pricing(
             )
             .order_by(SubscriptionPriceModel.version.desc())
         )
-        price = (await db.execute(query_global)).scalar_one_or_none()
+        price = _resolve_scalar(await db.execute(query_global))
 
     if not price:
         raise HTTPException(status_code=404, detail="Active pricing configuration not found.")
 
-    return ApiSuccessResponse(
-        data=SubscriptionPriceDTO(
-            id=price.id,
-            plan_id=price.plan_id,
-            country=price.country,
-            region=price.region,
-            currency=price.currency,
-            billing_period=price.billing_period,
-            list_price=price.list_price,
-            additional_member_list_price=price.additional_member_list_price,
-            base_price=price.base_price,
-            additional_member_price=price.additional_member_price,
-            version=price.version,
-            is_active=price.is_active,
-            effective_from=price.effective_from,
-            effective_until=price.effective_until
-        )
-    )
+    return ApiSuccessResponse(data=serialize_subscription_price_dto(price))
 
 
 @router.post("/calculate", response_model=ApiSuccessResponse[CalculateSubscriptionResponse])
@@ -519,22 +712,22 @@ async def calculate_subscription_price(
 ):
     """
     Authoritative Centralized Pricing Calculator.
-    Evaluates Standard List Price + Coupons (Free Periods, Percentage, Fixed) + Promotions.
+    Evaluates Regular vs Offer Selling Price + Coupons (Free Periods, Percentage, Fixed) + Promotions.
     """
     # 1. Lookup Plan
     plan_query = select(SubscriptionPlanModel).where(SubscriptionPlanModel.code == (payload.plan_code or "OZHZO_HOME"))
-    plan = (await db.execute(plan_query)).scalar_one_or_none()
+    plan = _resolve_scalar(await db.execute(plan_query))
     if not plan:
         try:
             await bootstrap_default_subscription_data(db)
-            plan = (await db.execute(plan_query)).scalar_one_or_none()
+            plan = _resolve_scalar(await db.execute(plan_query))
         except Exception:
             pass
 
     if not plan or getattr(plan, "status", "ACTIVE") != "ACTIVE":
         raise HTTPException(status_code=404, detail="Active subscription plan not found.")
 
-    # 2. Lookup Regional Standard List Price
+    # 2. Lookup Regional Standard List Price & Resolve Active Selling Price
     country_code = (payload.country or "GLOBAL").upper()
     period = (payload.billing_period or "ANNUAL").upper()
 
@@ -548,7 +741,7 @@ async def calculate_subscription_price(
         )
         .order_by(SubscriptionPriceModel.version.desc())
     )
-    price = (await db.execute(price_query)).scalar_one_or_none()
+    price = _resolve_scalar(await db.execute(price_query))
 
     if not price:
         price_query_global = (
@@ -561,12 +754,14 @@ async def calculate_subscription_price(
             )
             .order_by(SubscriptionPriceModel.version.desc())
         )
-        price = (await db.execute(price_query_global)).scalar_one_or_none()
+        price = _resolve_scalar(await db.execute(price_query_global))
 
     if not price:
         raise HTTPException(status_code=404, detail="Pricing configuration not found.")
 
-    unit_list_price = price.additional_member_list_price
+    # Resolve authoritative active selling price (Offer Price during active campaign, Regular Price otherwise)
+    unit_selling_price, price_tier, campaign_discount_pct = resolve_current_selling_price(price)
+    unit_list_price = unit_selling_price
 
     # 3. Evaluate Coupon (First Priority)
     coupon_code = payload.coupon_code
@@ -932,19 +1127,47 @@ async def checkout_subscription(
     # If 100% covered by credit or coupon, immediately activate subscription & provision entitlement
     if not payment_required:
         now = datetime.now(timezone.utc)
-        sub = SubscriptionModel(
-            id=uuid.uuid4(),
-            home_id=payload.home_id,
-            plan_id=plan.id,
-            status="ACTIVE",
-            current_period_starts_at=now,
-            current_period_ends_at=now + timedelta(days=365),
-            paid_member_seats=0,
-            currency=payload.currency.upper(),
-            created_at=now,
-            updated_at=now
-        )
-        db.add(sub)
+        
+        # Check for existing subscription to extend logically (Rule 10)
+        existing_sub = None
+        if payload.home_id:
+            sub_q = select(SubscriptionModel).where(SubscriptionModel.home_id == payload.home_id)
+            existing_sub = (await db.execute(sub_q)).scalars().first()
+        if not existing_sub:
+            sub_u_q = select(SubscriptionModel).where(SubscriptionModel.user_id == current_user.id)
+            existing_sub = (await db.execute(sub_u_q)).scalars().first()
+
+        if existing_sub:
+            sub = existing_sub
+            sub.plan_id = plan.id
+            sub.price_id = price.id if price else sub.price_id
+            sub.status = "ACTIVE"
+            sub.currency = payload.currency.upper()
+            sub.updated_at = now
+            if sub.current_period_ends_at and (sub.current_period_ends_at if sub.current_period_ends_at.tzinfo else sub.current_period_ends_at.replace(tzinfo=timezone.utc)) > now:
+                sub_end = sub.current_period_ends_at if sub.current_period_ends_at.tzinfo else sub.current_period_ends_at.replace(tzinfo=timezone.utc)
+                ends_at = sub_end + timedelta(days=365)
+            else:
+                sub.current_period_starts_at = now
+                ends_at = now + timedelta(days=365)
+            sub.current_period_ends_at = ends_at
+        else:
+            ends_at = now + timedelta(days=365)
+            sub = SubscriptionModel(
+                id=uuid.uuid4(),
+                home_id=payload.home_id,
+                user_id=current_user.id,
+                plan_id=plan.id,
+                price_id=price.id if price else None,
+                status="ACTIVE",
+                current_period_starts_at=now,
+                current_period_ends_at=ends_at,
+                paid_member_seats=0,
+                currency=payload.currency.upper(),
+                created_at=now,
+                updated_at=now
+            )
+            db.add(sub)
         transaction.subscription_id = sub.id
 
         if payload.home_id:
@@ -1044,14 +1267,13 @@ async def confirm_payment(
     transaction.status = "SUCCESS"
     transaction.provider_transaction_id = payload.provider_transaction_id
 
-    # Create or update subscription
+    # Create or update subscription with Rule 10 renewal extension
     now = datetime.now(timezone.utc)
-    ends_at = now + timedelta(days=365)
 
     sub = None
     if transaction.home_id:
         sub_q = select(SubscriptionModel).where(SubscriptionModel.home_id == transaction.home_id)
-        sub = (await db.execute(sub_q)).scalar_one_or_none()
+        sub = (await db.execute(sub_q)).scalars().first()
 
     if not sub:
         # Check if user has an existing subscription record
@@ -1062,11 +1284,18 @@ async def confirm_payment(
         sub.plan_id = transaction.plan_id
         sub.price_id = transaction.price_id
         sub.status = "ACTIVE"
-        sub.current_period_starts_at = now
-        sub.current_period_ends_at = ends_at
         sub.user_id = current_user.id
         sub.updated_at = now
+        # RULE 10: If active/expiring (current_period_ends_at > now), extend from current expiry date
+        if sub.current_period_ends_at and (sub.current_period_ends_at if sub.current_period_ends_at.tzinfo else sub.current_period_ends_at.replace(tzinfo=timezone.utc)) > now:
+            sub_end = sub.current_period_ends_at if sub.current_period_ends_at.tzinfo else sub.current_period_ends_at.replace(tzinfo=timezone.utc)
+            ends_at = sub_end + timedelta(days=365)
+        else:
+            sub.current_period_starts_at = now
+            ends_at = now + timedelta(days=365)
+        sub.current_period_ends_at = ends_at
     else:
+        ends_at = now + timedelta(days=365)
         # Fallback home_id if none specified: use user's first created home if one exists
         target_home_id = transaction.home_id
         if not target_home_id:
@@ -1108,6 +1337,31 @@ async def confirm_payment(
         await db.flush()
 
     transaction.subscription_id = sub.id
+
+    # Sync or provision active entitlement
+    ent_q = select(HomeAccessEntitlementModel).where(
+        HomeAccessEntitlementModel.user_id == current_user.id,
+        HomeAccessEntitlementModel.status.in_(["ACTIVE", "EXPIRED"])
+    )
+    if transaction.home_id:
+        ent_q = ent_q.where(HomeAccessEntitlementModel.home_id == transaction.home_id)
+    ent_res = await db.execute(ent_q)
+    existing_ent = ent_res.scalars().first() if hasattr(ent_res, "scalars") else None
+    if existing_ent:
+        existing_ent.status = "ACTIVE"
+        existing_ent.expires_at = ends_at
+        existing_ent.subscription_id = sub.id
+        existing_ent.updated_at = now
+    elif transaction.home_id:
+        home = await db.get(HomeModel, transaction.home_id)
+        if home:
+            await provision_paid_home_entitlement(
+                user=current_user,
+                home=home,
+                subscription_id=sub.id,
+                db=db,
+                expires_at=ends_at
+            )
 
     # If coupon was applied, record redemption
     if transaction.coupon_id:

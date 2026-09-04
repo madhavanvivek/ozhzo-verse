@@ -73,84 +73,105 @@ def compute_time_flags(task: TaskModel):
     return is_overdue, is_due_today
 
 
+async def map_tasks_batch(tasks: List[TaskModel], db: AsyncSession) -> List[TaskDTO]:
+    if not tasks:
+        return []
+
+    user_ids = set()
+    category_ids = set()
+    bill_ids = set()
+
+    for t in tasks:
+        if t.assigned_to:
+            user_ids.add(t.assigned_to)
+        if t.created_by:
+            user_ids.add(t.created_by)
+        if t.completed_by:
+            user_ids.add(t.completed_by)
+        if t.category_id:
+            category_ids.add(t.category_id)
+        if t.bill_id:
+            bill_ids.add(t.bill_id)
+
+    user_map: dict[UUID, str] = {}
+    if user_ids:
+        q_users = select(UserProfileModel).where(UserProfileModel.user_id.in_(user_ids))
+        res_users = (await db.execute(q_users)).scalars().all()
+        for u in res_users:
+            if u and u.user_id and u.display_name:
+                user_map[u.user_id] = u.display_name
+
+    category_map: dict[UUID, str] = {}
+    if category_ids:
+        q_cats = select(TaskCategoryModel).where(TaskCategoryModel.id.in_(category_ids))
+        res_cats = (await db.execute(q_cats)).scalars().all()
+        for c in res_cats:
+            if c and c.id and c.name:
+                category_map[c.id] = c.name
+
+    bill_map: dict[UUID, BillModel] = {}
+    if bill_ids:
+        q_bills = select(BillModel).where(BillModel.id.in_(bill_ids), BillModel.deleted_at.is_(None))
+        res_bills = (await db.execute(q_bills)).scalars().all()
+        for b in res_bills:
+            if b and b.id:
+                bill_map[b.id] = b
+
+    dtos: List[TaskDTO] = []
+    for task in tasks:
+        is_overdue, is_due_today = compute_time_flags(task)
+
+        bill = bill_map.get(task.bill_id) if task.bill_id else None
+        bill_id = bill.id if bill else None
+        bill_title = bill.title if bill else None
+        bill_amount = bill.expected_amount if bill else None
+        bill_currency = bill.currency if bill else None
+        bill_status = bill.status if bill else None
+        bill_due_date = bill.due_date if bill else None
+
+        dtos.append(
+            TaskDTO(
+                id=task.id or uuid4(),
+                home_id=task.home_id,
+                template_id=task.template_id,
+                category_id=task.category_id,
+                category_name=category_map.get(task.category_id) if task.category_id else None,
+                title=task.title,
+                description=task.description,
+                priority=task.priority or "NORMAL",
+                status=task.status or "TODO",
+                due_date=task.due_date,
+                is_overdue=is_overdue,
+                is_due_today=is_due_today,
+                recurrence_type=task.recurrence_type or "NONE",
+                recurrence_interval_days=task.recurrence_interval_days,
+                recurrence_strategy=task.recurrence_strategy or "SCHEDULED_DATE",
+                parent_recurring_task_id=task.parent_recurring_task_id,
+                assigned_to=task.assigned_to,
+                assigned_to_name=user_map.get(task.assigned_to) if task.assigned_to else None,
+                bill_id=bill_id,
+                bill_title=bill_title,
+                bill_amount=bill_amount,
+                bill_currency=bill_currency,
+                bill_status=bill_status,
+                bill_due_date=bill_due_date,
+                created_by=task.created_by or uuid4(),
+                created_by_name=user_map.get(task.created_by) if task.created_by else None,
+                completed_by=task.completed_by,
+                completed_by_name=user_map.get(task.completed_by) if task.completed_by else None,
+                completed_at=task.completed_at,
+                version=task.version or 1,
+                created_at=task.created_at or datetime.now(timezone.utc),
+                updated_at=task.updated_at or datetime.now(timezone.utc)
+            )
+        )
+    return dtos
+
+
 async def map_task_dto(task: TaskModel, db: AsyncSession) -> TaskDTO:
-    is_overdue, is_due_today = compute_time_flags(task)
+    dtos = await map_tasks_batch([task], db)
+    return dtos[0]
 
-    assigned_name = None
-    if task.assigned_to:
-        prof = await db.get(UserProfileModel, task.assigned_to)
-        if isinstance(prof, UserProfileModel) and isinstance(prof.display_name, str):
-            assigned_name = prof.display_name
-
-    created_name = None
-    if task.created_by:
-        prof = await db.get(UserProfileModel, task.created_by)
-        if isinstance(prof, UserProfileModel) and isinstance(prof.display_name, str):
-            created_name = prof.display_name
-
-    completed_name = None
-    if task.completed_by:
-        prof = await db.get(UserProfileModel, task.completed_by)
-        if isinstance(prof, UserProfileModel) and isinstance(prof.display_name, str):
-            completed_name = prof.display_name
-
-    cat_name = None
-    if task.category_id:
-        cat = await db.get(TaskCategoryModel, task.category_id)
-        if isinstance(cat, TaskCategoryModel) and isinstance(cat.name, str):
-            cat_name = cat.name
-
-    # Resolve linked bill details if present
-    bill_id = None
-    bill_title = None
-    bill_amount = None
-    bill_currency = None
-    bill_status = None
-    bill_due_date = None
-    if task.bill_id:
-        bill = await db.get(BillModel, task.bill_id)
-        if bill and not getattr(bill, "deleted_at", None):
-            bill_id = bill.id
-            bill_title = bill.title
-            bill_amount = bill.expected_amount
-            bill_currency = bill.currency
-            bill_status = bill.status
-            bill_due_date = bill.due_date
-
-    return TaskDTO(
-        id=task.id or uuid4(),
-        home_id=task.home_id,
-        template_id=task.template_id,
-        category_id=task.category_id,
-        category_name=cat_name,
-        title=task.title,
-        description=task.description,
-        priority=task.priority or "NORMAL",
-        status=task.status or "TODO",
-        due_date=task.due_date,
-        is_overdue=is_overdue,
-        is_due_today=is_due_today,
-        recurrence_type=task.recurrence_type or "NONE",
-        recurrence_interval_days=task.recurrence_interval_days,
-        recurrence_strategy=task.recurrence_strategy or "SCHEDULED_DATE",
-        parent_recurring_task_id=task.parent_recurring_task_id,
-        assigned_to=task.assigned_to,
-        assigned_to_name=assigned_name,
-        bill_id=bill_id,
-        bill_title=bill_title,
-        bill_amount=bill_amount,
-        bill_currency=bill_currency,
-        bill_status=bill_status,
-        bill_due_date=bill_due_date,
-        created_by=task.created_by or uuid4(),
-        created_by_name=created_name,
-        completed_by=task.completed_by,
-        completed_by_name=completed_name,
-        completed_at=task.completed_at,
-        version=task.version or 1,
-        created_at=task.created_at or datetime.now(timezone.utc),
-        updated_at=task.updated_at or datetime.now(timezone.utc)
-    )
 
 
 @router.get("/summary", response_model=ApiSuccessResponse[TaskSummaryDTO])
@@ -305,7 +326,7 @@ async def list_tasks(
     result = await db.execute(query)
     tasks = result.scalars().all()
 
-    dtos = [await map_task_dto(t, db) for t in tasks]
+    dtos = await map_tasks_batch(tasks, db)
     total_pages = math.ceil(total / page_size) if total > 0 else 1
 
     return ApiSuccessResponse(
@@ -371,62 +392,52 @@ async def create_task(
                 await db.flush()
                 resolved_category_id = new_cat.id
 
-    # Bill Integration: Associate with existing bill or create authoritative Bill record
-    resolved_bill_id = None
-    if payload.bill_id:
-        bill = await db.get(BillModel, payload.bill_id)
-        if bill and bill.home_id == home_ctx.home_id and not bill.deleted_at:
-            resolved_bill_id = bill.id
-    elif payload.bill_amount and payload.bill_amount > 0:
-        home = (await db.execute(select(HomeModel).where(HomeModel.id == home_ctx.home_id))).scalar_one_or_none()
-        curr = payload.bill_currency or (home.currency if home else "INR")
-        bill_due = payload.bill_due_date or (payload.due_date.date() if payload.due_date else date.today())
-        bill_rec = payload.bill_recurrence_type or payload.recurrence_type or "NONE"
-
-        bill_cat_name = (payload.bill_category or payload.category_name or payload.category or "Utilities").strip()
-        b_cat = (await db.execute(
-            select(BillCategoryModel).where(
-                BillCategoryModel.home_id == home_ctx.home_id,
-                func.lower(BillCategoryModel.name) == bill_cat_name.lower()
-            )
-        )).scalar_one_or_none()
-        b_cat_id = b_cat.id if b_cat else None
-        if not b_cat_id and bill_cat_name:
-            new_bcat = BillCategoryModel(
+    # Optional Bill Creation integration
+    resolved_bill_id = payload.bill_id
+    if payload.create_bill and payload.bill_amount and payload.bill_amount > 0:
+        bill_cat_id = None
+        q_bill_cat = select(BillCategoryModel).where(
+            BillCategoryModel.home_id == home_ctx.home_id,
+            func.lower(BillCategoryModel.name) == "maintenance"
+        )
+        bill_cat = (await db.execute(q_bill_cat)).scalar_one_or_none()
+        if bill_cat:
+            bill_cat_id = bill_cat.id
+        else:
+            new_bill_cat = BillCategoryModel(
                 home_id=home_ctx.home_id,
-                name=bill_cat_name,
-                sort_order=0
+                name="Maintenance"
             )
-            db.add(new_bcat)
+            db.add(new_bill_cat)
             await db.flush()
-            b_cat_id = new_bcat.id
+            bill_cat_id = new_bill_cat.id
 
-        new_bill = BillModel(
+        bill_due = (payload.due_date.date() if isinstance(payload.due_date, datetime) else payload.due_date) if payload.due_date else date.today()
+
+        linked_bill = BillModel(
             home_id=home_ctx.home_id,
-            category_id=b_cat_id,
-            title=payload.title,
-            expected_amount=payload.bill_amount,
-            currency=curr,
+            category_id=bill_cat_id,
+            title=f"Bill for: {payload.title.strip()}",
+            expected_amount=Decimal(str(payload.bill_amount)),
+            currency="INR",
             due_date=bill_due,
-            recurrence_type=bill_rec,
+            recurrence_type=payload.recurrence_type or "NONE",
             recurrence_interval_days=payload.recurrence_interval_days,
             recurrence_strategy=payload.recurrence_strategy or "SCHEDULED_DATE",
-            status="UNPAID",
-            amount_paid=Decimal("0.00"),
             responsible_member_id=payload.assigned_to,
-            notes=payload.bill_notes or f"Created via Task: {payload.title}",
-            version=1,
-            created_by=home_ctx.user.id
+            created_by=home_ctx.user.id,
+            status="UNPAID",
+            version=1
         )
-        db.add(new_bill)
+        db.add(linked_bill)
         await db.flush()
-        resolved_bill_id = new_bill.id
+        resolved_bill_id = linked_bill.id
 
     task = TaskModel(
         home_id=home_ctx.home_id,
         template_id=payload.template_id,
         category_id=resolved_category_id,
-        title=payload.title,
+        title=payload.title.strip(),
         description=payload.description,
         priority=payload.priority or "NORMAL",
         status="TODO",
@@ -440,16 +451,23 @@ async def create_task(
         version=1
     )
     db.add(task)
-    if payload.assigned_to:
-        from src.infrastructure.database.models import NotificationModel
-        notif = NotificationModel(
-            home_id=home_ctx.home_id,
+    await db.flush()
+
+    if payload.assigned_to and payload.assigned_to != home_ctx.user.id:
+        from src.services.notification_service import notification_service
+        await notification_service.dispatch_notification(
+            db=db,
             user_id=payload.assigned_to,
-            title="Task Assigned",
+            home_id=home_ctx.home_id,
+            title="New Task Assigned",
             body=f"You have been assigned to task: {task.title}",
-            type="TASK_ASSIGNED"
+            notification_type="TASK_ASSIGNED",
+            priority="NORMAL" if task.priority in ("LOW", "NORMAL") else "HIGH",
+            requires_action=False,
+            action_url=f"/tasks",
+            action_label="View Tasks",
+            dedup_key=f"task_assigned_{task.id}_{payload.assigned_to}"
         )
-        db.add(notif)
     await db.commit()
     await db.refresh(task)
 
@@ -495,7 +513,7 @@ async def update_task(
             detail="Task has been modified by another household member. Please refresh."
         )
 
-    # Validate assignee if updated
+    prev_assigned = task.assigned_to
     if payload.assigned_to is not None:
         q_mem = select(HomeMemberModel).where(
             HomeMemberModel.home_id == home_ctx.home_id,
@@ -566,6 +584,23 @@ async def update_task(
 
     task.version += 1
     task.updated_at = datetime.now(timezone.utc)
+
+    if payload.assigned_to and payload.assigned_to != prev_assigned and payload.assigned_to != home_ctx.user.id:
+        from src.services.notification_service import notification_service
+        await notification_service.dispatch_notification(
+            db=db,
+            user_id=payload.assigned_to,
+            home_id=home_ctx.home_id,
+            title="Task Assigned",
+            body=f"You have been assigned to task: {task.title}",
+            notification_type="TASK_ASSIGNED",
+            priority="NORMAL" if task.priority in ("LOW", "NORMAL") else "HIGH",
+            requires_action=False,
+            action_url=f"/tasks",
+            action_label="View Tasks",
+            dedup_key=f"task_assigned_{task.id}_{payload.assigned_to}"
+        )
+
     await db.commit()
     await db.refresh(task)
 
@@ -614,6 +649,10 @@ async def complete_task(
     task.completed_at = now
     task.version = (task.version or 1) + 1
     task.updated_at = now
+
+    # Auto-resolve any task-assigned notifications
+    from src.services.notification_service import notification_service
+    await notification_service.resolve_by_dedup_prefix(db, f"task_assigned_{task.id}")
 
     # Recurrence Engine Execution
     if task.recurrence_type and task.recurrence_type != "NONE":
@@ -675,6 +714,7 @@ async def assign_task(
             detail="Task not found in this home."
         )
 
+    prev_assigned = task.assigned_to
     if payload.assigned_to is not None:
         q_mem = select(HomeMemberModel).where(
             HomeMemberModel.home_id == home_ctx.home_id,
@@ -693,6 +733,23 @@ async def assign_task(
 
     task.version += 1
     task.updated_at = datetime.now(timezone.utc)
+
+    if payload.assigned_to and payload.assigned_to != prev_assigned and payload.assigned_to != home_ctx.user.id:
+        from src.services.notification_service import notification_service
+        await notification_service.dispatch_notification(
+            db=db,
+            user_id=payload.assigned_to,
+            home_id=home_ctx.home_id,
+            title="Task Assigned",
+            body=f"You have been assigned to task: {task.title}",
+            notification_type="TASK_ASSIGNED",
+            priority="NORMAL" if task.priority in ("LOW", "NORMAL") else "HIGH",
+            requires_action=False,
+            action_url=f"/tasks",
+            action_label="View Tasks",
+            dedup_key=f"task_assigned_{task.id}_{payload.assigned_to}"
+        )
+
     await db.commit()
     await db.refresh(task)
 

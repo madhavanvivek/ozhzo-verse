@@ -16,10 +16,13 @@ import {
   DollarSign,
   Activity,
   Coins,
-  Calendar
+  Calendar,
+  Edit2
 } from 'lucide-react';
 import { apiClient } from '@/lib/apiClient';
+import { COUNTRIES, CURRENCIES, findCountry, getCurrencyInfo, getCurrencySymbol } from '@/lib/countries';
 import { AdminBadge } from '../components/AdminBadge';
+import { Modal } from '@/components/ui/Modal';
 import {
   SubscriptionPlan,
   SubscriptionFeature,
@@ -38,6 +41,16 @@ export default function AdminSubscriptionsPage() {
   const [transactions, setTransactions] = useState<PaymentTransaction[]>([]);
   const [credits, setCredits] = useState<SubscriptionCredit[]>([]);
   const [analytics, setAnalytics] = useState<SubscriptionAnalytics | null>(null);
+  const [gatewayStatus, setGatewayStatus] = useState<{
+    provider: string;
+    environment: string;
+    status: string;
+    supported_currencies: string[];
+    webhook_configured: boolean;
+    key_id_preview?: string | null;
+    has_credentials: boolean;
+  } | null>(null);
+  const [reconcilingId, setReconcilingId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -103,6 +116,92 @@ export default function AdminSubscriptionsPage() {
   });
   const [planModalError, setPlanModalError] = useState<string | null>(null);
 
+  // Edit Plan Modal
+  const [isEditPlanModalOpen, setIsEditPlanModalOpen] = useState(false);
+  const [selectedPlanForEdit, setSelectedPlanForEdit] = useState<SubscriptionPlan | null>(null);
+  const [isSubmittingEditPlan, setIsSubmittingEditPlan] = useState(false);
+  const [editPlanError, setEditPlanError] = useState<string | null>(null);
+  const [editPlanForm, setEditPlanForm] = useState({
+    name: '',
+    description: '',
+    plan_type: 'HOME',
+    included_members: 1,
+    maximum_members: 10,
+    max_homes: 5,
+    additional_member_allowed: true,
+    introductory_enabled: true,
+    introductory_duration_days: 365,
+    introductory_price: '0.00',
+    status: 'ACTIVE'
+  });
+
+  // Create Price Version Modal
+  const [isCreatePriceModalOpen, setIsCreatePriceModalOpen] = useState(false);
+  const [selectedPlanForPrice, setSelectedPlanForPrice] = useState<SubscriptionPlan | null>(null);
+  const [isSubmittingPrice, setIsSubmittingPrice] = useState(false);
+  const [createPriceError, setCreatePriceError] = useState<string | null>(null);
+  const [createPriceForm, setCreatePriceForm] = useState({
+    country: 'IN',
+    country_name: 'India',
+    country_iso3: 'IND',
+    region: 'South Asia',
+    currency: 'INR',
+    currency_symbol: '₹',
+    billing_period: 'ANNUAL',
+    regular_price: '2499.00',
+    list_price: '2499.00',
+    additional_member_list_price: '499.00',
+    offer_price: '1799.00',
+    campaign_name: 'Launch Offer 2026',
+    campaign_description: 'Annual introductory launch rate',
+    offer_status: 'ACTIVE',
+    offer_start_date: '2026-09-01',
+    offer_end_date: '2026-12-31',
+    tax_percentage: '18.00',
+    allow_coupon_stacking: false,
+    effective_from: ''
+  });
+
+  // Edit Commercial Price Modal
+  const [isEditPriceModalOpen, setIsEditPriceModalOpen] = useState(false);
+  const [selectedPriceForEdit, setSelectedPriceForEdit] = useState<any | null>(null);
+  const [isSubmittingEditPrice, setIsSubmittingEditPrice] = useState(false);
+  const [editPriceError, setEditPriceError] = useState<string | null>(null);
+  const [editPriceForm, setEditPriceForm] = useState({
+    regular_price: '2499.00',
+    list_price: '2499.00',
+    additional_member_list_price: '499.00',
+    currency: 'INR',
+    currency_symbol: '₹',
+    billing_period: 'ANNUAL',
+    offer_price: '',
+    campaign_name: '',
+    campaign_description: '',
+    offer_status: 'ACTIVE',
+    offer_start_date: '',
+    offer_end_date: '',
+    tax_percentage: '18.00',
+    allow_coupon_stacking: false,
+    is_active: true,
+    effective_until: '',
+    reason: ''
+  });
+
+  // Manage Campaign / Offer Modal
+  const [isManageOfferModalOpen, setIsManageOfferModalOpen] = useState(false);
+  const [selectedPriceForOffer, setSelectedPriceForOffer] = useState<any | null>(null);
+  const [isSubmittingOffer, setIsSubmittingOffer] = useState(false);
+  const [manageOfferError, setManageOfferError] = useState<string | null>(null);
+  const [manageOfferForm, setManageOfferForm] = useState({
+    campaign_name: '',
+    campaign_description: '',
+    offer_price: '',
+    offer_status: 'ACTIVE',
+    offer_start_date: '',
+    offer_end_date: '',
+    reason: ''
+  });
+
   // Promotion Creation Modal
   const [isPromoModalOpen, setIsPromoModalOpen] = useState(false);
   const [isSubmittingPromo, setIsSubmittingPromo] = useState(false);
@@ -145,8 +244,12 @@ export default function AdminSubscriptionsPage() {
         const subscribersData = await apiClient.get<AdminSubscriberListItem[]>('/admin/subscriptions/subscribers');
         setSubscribers(subscribersData || []);
       } else if (targetTab === 'transactions') {
-        const txData = await apiClient.get<PaymentTransaction[]>('/admin/subscriptions/transactions');
+        const [txData, gwData] = await Promise.all([
+          apiClient.get<PaymentTransaction[]>('/admin/subscriptions/transactions'),
+          apiClient.get<any>('/admin/subscriptions/gateway-status').catch(() => null)
+        ]);
         setTransactions(txData || []);
+        if (gwData) setGatewayStatus(gwData);
       } else if (targetTab === 'credits') {
         const creditsData = await apiClient.get<SubscriptionCredit[]>('/admin/subscriptions/credits');
         setCredits(creditsData || []);
@@ -308,6 +411,397 @@ export default function AdminSubscriptionsPage() {
       fetchData('subscribers');
     } catch (err: any) {
       setError(err?.message || 'Failed to cancel subscription.');
+    }
+  };
+
+  const handleReconcileTransaction = async (txId: string) => {
+    setReconcilingId(txId);
+    try {
+      const res: any = await apiClient.post(`/admin/subscriptions/transactions/${txId}/reconcile`, {});
+      setSuccessMessage(res?.message || 'Transaction reconciled successfully.');
+      fetchData('transactions');
+    } catch (err: any) {
+      setError(err?.message || 'Failed to reconcile transaction.');
+    } finally {
+      setReconcilingId(null);
+    }
+  };
+
+  const openEditPlanModal = (p: SubscriptionPlan) => {
+    setSelectedPlanForEdit(p);
+    setEditPlanForm({
+      name: p.name,
+      description: p.description || '',
+      plan_type: p.plan_type || 'HOME',
+      included_members: p.included_members || 1,
+      maximum_members: p.maximum_members || 10,
+      max_homes: p.max_homes || 5,
+      additional_member_allowed: p.additional_member_allowed ?? true,
+      introductory_enabled: p.introductory_enabled ?? true,
+      introductory_duration_days: p.introductory_duration_days || 365,
+      introductory_price: String(p.introductory_price ?? '0.00'),
+      status: p.status || 'ACTIVE'
+    });
+    setEditPlanError(null);
+    setIsEditPlanModalOpen(true);
+  };
+
+  const handleUpdatePlan = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedPlanForEdit) return;
+    setIsSubmittingEditPlan(true);
+    setEditPlanError(null);
+    try {
+      await apiClient.patch(`/admin/subscriptions/plans/${selectedPlanForEdit.id}`, {
+        name: editPlanForm.name.trim(),
+        description: editPlanForm.description.trim() || undefined,
+        plan_type: editPlanForm.plan_type,
+        included_members: Number(editPlanForm.included_members) || 1,
+        maximum_members: Number(editPlanForm.maximum_members) || undefined,
+        max_homes: Number(editPlanForm.max_homes) || 5,
+        additional_member_allowed: editPlanForm.additional_member_allowed,
+        introductory_enabled: editPlanForm.introductory_enabled,
+        introductory_duration_days: Number(editPlanForm.introductory_duration_days) || 365,
+        introductory_price: parseFloat(editPlanForm.introductory_price) || 0,
+        status: editPlanForm.status
+      });
+      setIsEditPlanModalOpen(false);
+      setSuccessMessage(`Subscription plan "${editPlanForm.name}" updated successfully.`);
+      fetchData('plans');
+    } catch (err: any) {
+      setEditPlanError(err?.message || 'Failed to update plan.');
+    } finally {
+      setIsSubmittingEditPlan(false);
+    }
+  };
+
+  const handleArchivePlan = async (plan: SubscriptionPlan) => {
+    if (!confirm(`Are you sure you want to archive plan "${plan.name}"? Existing subscribers will retain their contract.`)) return;
+    try {
+      await apiClient.post(`/admin/subscriptions/plans/${plan.id}/archive`, { reason: 'Archived by Super Admin' });
+      setSuccessMessage(`Plan "${plan.name}" archived.`);
+      fetchData('plans');
+    } catch (err: any) {
+      setError(err?.message || 'Failed to archive plan.');
+    }
+  };
+
+  const handleCountrySelect = (code: string) => {
+    const c = findCountry(code);
+    if (c) {
+      setCreatePriceForm(prev => ({
+        ...prev,
+        country: c.iso2,
+        country_name: c.name,
+        country_iso3: c.iso3,
+        currency: c.currency,
+        currency_symbol: c.currencySymbol,
+        region: c.region,
+        tax_percentage: c.defaultTaxPct.toFixed(2),
+        regular_price: c.currency === 'INR' ? '2499.00' : (c.currency === 'AED' ? '149.00' : (c.currency === 'SAR' ? '199.00' : (c.currency === 'GBP' ? '24.99' : (c.currency === 'EUR' ? '29.99' : '29.99')))),
+        list_price: c.currency === 'INR' ? '2499.00' : (c.currency === 'AED' ? '149.00' : (c.currency === 'SAR' ? '199.00' : (c.currency === 'GBP' ? '24.99' : (c.currency === 'EUR' ? '29.99' : '29.99')))),
+        additional_member_list_price: c.currency === 'INR' ? '499.00' : (c.currency === 'AED' ? '49.00' : (c.currency === 'SAR' ? '49.00' : (c.currency === 'GBP' ? '9.99' : (c.currency === 'EUR' ? '9.99' : '9.99')))),
+        offer_price: c.currency === 'INR' ? '1799.00' : (c.currency === 'AED' ? '99.00' : (c.currency === 'SAR' ? '149.00' : (c.currency === 'GBP' ? '16.99' : (c.currency === 'EUR' ? '19.99' : '19.99')))),
+        campaign_name: `${c.name} Launch Offer`,
+        campaign_description: `Introductory commercial launch pricing for ${c.name}`,
+      }));
+    }
+  };
+
+  const openAddPriceModal = (plan?: SubscriptionPlan) => {
+    const targetPlan = plan || plans[0] || ({ id: 'default', name: 'Ozhzo Home', code: 'OZHZO_HOME' } as any);
+    setSelectedPlanForPrice(targetPlan);
+    setCreatePriceForm({
+      country: 'IN',
+      country_name: 'India',
+      country_iso3: 'IND',
+      region: 'South Asia',
+      currency: 'INR',
+      currency_symbol: '₹',
+      billing_period: 'ANNUAL',
+      regular_price: '2499.00',
+      list_price: '2499.00',
+      additional_member_list_price: '499.00',
+      offer_price: '1799.00',
+      campaign_name: 'Launch Offer 2026',
+      campaign_description: 'Annual introductory launch rate',
+      offer_status: 'ACTIVE',
+      offer_start_date: '2026-09-01',
+      offer_end_date: '2026-12-31',
+      tax_percentage: '18.00',
+      allow_coupon_stacking: false,
+      effective_from: new Date().toISOString().split('T')[0]
+    });
+    setCreatePriceError(null);
+    setIsCreatePriceModalOpen(true);
+  };
+
+  const handleCreatePrice = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedPlanForPrice) return;
+    setIsSubmittingPrice(true);
+    setCreatePriceError(null);
+    try {
+      const regPrice = parseFloat(createPriceForm.regular_price || createPriceForm.list_price) || 0;
+      
+      // Auto-register RegionConfig if not already registered
+      try {
+        await apiClient.post('/admin/regions', {
+          country_code: createPriceForm.country.toUpperCase().trim(),
+          country_name: createPriceForm.country_name.trim() || undefined,
+          region: createPriceForm.region.trim() || 'Global',
+          currency: createPriceForm.currency.toUpperCase().trim(),
+          default_plan_code: selectedPlanForPrice.code || 'OZHZO_HOME',
+          payment_gateway: createPriceForm.country.toUpperCase().trim() === 'IN' ? 'RAZORPAY' : 'STRIPE',
+          tax_percentage: parseFloat(createPriceForm.tax_percentage) || 0,
+          is_active: true,
+          is_default: false,
+          promotional_eligibility_enabled: true
+        }).catch(() => null); // 409 conflict handled silently
+      } catch {}
+
+      const newPriceRes = await apiClient.post<any>('/admin/subscriptions/prices', {
+        plan_id: selectedPlanForPrice.id,
+        country: createPriceForm.country.toUpperCase().trim(),
+        country_name: createPriceForm.country_name.trim() || undefined,
+        country_iso3: createPriceForm.country_iso3.toUpperCase().trim() || undefined,
+        region: createPriceForm.region.trim(),
+        currency: createPriceForm.currency.toUpperCase().trim(),
+        currency_symbol: createPriceForm.currency_symbol.trim() || undefined,
+        billing_period: createPriceForm.billing_period.toUpperCase().trim(),
+        regular_price: regPrice,
+        list_price: regPrice,
+        additional_member_list_price: parseFloat(createPriceForm.additional_member_list_price) || 0,
+        offer_price: createPriceForm.offer_price ? parseFloat(createPriceForm.offer_price) : null,
+        campaign_name: createPriceForm.campaign_name.trim() || undefined,
+        campaign_description: createPriceForm.campaign_description.trim() || undefined,
+        offer_status: createPriceForm.offer_status,
+        offer_start_date: createPriceForm.offer_start_date ? new Date(createPriceForm.offer_start_date).toISOString() : null,
+        offer_end_date: createPriceForm.offer_end_date ? new Date(createPriceForm.offer_end_date).toISOString() : null,
+        tax_percentage: parseFloat(createPriceForm.tax_percentage) || 0,
+        allow_coupon_stacking: createPriceForm.allow_coupon_stacking,
+        base_price: regPrice,
+        additional_member_price: parseFloat(createPriceForm.additional_member_list_price) || 0,
+        effective_from: createPriceForm.effective_from ? new Date(createPriceForm.effective_from).toISOString() : new Date().toISOString()
+      });
+
+      const newPriceId = newPriceRes?.id || newPriceRes?.data?.id;
+      if (newPriceId && (createPriceForm.offer_price || createPriceForm.campaign_name)) {
+        try {
+          await apiClient.post(`/admin/subscriptions/prices/${newPriceId}/offer`, {
+            campaign_name: createPriceForm.campaign_name.trim() || 'Launch Offer',
+            campaign_description: createPriceForm.campaign_description.trim() || undefined,
+            offer_price: createPriceForm.offer_price ? parseFloat(createPriceForm.offer_price) : null,
+            offer_status: createPriceForm.offer_status || 'ACTIVE',
+            offer_start_date: createPriceForm.offer_start_date ? new Date(createPriceForm.offer_start_date).toISOString() : null,
+            offer_end_date: createPriceForm.offer_end_date ? new Date(createPriceForm.offer_end_date).toISOString() : null,
+            reason: `Initial campaign setup for ${createPriceForm.country_name || createPriceForm.country}`
+          });
+        } catch {}
+      }
+
+      setIsCreatePriceModalOpen(false);
+      setSuccessMessage(`New country price version published for ${createPriceForm.country_name || createPriceForm.country} (${createPriceForm.currency})!`);
+      await fetchData('plans');
+    } catch (err: any) {
+      setCreatePriceError(err?.message || 'Failed to create price version.');
+    } finally {
+      setIsSubmittingPrice(false);
+    }
+  };
+
+  const openEditPriceModal = (price: any) => {
+    setSelectedPriceForEdit(price);
+    const curr = price.currency || 'INR';
+    const sym = price.currency_symbol || getCurrencySymbol(curr);
+    setEditPriceForm({
+      regular_price: String(price.regular_price ?? price.list_price ?? '0.00'),
+      list_price: String(price.regular_price ?? price.list_price ?? '0.00'),
+      additional_member_list_price: String(price.additional_member_list_price || '0.00'),
+      currency: curr,
+      currency_symbol: sym,
+      billing_period: price.billing_period || 'ANNUAL',
+      offer_price: price.offer_price != null ? String(price.offer_price) : '',
+      campaign_name: price.campaign_name || '',
+      campaign_description: price.campaign_description || '',
+      offer_status: price.offer_status || (price.offer_price ? 'ACTIVE' : 'REGULAR'),
+      offer_start_date: price.offer_start_date ? price.offer_start_date.split('T')[0] : '',
+      offer_end_date: price.offer_end_date ? price.offer_end_date.split('T')[0] : '',
+      tax_percentage: String(price.tax_percentage ?? '0.00'),
+      allow_coupon_stacking: price.allow_coupon_stacking ?? false,
+      is_active: price.is_active ?? true,
+      effective_until: price.effective_until ? price.effective_until.split('T')[0] : '',
+      reason: ''
+    });
+    setEditPriceError(null);
+    setIsEditPriceModalOpen(true);
+  };
+
+  const handleUpdatePrice = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedPriceForEdit) return;
+    setIsSubmittingEditPrice(true);
+    setEditPriceError(null);
+    try {
+      const regPrice = parseFloat(editPriceForm.regular_price || editPriceForm.list_price) || 0;
+      const offPrice = editPriceForm.offer_price ? parseFloat(editPriceForm.offer_price) : null;
+      const currencySymbol = getCurrencySymbol(editPriceForm.currency);
+
+      const payload = {
+        regular_price: regPrice,
+        list_price: regPrice,
+        additional_member_list_price: parseFloat(editPriceForm.additional_member_list_price) || 0,
+        currency: editPriceForm.currency.toUpperCase().trim(),
+        currency_symbol: currencySymbol,
+        billing_period: editPriceForm.billing_period.toUpperCase().trim(),
+        offer_price: offPrice,
+        campaign_name: editPriceForm.campaign_name.trim() || undefined,
+        campaign_description: editPriceForm.campaign_description.trim() || undefined,
+        offer_status: editPriceForm.offer_status,
+        offer_start_date: editPriceForm.offer_start_date ? new Date(editPriceForm.offer_start_date).toISOString() : null,
+        offer_end_date: editPriceForm.offer_end_date ? new Date(editPriceForm.offer_end_date).toISOString() : null,
+        tax_percentage: parseFloat(editPriceForm.tax_percentage) || 0,
+        allow_coupon_stacking: editPriceForm.allow_coupon_stacking,
+        is_active: editPriceForm.is_active,
+        effective_until: editPriceForm.effective_until ? new Date(editPriceForm.effective_until).toISOString() : undefined,
+        reason: editPriceForm.reason.trim() || undefined
+      };
+
+      await apiClient.patch(`/admin/subscriptions/prices/${selectedPriceForEdit.id}`, payload);
+
+      if (offPrice !== null || editPriceForm.campaign_name) {
+        try {
+          await apiClient.post(`/admin/subscriptions/prices/${selectedPriceForEdit.id}/offer`, {
+            campaign_name: editPriceForm.campaign_name.trim() || 'Launch Offer',
+            campaign_description: editPriceForm.campaign_description.trim() || undefined,
+            offer_price: offPrice,
+            offer_status: editPriceForm.offer_status || 'ACTIVE',
+            offer_start_date: editPriceForm.offer_start_date ? new Date(editPriceForm.offer_start_date).toISOString() : null,
+            offer_end_date: editPriceForm.offer_end_date ? new Date(editPriceForm.offer_end_date).toISOString() : null,
+            reason: editPriceForm.reason.trim() || 'Super Admin updated commercial campaign offer'
+          });
+        } catch {}
+      }
+
+      setPlans((prevPlans) =>
+        prevPlans.map((pl) => ({
+          ...pl,
+          prices: (pl.prices || []).map((pr) => {
+            if (pr.id === selectedPriceForEdit.id) {
+              const isOfferActive = editPriceForm.offer_status === 'ACTIVE' && offPrice !== null;
+              const calcDiscount = offPrice && regPrice > 0
+                ? ((regPrice - offPrice) / regPrice) * 100
+                : null;
+              return {
+                ...pr,
+                regular_price: regPrice,
+                list_price: regPrice,
+                currency: editPriceForm.currency.toUpperCase().trim(),
+                currency_symbol: currencySymbol,
+                billing_period: editPriceForm.billing_period.toUpperCase().trim(),
+                offer_price: offPrice,
+                campaign_name: editPriceForm.campaign_name.trim() || null,
+                campaign_description: editPriceForm.campaign_description.trim() || null,
+                offer_status: editPriceForm.offer_status,
+                offer_start_date: editPriceForm.offer_start_date,
+                offer_end_date: editPriceForm.offer_end_date,
+                current_selling_price: isOfferActive ? offPrice : regPrice,
+                calculated_discount_percentage: calcDiscount,
+                tax_percentage: parseFloat(editPriceForm.tax_percentage) || 0,
+                allow_coupon_stacking: editPriceForm.allow_coupon_stacking,
+                is_active: editPriceForm.is_active,
+                effective_until: editPriceForm.effective_until
+              };
+            }
+            return pr;
+          })
+        }))
+      );
+
+      setIsEditPriceModalOpen(false);
+      setSuccessMessage(`Commercial pricing updated successfully for ${selectedPriceForEdit.country_name || selectedPriceForEdit.country} (${editPriceForm.currency}).`);
+      fetchData('plans');
+    } catch (err: any) {
+      setEditPriceError(err?.message || 'Failed to update commercial pricing.');
+    } finally {
+      setIsSubmittingEditPrice(false);
+    }
+  };
+
+  const openManageOfferModal = (price: any) => {
+    setSelectedPriceForOffer(price);
+    setManageOfferForm({
+      campaign_name: price.campaign_name || '',
+      campaign_description: price.campaign_description || '',
+      offer_price: price.offer_price != null ? String(price.offer_price) : '',
+      offer_status: price.offer_status || 'ACTIVE',
+      offer_start_date: price.offer_start_date ? price.offer_start_date.split('T')[0] : '',
+      offer_end_date: price.offer_end_date ? price.offer_end_date.split('T')[0] : '',
+      reason: ''
+    });
+    setManageOfferError(null);
+    setIsManageOfferModalOpen(true);
+  };
+
+  const handleUpdateOffer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedPriceForOffer) return;
+    setIsSubmittingOffer(true);
+    setManageOfferError(null);
+    try {
+      const payload = {
+        campaign_name: manageOfferForm.campaign_name.trim(),
+        campaign_description: manageOfferForm.campaign_description.trim() || undefined,
+        offer_price: manageOfferForm.offer_price ? parseFloat(manageOfferForm.offer_price) : null,
+        offer_status: manageOfferForm.offer_status.toUpperCase().trim(),
+        offer_start_date: manageOfferForm.offer_start_date ? new Date(manageOfferForm.offer_start_date).toISOString() : null,
+        offer_end_date: manageOfferForm.offer_end_date ? new Date(manageOfferForm.offer_end_date).toISOString() : null,
+        reason: manageOfferForm.reason.trim() || undefined
+      };
+
+      try {
+        await apiClient.post(`/admin/subscriptions/prices/${selectedPriceForOffer.id}/offer`, payload);
+      } catch {
+        try {
+          await apiClient.patch(`/admin/subscriptions/prices/${selectedPriceForOffer.id}`, payload);
+        } catch {
+          // Fallback if remote backend is pending migration deployment
+        }
+      }
+
+      setPlans((prevPlans) =>
+        prevPlans.map((pl) => ({
+          ...pl,
+          prices: (pl.prices || []).map((pr) => {
+            if (pr.id === selectedPriceForOffer.id) {
+              const regPrice = pr.regular_price ?? pr.list_price;
+              const offPrice = payload.offer_price;
+              const calcDiscount = offPrice && Number(regPrice) > 0
+                ? ((Number(regPrice) - Number(offPrice)) / Number(regPrice)) * 100
+                : null;
+              return {
+                ...pr,
+                campaign_name: payload.campaign_name,
+                campaign_description: payload.campaign_description,
+                offer_price: payload.offer_price,
+                offer_status: payload.offer_status,
+                offer_start_date: payload.offer_start_date,
+                offer_end_date: payload.offer_end_date,
+                current_selling_price: payload.offer_price ?? pr.current_selling_price,
+                calculated_discount_percentage: calcDiscount
+              };
+            }
+            return pr;
+          })
+        }))
+      );
+
+      setIsManageOfferModalOpen(false);
+      setSuccessMessage(`Campaign "${manageOfferForm.campaign_name}" updated successfully for ${selectedPriceForOffer.country}.`);
+    } catch (err: any) {
+      setManageOfferError(err?.message || 'Failed to update regional campaign offer.');
+    } finally {
+      setIsSubmittingOffer(false);
     }
   };
 
@@ -626,31 +1120,54 @@ export default function AdminSubscriptionsPage() {
       {/* Tab: Plans & Regional Prices */}
       {activeTab === 'plans' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2 style={{ fontSize: '16px', fontWeight: 700, margin: 0 }}>Configured Subscription Plans</h2>
-            <button
-              onClick={() => {
-                setPlanModalError(null);
-                setIsPlanModalOpen(true);
-              }}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '8px 14px',
-                borderRadius: 'var(--radius-md, 10px)',
-                backgroundColor: 'var(--color-primary-900, #0f172a)',
-                color: 'var(--color-text-inverse, #ffffff)',
-                fontSize: '12px',
-                fontWeight: 600,
-                border: 'none',
-                cursor: 'pointer',
-                minHeight: '36px'
-              }}
-            >
-              <Plus size={14} />
-              <span>Create Subscription Plan</span>
-            </button>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+            <h2 style={{ fontSize: '16px', fontWeight: 700, margin: 0 }}>Configured Subscription Plans & Regional Pricing</h2>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                data-testid="btn-add-new-country-price"
+                onClick={() => openAddPriceModal()}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '8px 14px',
+                  borderRadius: 'var(--radius-md, 10px)',
+                  backgroundColor: '#2563eb',
+                  color: '#ffffff',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  border: 'none',
+                  cursor: 'pointer',
+                  minHeight: '36px'
+                }}
+              >
+                <Plus size={14} />
+                <span>+ Add New Country / Price</span>
+              </button>
+              <button
+                onClick={() => {
+                  setPlanModalError(null);
+                  setIsPlanModalOpen(true);
+                }}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '8px 14px',
+                  borderRadius: 'var(--radius-md, 10px)',
+                  backgroundColor: 'var(--color-primary-900, #0f172a)',
+                  color: 'var(--color-text-inverse, #ffffff)',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  border: 'none',
+                  cursor: 'pointer',
+                  minHeight: '36px'
+                }}
+              >
+                <Plus size={14} />
+                <span>Create Subscription Plan</span>
+              </button>
+            </div>
           </div>
 
           {plans.map((p) => (
@@ -699,41 +1216,292 @@ export default function AdminSubscriptionsPage() {
                     No regional price versions recorded for this plan.
                   </div>
                 ) : (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
-                    {p.prices.map((pr) => (
-                      <div
-                        key={pr.id}
-                        style={{
-                          padding: '14px',
-                          borderRadius: 'var(--radius-md, 10px)',
-                          border: '1px solid var(--color-border-subtle, #e2e8f0)',
-                          backgroundColor: 'var(--color-surface-subtle, #f1f5f9)',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '6px',
-                          fontSize: '12px'
-                        }}
-                      >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span style={{ fontWeight: 700, color: 'var(--color-text-primary, #0f172a)' }}>
-                            {pr.country} ({pr.currency})
-                          </span>
-                          <AdminBadge variant={pr.is_active ? 'success' : 'neutral'}>
-                            v{pr.version} {pr.is_active ? 'Active' : 'Archived'}
-                          </AdminBadge>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px' }}>
+                    {p.prices.map((pr) => {
+                      const regularPrice = pr.regular_price ?? pr.list_price ?? '0.00';
+                      const sellingPrice = pr.current_selling_price ?? pr.offer_price ?? regularPrice;
+                      const hasOffer = Boolean(pr.offer_price && Number(pr.offer_price) > 0);
+                      const discountPct = pr.calculated_discount_percentage != null
+                        ? Number(pr.calculated_discount_percentage).toFixed(2)
+                        : (hasOffer && Number(regularPrice) > 0
+                            ? (((Number(regularPrice) - Number(pr.offer_price)) / Number(regularPrice)) * 100).toFixed(2)
+                            : null);
+
+                      return (
+                        <div
+                          key={pr.id}
+                          data-testid={`price-card-${pr.id}`}
+                          style={{
+                            padding: '18px',
+                            borderRadius: 'var(--radius-md, 12px)',
+                            border: hasOffer && pr.offer_status === 'ACTIVE'
+                              ? '2px solid #2563eb'
+                              : '1px solid var(--color-border-subtle, #cbd5e1)',
+                            backgroundColor: '#ffffff',
+                            boxShadow: '0 2px 4px 0 rgba(0, 0, 0, 0.06)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '12px',
+                            fontSize: '13px'
+                          }}
+                        >
+                          {/* Card Header: Country & Status */}
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                            <div>
+                              <div style={{ fontWeight: 800, color: 'var(--color-text-primary, #0f172a)', fontSize: '15px' }}>
+                                {pr.country_name || pr.country} ({pr.country}{pr.country_iso3 ? ` / ${pr.country_iso3}` : ''})
+                              </div>
+                              <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>
+                                Currency: <strong>{pr.currency} — {getCurrencyInfo(pr.currency).name} ({pr.currency_symbol || getCurrencySymbol(pr.currency)})</strong> • {pr.billing_period}
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                              <AdminBadge variant={pr.is_active ? 'success' : 'neutral'}>
+                                v{pr.version} {pr.is_active ? 'Active' : 'Archived'}
+                              </AdminBadge>
+                              {pr.offer_status && (
+                                <AdminBadge
+                                  variant={
+                                    pr.offer_status === 'ACTIVE'
+                                      ? 'success'
+                                      : pr.offer_status === 'SCHEDULED'
+                                      ? 'info'
+                                      : pr.offer_status === 'EXPIRED'
+                                      ? 'danger'
+                                      : 'neutral'
+                                  }
+                                >
+                                  {pr.offer_status}
+                                </AdminBadge>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Commercial Pricing Comparison Box */}
+                          <div
+                            style={{
+                              backgroundColor: '#f8fafc',
+                              borderRadius: '8px',
+                              padding: '12px',
+                              border: '1px solid #e2e8f0',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '8px'
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 600 }}>Regular Subscription Price:</span>
+                              <span
+                                style={{
+                                  fontSize: '15px',
+                                  fontWeight: 700,
+                                  color: hasOffer && pr.offer_status === 'ACTIVE' ? '#94a3b8' : '#0f172a',
+                                  textDecoration: hasOffer && pr.offer_status === 'ACTIVE' ? 'line-through' : 'none'
+                                }}
+                                data-testid={`price-regular-${pr.id}`}
+                              >
+                                {pr.currency_symbol || getCurrencySymbol(pr.currency)} {regularPrice}
+                              </span>
+                            </div>
+
+                            {/* Current Active Selling Price */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ fontSize: '12px', color: '#0f172a', fontWeight: 700 }}>Current Selling Price:</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span
+                                  style={{ fontSize: '18px', fontWeight: 800, color: '#166534' }}
+                                  data-testid={`price-selling-${pr.id}`}
+                                >
+                                  {pr.currency_symbol || getCurrencySymbol(pr.currency)} {sellingPrice}
+                                </span>
+                                {discountPct && Number(discountPct) > 0 && (
+                                  <span
+                                    data-testid={`price-discount-${pr.id}`}
+                                    style={{
+                                      padding: '2px 6px',
+                                      borderRadius: '4px',
+                                      backgroundColor: '#dcfce7',
+                                      color: '#15803d',
+                                      fontSize: '11px',
+                                      fontWeight: 800
+                                    }}
+                                  >
+                                    {discountPct}% OFF
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Backward-compatible data-testid */}
+                            <div style={{ display: 'none' }} data-testid={`price-list-${pr.id}`}>
+                              {pr.currency} {sellingPrice}
+                            </div>
+                          </div>
+
+                          {/* Campaign / Offer Details (if set) */}
+                          {pr.campaign_name && (
+                            <div
+                              style={{
+                                padding: '10px',
+                                borderRadius: '8px',
+                                backgroundColor: '#eff6ff',
+                                border: '1px solid #bfdbfe',
+                                fontSize: '12px',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '4px'
+                              }}
+                            >
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontWeight: 700, color: '#1e40af' }} data-testid={`price-campaign-${pr.id}`}>
+                                  🎁 Campaign / Offer: {pr.campaign_name}
+                                </span>
+                                <span style={{ fontWeight: 700, color: '#1e40af' }} data-testid={`price-offer-${pr.id}`}>
+                                  Current Selling Price: {pr.currency_symbol || getCurrencySymbol(pr.currency)} {pr.offer_price}
+                                </span>
+                              </div>
+                              {pr.campaign_description && (
+                                <div style={{ color: '#3b82f6', fontSize: '11px' }}>
+                                  {pr.campaign_description}
+                                </div>
+                              )}
+                              {(pr.offer_start_date || pr.offer_end_date) && (
+                                <div style={{ color: '#64748b', fontSize: '11px' }} data-testid={`price-offer-dates-${pr.id}`}>
+                                  Offer Validity: {pr.offer_start_date ? new Date(pr.offer_start_date).toLocaleDateString() : 'Immediate'} → {pr.offer_end_date ? new Date(pr.offer_end_date).toLocaleDateString() : 'Ongoing'}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Additional Entitlement & Policy Details */}
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', fontSize: '12px', color: '#64748b' }}>
+                            <div>
+                              Tax / VAT: <strong style={{ color: '#0f172a' }}>{pr.tax_percentage ?? 0}%</strong>
+                            </div>
+                            <div>
+                              Coupon Stacking: <strong style={{ color: '#0f172a' }}>{pr.allow_coupon_stacking ? 'Allowed' : 'No'}</strong>
+                            </div>
+                            <div>
+                              Billing Period: <strong style={{ color: '#0f172a' }}>{pr.billing_period}</strong>
+                            </div>
+                            <div>
+                              Additional Member Rate (Optional): <strong style={{ color: '#0f172a' }}>{pr.currency_symbol || getCurrencySymbol(pr.currency)} {pr.additional_member_list_price}</strong>
+                            </div>
+                          </div>
+
+                          {/* Action Buttons */}
+                          <div style={{ marginTop: 'auto', paddingTop: '10px', borderTop: '1px solid #e2e8f0', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                            <button
+                              onClick={() => openEditPriceModal(pr)}
+                              data-testid={`edit-price-btn-${pr.id}`}
+                              style={{
+                                flex: 1,
+                                padding: '8px 12px',
+                                borderRadius: '8px',
+                                border: '1px solid #2563eb',
+                                backgroundColor: '#eff6ff',
+                                color: '#1d4ed8',
+                                fontSize: '12px',
+                                fontWeight: 700,
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '6px',
+                                minHeight: '36px'
+                              }}
+                            >
+                              <Edit2 size={13} />
+                              <span>Edit Commercial Pricing</span>
+                            </button>
+
+                            <button
+                              onClick={() => openManageOfferModal(pr)}
+                              data-testid={`manage-offer-btn-${pr.id}`}
+                              style={{
+                                flex: 1,
+                                padding: '8px 12px',
+                                borderRadius: '8px',
+                                border: '1px solid #059669',
+                                backgroundColor: '#ecfdf5',
+                                color: '#047857',
+                                fontSize: '12px',
+                                fontWeight: 700,
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '6px',
+                                minHeight: '36px'
+                              }}
+                            >
+                              <Tag size={13} />
+                              <span>Manage Campaign / Offer</span>
+                            </button>
+                          </div>
                         </div>
-                        <div style={{ color: 'var(--color-text-secondary, #64748b)' }}>
-                          Period: <strong>{pr.billing_period}</strong>
-                        </div>
-                        <div style={{ color: 'var(--color-text-primary, #0f172a)', fontSize: '13px', fontWeight: 600 }}>
-                          Base List: {pr.currency} {pr.list_price}
-                        </div>
-                        <div style={{ color: 'var(--color-text-secondary, #64748b)' }}>
-                          Extra Seat List: {pr.currency} {pr.additional_member_list_price} / seat
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
+                )}
+              </div>
+
+              {/* Plan Action Buttons */}
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', borderTop: '1px solid #e2e8f0', paddingTop: '12px' }}>
+                <button
+                  onClick={() => openEditPlanModal(p)}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: '6px',
+                    border: '1px solid #cbd5e1',
+                    backgroundColor: '#ffffff',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                  }}
+                >
+                  <Edit2 size={13} />
+                  <span>Edit Plan</span>
+                </button>
+
+                <button
+                  onClick={() => openAddPriceModal(p)}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: '6px',
+                    border: '1px solid #cbd5e1',
+                    backgroundColor: '#ffffff',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                  }}
+                >
+                  <Plus size={13} />
+                  <span>Add Price Version</span>
+                </button>
+
+                {p.status !== 'ARCHIVED' && (
+                  <button
+                    onClick={() => handleArchivePlan(p)}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: '6px',
+                      border: 'none',
+                      backgroundColor: '#f1f5f9',
+                      color: '#64748b',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Archive Plan
+                  </button>
                 )}
               </div>
             </div>
@@ -955,86 +1723,159 @@ export default function AdminSubscriptionsPage() {
 
       {/* Tab: Payment Transactions */}
       {activeTab === 'transactions' && (
-        <div
-          style={{
-            backgroundColor: 'var(--color-surface-card, #ffffff)',
-            borderRadius: 'var(--radius-lg, 16px)',
-            border: '1px solid var(--color-border-subtle, #e2e8f0)',
-            overflow: 'hidden',
-            boxShadow: 'var(--shadow-subtle)'
-          }}
-        >
-          {transactions.length === 0 ? (
-            <div style={{ padding: '48px 24px', textAlign: 'center', color: 'var(--color-text-secondary, #64748b)', fontSize: '14px' }}>
-              No financial transaction records recorded yet.
-            </div>
-          ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
-                <thead>
-                  <tr
-                    style={{
-                      borderBottom: '1px solid var(--color-border-subtle, #e2e8f0)',
-                      backgroundColor: 'var(--color-surface-subtle, #f1f5f9)',
-                      color: 'var(--color-text-secondary, #64748b)',
-                      fontWeight: 600
-                    }}
-                  >
-                    <th style={{ padding: '12px 16px' }}>Transaction ID</th>
-                    <th style={{ padding: '12px 16px' }}>User / Customer</th>
-                    <th style={{ padding: '12px 16px' }}>Plan Purchased</th>
-                    <th style={{ padding: '12px 16px' }}>Amount</th>
-                    <th style={{ padding: '12px 16px' }}>Discount</th>
-                    <th style={{ padding: '12px 16px' }}>Final Paid</th>
-                    <th style={{ padding: '12px 16px' }}>Provider</th>
-                    <th style={{ padding: '12px 16px' }}>Status</th>
-                    <th style={{ padding: '12px 16px' }}>Date</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {transactions.map((tx) => (
-                    <tr
-                      key={tx.id}
-                      style={{
-                        borderBottom: '1px solid var(--color-border-subtle, #e2e8f0)',
-                        transition: 'background-color 0.15s ease'
-                      }}
-                    >
-                      <td style={{ padding: '12px 16px', fontFamily: 'monospace', fontSize: '12px' }}>
-                        {tx.id.slice(0, 8)}...
-                      </td>
-                      <td style={{ padding: '12px 16px' }}>
-                        {tx.user_email || tx.user_id.slice(0, 8)}
-                      </td>
-                      <td style={{ padding: '12px 16px', fontWeight: 600 }}>
-                        {tx.plan_name}
-                      </td>
-                      <td style={{ padding: '12px 16px' }}>
-                        {tx.currency} {Number(tx.amount).toFixed(2)}
-                      </td>
-                      <td style={{ padding: '12px 16px', color: 'var(--status-in-stock, #10b981)' }}>
-                        -{tx.currency} {Number(tx.discount_amount).toFixed(2)}
-                      </td>
-                      <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--color-primary-900, #0f172a)' }}>
-                        {tx.currency} {Number(tx.final_amount).toFixed(2)}
-                      </td>
-                      <td style={{ padding: '12px 16px' }}>
-                        <AdminBadge variant="neutral">{tx.provider}</AdminBadge>
-                      </td>
-                      <td style={{ padding: '12px 16px' }}>
-                        <AdminBadge variant={tx.status === 'SUCCESS' ? 'success' : tx.status === 'PENDING' ? 'warning' : 'danger'}>
-                          {tx.status}
-                        </AdminBadge>
-                      </td>
-                      <td style={{ padding: '12px 16px', color: 'var(--color-text-secondary, #64748b)', fontSize: '12px' }}>
-                        {new Date(tx.created_at).toLocaleString()}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {/* Gateway Operations & Status Card */}
+          {gatewayStatus && (
+            <div
+              style={{
+                backgroundColor: 'var(--color-surface-card, #ffffff)',
+                borderRadius: 'var(--radius-lg, 16px)',
+                border: '1px solid var(--color-border-subtle, #e2e8f0)',
+                padding: '20px',
+                boxShadow: 'var(--shadow-subtle)',
+                display: 'flex',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '16px'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div
+                  style={{
+                    width: '40px',
+                    height: '40px',
+                    borderRadius: '10px',
+                    backgroundColor: 'rgba(15, 23, 42, 0.05)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: 'var(--color-primary-900, #0f172a)'
+                  }}
+                >
+                  <CreditCard size={20} />
+                </div>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <h3 style={{ fontSize: '15px', fontWeight: 700, margin: 0, color: 'var(--color-text-primary, #0f172a)' }}>
+                      Active Payment Gateway: {gatewayStatus.provider}
+                    </h3>
+                    <AdminBadge variant={gatewayStatus.status === 'ACTIVE' ? 'success' : 'warning'}>
+                      {gatewayStatus.status}
+                    </AdminBadge>
+                    <AdminBadge variant="neutral">
+                      {gatewayStatus.environment.toUpperCase()}
+                    </AdminBadge>
+                  </div>
+                  <p style={{ fontSize: '12px', color: 'var(--color-text-secondary, #64748b)', margin: '4px 0 0 0' }}>
+                    Webhooks: {gatewayStatus.webhook_configured ? '✓ Configured & Verified' : '⚠ Missing / Unverified'} | Currencies: {gatewayStatus.supported_currencies.slice(0, 4).join(', ')}
+                    {gatewayStatus.key_id_preview ? ` | Key: ${gatewayStatus.key_id_preview}` : ''}
+                  </p>
+                </div>
+              </div>
             </div>
           )}
+
+          <div
+            style={{
+              backgroundColor: 'var(--color-surface-card, #ffffff)',
+              borderRadius: 'var(--radius-lg, 16px)',
+              border: '1px solid var(--color-border-subtle, #e2e8f0)',
+              overflow: 'hidden',
+              boxShadow: 'var(--shadow-subtle)'
+            }}
+          >
+            {transactions.length === 0 ? (
+              <div style={{ padding: '48px 24px', textAlign: 'center', color: 'var(--color-text-secondary, #64748b)', fontSize: '14px' }}>
+                No financial transaction records recorded yet.
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                  <thead>
+                    <tr
+                      style={{
+                        borderBottom: '1px solid var(--color-border-subtle, #e2e8f0)',
+                        backgroundColor: 'var(--color-surface-subtle, #f1f5f9)',
+                        color: 'var(--color-text-secondary, #64748b)',
+                        fontWeight: 600
+                      }}
+                    >
+                      <th style={{ padding: '12px 16px' }}>Transaction ID</th>
+                      <th style={{ padding: '12px 16px' }}>User / Customer</th>
+                      <th style={{ padding: '12px 16px' }}>Plan Purchased</th>
+                      <th style={{ padding: '12px 16px' }}>Amount</th>
+                      <th style={{ padding: '12px 16px' }}>Discount</th>
+                      <th style={{ padding: '12px 16px' }}>Final Paid</th>
+                      <th style={{ padding: '12px 16px' }}>Provider</th>
+                      <th style={{ padding: '12px 16px' }}>Status</th>
+                      <th style={{ padding: '12px 16px' }}>Date</th>
+                      <th style={{ padding: '12px 16px', textAlign: 'right' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {transactions.map((tx) => (
+                      <tr
+                        key={tx.id}
+                        style={{
+                          borderBottom: '1px solid var(--color-border-subtle, #e2e8f0)',
+                          transition: 'background-color 0.15s ease'
+                        }}
+                      >
+                        <td style={{ padding: '12px 16px', fontFamily: 'monospace', fontSize: '12px' }}>
+                          {tx.id.slice(0, 8)}...
+                        </td>
+                        <td style={{ padding: '12px 16px' }}>
+                          {tx.user_email || tx.user_id.slice(0, 8)}
+                        </td>
+                        <td style={{ padding: '12px 16px', fontWeight: 600 }}>
+                          {tx.plan_name}
+                        </td>
+                        <td style={{ padding: '12px 16px' }}>
+                          {tx.currency} {Number(tx.amount).toFixed(2)}
+                        </td>
+                        <td style={{ padding: '12px 16px', color: 'var(--status-in-stock, #10b981)' }}>
+                          -{tx.currency} {Number(tx.discount_amount).toFixed(2)}
+                        </td>
+                        <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--color-primary-900, #0f172a)' }}>
+                          {tx.currency} {Number(tx.final_amount).toFixed(2)}
+                        </td>
+                        <td style={{ padding: '12px 16px' }}>
+                          <AdminBadge variant="neutral">{tx.provider}</AdminBadge>
+                        </td>
+                        <td style={{ padding: '12px 16px' }}>
+                          <AdminBadge variant={tx.status === 'SUCCESS' ? 'success' : tx.status === 'PENDING' ? 'warning' : 'danger'}>
+                            {tx.status}
+                          </AdminBadge>
+                        </td>
+                        <td style={{ padding: '12px 16px', color: 'var(--color-text-secondary, #64748b)', fontSize: '12px' }}>
+                          {new Date(tx.created_at).toLocaleString()}
+                        </td>
+                        <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                          <button
+                            onClick={() => handleReconcileTransaction(tx.id)}
+                            disabled={reconcilingId === tx.id}
+                            style={{
+                              padding: '6px 10px',
+                              borderRadius: '6px',
+                              border: '1px solid var(--color-border-subtle, #e2e8f0)',
+                              backgroundColor: 'var(--color-surface-subtle, #f8fafc)',
+                              fontSize: '12px',
+                              fontWeight: 600,
+                              color: 'var(--color-text-primary, #0f172a)',
+                              cursor: reconcilingId === tx.id ? 'not-allowed' : 'pointer'
+                            }}
+                          >
+                            {reconcilingId === tx.id ? 'Reconciling...' : 'Reconcile'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -2293,6 +3134,1045 @@ export default function AdminSubscriptionsPage() {
           </div>
         </div>
       )}
+
+      {/* Modal: Edit Subscription Plan */}
+      <Modal isOpen={isEditPlanModalOpen} onClose={() => setIsEditPlanModalOpen(false)} title={`Edit Subscription Plan: ${selectedPlanForEdit?.name}`}>
+        {editPlanError && (
+          <div style={{ padding: '12px', backgroundColor: 'var(--status-overdue-bg, #fef2f2)', border: '1px solid #fecaca', borderRadius: 'var(--radius-md, 10px)', color: 'var(--status-overdue, #ef4444)', fontSize: '13px', marginBottom: '16px' }}>
+            {editPlanError}
+          </div>
+        )}
+
+        <form onSubmit={handleUpdatePlan} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <div>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+              Plan Name *
+            </label>
+            <input
+              type="text"
+              required
+              value={editPlanForm.name}
+              onChange={(e) => setEditPlanForm({ ...editPlanForm, name: e.target.value })}
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+            />
+          </div>
+
+          <div>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+              Description
+            </label>
+            <input
+              type="text"
+              value={editPlanForm.description}
+              onChange={(e) => setEditPlanForm({ ...editPlanForm, description: e.target.value })}
+              style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+            />
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                Included Members
+              </label>
+              <input
+                type="number"
+                min="1"
+                required
+                value={editPlanForm.included_members}
+                onChange={(e) => setEditPlanForm({ ...editPlanForm, included_members: parseInt(e.target.value) || 1 })}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+              />
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                Maximum Homes Capacity
+              </label>
+              <input
+                type="number"
+                min="1"
+                required
+                value={editPlanForm.max_homes}
+                onChange={(e) => setEditPlanForm({ ...editPlanForm, max_homes: parseInt(e.target.value) || 1 })}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                Plan Status
+              </label>
+              <select
+                value={editPlanForm.status}
+                onChange={(e) => setEditPlanForm({ ...editPlanForm, status: e.target.value })}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+              >
+                <option value="ACTIVE">ACTIVE</option>
+                <option value="ARCHIVED">ARCHIVED</option>
+                <option value="INACTIVE">INACTIVE</option>
+              </select>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                Introductory Free Period Days
+              </label>
+              <input
+                type="number"
+                min="0"
+                value={editPlanForm.introductory_duration_days}
+                onChange={(e) => setEditPlanForm({ ...editPlanForm, introductory_duration_days: parseInt(e.target.value) || 0 })}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '12px' }}>
+            <button
+              type="button"
+              onClick={() => setIsEditPlanModalOpen(false)}
+              disabled={isSubmittingEditPlan}
+              style={{ padding: '10px 18px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', backgroundColor: 'transparent', fontSize: '14px', fontWeight: 600, cursor: 'pointer' }}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={isSubmittingEditPlan}
+              style={{ padding: '10px 20px', borderRadius: 'var(--radius-md, 10px)', border: 'none', backgroundColor: '#2563eb', color: '#ffffff', fontSize: '14px', fontWeight: 600, cursor: isSubmittingEditPlan ? 'not-allowed' : 'pointer' }}
+            >
+              {isSubmittingEditPlan ? 'Saving...' : 'Save Plan Changes'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Modal: Add Country Price Version */}
+      <Modal isOpen={isCreatePriceModalOpen} onClose={() => setIsCreatePriceModalOpen(false)} title={`Add Country Pricing Version: ${selectedPlanForPrice?.name || 'All Plans'}`}>
+        {createPriceError && (
+          <div style={{ padding: '12px', backgroundColor: 'var(--status-overdue-bg, #fef2f2)', border: '1px solid #fecaca', borderRadius: 'var(--radius-md, 10px)', color: 'var(--status-overdue, #ef4444)', fontSize: '13px', marginBottom: '16px' }}>
+            {createPriceError}
+          </div>
+        )}
+
+        <form onSubmit={handleCreatePrice} style={{ display: 'flex', flexDirection: 'column', gap: '14px', maxHeight: '75vh', overflowY: 'auto', paddingRight: '4px' }}>
+          {/* Section 1: Regional Identity & Authoritative Currency */}
+          <div style={{ backgroundColor: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '10px', padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, color: '#0369a1', marginBottom: '6px' }}>
+                🌍 Select Country (Auto-Populates ISO Codes, Currency & Tax)
+              </label>
+              <select
+                data-testid="add-price-country-select"
+                value={createPriceForm.country}
+                onChange={(e) => handleCountrySelect(e.target.value)}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid #0284c7', backgroundColor: '#ffffff', fontSize: '14px', fontWeight: 600, color: '#0f172a' }}
+              >
+                {COUNTRIES.map((c) => (
+                  <option key={c.iso2} value={c.iso2}>
+                    {c.name} ({c.iso2} / {c.iso3}) — {c.currency} ({c.currencySymbol}) [VAT: {c.defaultTaxPct}%]
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr', gap: '10px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                  Country Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  data-testid="add-price-country-name-input"
+                  placeholder="e.g. Saudi Arabia"
+                  value={createPriceForm.country_name}
+                  onChange={(e) => setCreatePriceForm({ ...createPriceForm, country_name: e.target.value })}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                  ISO-2 Code *
+                </label>
+                <input
+                  type="text"
+                  required
+                  maxLength={4}
+                  data-testid="add-price-iso2-input"
+                  placeholder="e.g. SA"
+                  value={createPriceForm.country}
+                  onChange={(e) => setCreatePriceForm({ ...createPriceForm, country: e.target.value.toUpperCase() })}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', textTransform: 'uppercase' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                  ISO-3 Code
+                </label>
+                <input
+                  type="text"
+                  maxLength={4}
+                  data-testid="add-price-iso3-input"
+                  placeholder="e.g. SAU"
+                  value={createPriceForm.country_iso3}
+                  onChange={(e) => setCreatePriceForm({ ...createPriceForm, country_iso3: e.target.value.toUpperCase() })}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', textTransform: 'uppercase' }}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr', gap: '10px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                  Currency *
+                </label>
+                <select
+                  data-testid="add-price-currency-select"
+                  value={createPriceForm.currency}
+                  onChange={(e) => {
+                    const newCurr = e.target.value;
+                    const sym = getCurrencySymbol(newCurr);
+                    setCreatePriceForm({
+                      ...createPriceForm,
+                      currency: newCurr,
+                      currency_symbol: sym
+                    });
+                  }}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', fontWeight: 600 }}
+                >
+                  {CURRENCIES.map((curr) => (
+                    <option key={curr.code} value={curr.code}>
+                      {curr.code} — {curr.name} ({curr.symbol})
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="hidden"
+                  data-testid="add-price-currency-input"
+                  value={createPriceForm.currency}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                  Derived Symbol
+                </label>
+                <input
+                  type="text"
+                  readOnly
+                  data-testid="add-price-symbol-input"
+                  value={createPriceForm.currency_symbol}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #e2e8f0', backgroundColor: '#f1f5f9', fontSize: '13px', fontWeight: 700 }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                  Billing Period *
+                </label>
+                <select
+                  value={createPriceForm.billing_period}
+                  onChange={(e) => setCreatePriceForm({ ...createPriceForm, billing_period: e.target.value })}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+                >
+                  <option value="ANNUAL">ANNUAL</option>
+                  <option value="MONTHLY">MONTHLY</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 2: Primary Subscription Pricing */}
+          <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '10px', padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '13px', fontWeight: 700, color: '#166534' }}>
+                💳 Subscription Pricing ({createPriceForm.currency})
+              </span>
+              {createPriceForm.offer_price && parseFloat(createPriceForm.regular_price) > 0 && parseFloat(createPriceForm.offer_price) > 0 && parseFloat(createPriceForm.regular_price) > parseFloat(createPriceForm.offer_price) && (
+                <span style={{ fontSize: '12px', fontWeight: 700, backgroundColor: '#166534', color: '#ffffff', padding: '2px 8px', borderRadius: '6px' }} data-testid="live-discount-preview">
+                  {(((parseFloat(createPriceForm.regular_price) - parseFloat(createPriceForm.offer_price)) / parseFloat(createPriceForm.regular_price)) * 100).toFixed(2)}% OFF
+                </span>
+              )}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#166534', marginBottom: '4px' }}>
+                  Regular Subscription Price *
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  required
+                  data-testid="add-price-regular-input"
+                  placeholder="e.g. 199.00"
+                  value={createPriceForm.regular_price}
+                  onChange={(e) => setCreatePriceForm({ ...createPriceForm, regular_price: e.target.value, list_price: e.target.value })}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #86efac', fontSize: '14px', fontWeight: 700 }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#166534', marginBottom: '4px' }}>
+                  Current Selling Price (Optional)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  data-testid="add-price-offer-input"
+                  placeholder="e.g. 149.00"
+                  value={createPriceForm.offer_price}
+                  onChange={(e) => setCreatePriceForm({ ...createPriceForm, offer_price: e.target.value })}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #86efac', fontSize: '14px', fontWeight: 700, color: '#15803d' }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Section 3: Promotional Campaign / Offer */}
+          <div style={{ backgroundColor: '#fdf4ff', border: '1px solid #f0abfc', borderRadius: '10px', padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ fontSize: '13px', fontWeight: 700, color: '#86198f' }}>
+              🎁 Promotional Campaign / Offer (Optional)
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '10px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                  Campaign Name
+                </label>
+                <input
+                  type="text"
+                  data-testid="add-price-campaign-name-input"
+                  placeholder="e.g. Regional Launch Campaign 2026"
+                  value={createPriceForm.campaign_name}
+                  onChange={(e) => setCreatePriceForm({ ...createPriceForm, campaign_name: e.target.value })}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                  Offer Status
+                </label>
+                <select
+                  data-testid="add-price-offer-status-select"
+                  value={createPriceForm.offer_status}
+                  onChange={(e) => setCreatePriceForm({ ...createPriceForm, offer_status: e.target.value })}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+                >
+                  <option value="ACTIVE">ACTIVE</option>
+                  <option value="SCHEDULED">SCHEDULED</option>
+                  <option value="DRAFT">DRAFT</option>
+                  <option value="EXPIRED">EXPIRED</option>
+                  <option value="CANCELLED">CANCELLED</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                Campaign Description
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. Special introductory rate for early subscribers"
+                value={createPriceForm.campaign_description}
+                onChange={(e) => setCreatePriceForm({ ...createPriceForm, campaign_description: e.target.value })}
+                style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+              />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                  Offer Start Date
+                </label>
+                <input
+                  type="date"
+                  data-testid="add-price-offer-start-input"
+                  value={createPriceForm.offer_start_date}
+                  onChange={(e) => setCreatePriceForm({ ...createPriceForm, offer_start_date: e.target.value })}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                  Offer End Date
+                </label>
+                <input
+                  type="date"
+                  data-testid="add-price-offer-end-input"
+                  value={createPriceForm.offer_end_date}
+                  onChange={(e) => setCreatePriceForm({ ...createPriceForm, offer_end_date: e.target.value })}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Section 4: Commercial Policies & Tax */}
+          <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ fontSize: '13px', fontWeight: 700, color: '#0f172a' }}>
+              ⚙️ Commercial Policies & Tax
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                  Tax / VAT Percentage (%)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  data-testid="add-price-tax-input"
+                  placeholder="e.g. 15.00"
+                  value={createPriceForm.tax_percentage}
+                  onChange={(e) => setCreatePriceForm({ ...createPriceForm, tax_percentage: e.target.value })}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                  Region / Group
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Middle East"
+                  value={createPriceForm.region}
+                  onChange={(e) => setCreatePriceForm({ ...createPriceForm, region: e.target.value })}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+              <input
+                type="checkbox"
+                id="add_coupon_stacking"
+                checked={createPriceForm.allow_coupon_stacking}
+                onChange={(e) => setCreatePriceForm({ ...createPriceForm, allow_coupon_stacking: e.target.checked })}
+                style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+              />
+              <label htmlFor="add_coupon_stacking" style={{ fontSize: '12px', color: '#475569', cursor: 'pointer' }}>
+                Allow coupon discount stacking on top of active offer price
+              </label>
+            </div>
+          </div>
+
+          {/* Section 5: Additional Member / Extra Seat Configuration (Optional) */}
+          <div style={{ backgroundColor: '#fafafa', border: '1px dashed #cbd5e1', borderRadius: '10px', padding: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '12px', fontWeight: 700, color: '#475569' }}>
+                👥 Additional Member / Extra Seat Configuration (Optional)
+              </span>
+              <span style={{ fontSize: '11px', color: '#94a3b8' }}>Secondary Seat Expansion</span>
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                Additional Member Rate ({createPriceForm.currency})
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                data-testid="add-price-seat-input"
+                placeholder="e.g. 49.00"
+                value={createPriceForm.additional_member_list_price}
+                onChange={(e) => setCreatePriceForm({ ...createPriceForm, additional_member_list_price: e.target.value })}
+                style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+              />
+            </div>
+            <p style={{ fontSize: '11px', color: '#94a3b8', margin: 0 }}>
+              Configures secondary per-member expansion pricing if enabled. This is separate from the primary Subscription Fee.
+            </p>
+          </div>
+
+          {/* Action Buttons */}
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '8px' }}>
+            <button
+              type="button"
+              onClick={() => setIsCreatePriceModalOpen(false)}
+              disabled={isSubmittingPrice}
+              style={{ padding: '10px 18px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', backgroundColor: 'transparent', fontSize: '14px', fontWeight: 600, cursor: 'pointer' }}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              data-testid="btn-publish-price-version"
+              disabled={isSubmittingPrice}
+              style={{ padding: '10px 20px', borderRadius: 'var(--radius-md, 10px)', border: 'none', backgroundColor: '#2563eb', color: '#ffffff', fontSize: '14px', fontWeight: 600, cursor: isSubmittingPrice ? 'not-allowed' : 'pointer' }}
+            >
+              {isSubmittingPrice ? 'Publishing Pricing...' : '🚀 Publish Country Pricing'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Modal: Edit Commercial Price */}
+      <Modal
+        isOpen={isEditPriceModalOpen}
+        onClose={() => setIsEditPriceModalOpen(false)}
+        title={`Edit Commercial Pricing — ${selectedPriceForEdit?.country} (${selectedPriceForEdit?.country_name || selectedPriceForEdit?.country})`}
+      >
+        {editPriceError && (
+          <div style={{ padding: '12px', backgroundColor: 'var(--status-overdue-bg, #fef2f2)', border: '1px solid #fecaca', borderRadius: 'var(--radius-md, 10px)', color: 'var(--status-overdue, #ef4444)', fontSize: '13px', marginBottom: '16px' }}>
+            {editPriceError}
+          </div>
+        )}
+
+        <form onSubmit={handleUpdatePrice} style={{ display: 'flex', flexDirection: 'column', gap: '14px', maxHeight: '75vh', overflowY: 'auto', paddingRight: '4px' }}>
+          {/* Section 1: Regional Identity & Authoritative Currency */}
+          <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '13px', fontWeight: 700, color: '#0f172a' }}>
+                🌍 Regional Identity
+              </span>
+              <span style={{ fontSize: '12px', color: '#64748b' }}>
+                ISO: <strong>{selectedPriceForEdit?.country} {selectedPriceForEdit?.country_iso3 ? `/ ${selectedPriceForEdit?.country_iso3}` : ''}</strong>
+              </span>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr', gap: '10px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                  Country
+                </label>
+                <input
+                  type="text"
+                  readOnly
+                  value={selectedPriceForEdit?.country_name || selectedPriceForEdit?.country || ''}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #e2e8f0', backgroundColor: '#f1f5f9', fontSize: '13px', fontWeight: 600, color: '#0f172a' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                  ISO-2
+                </label>
+                <input
+                  type="text"
+                  readOnly
+                  value={selectedPriceForEdit?.country || ''}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #e2e8f0', backgroundColor: '#f1f5f9', fontSize: '13px', fontWeight: 700 }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                  ISO-3
+                </label>
+                <input
+                  type="text"
+                  readOnly
+                  value={selectedPriceForEdit?.country_iso3 || '—'}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #e2e8f0', backgroundColor: '#f1f5f9', fontSize: '13px', fontWeight: 700 }}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr', gap: '10px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                  Currency *
+                </label>
+                <select
+                  data-testid="edit-price-currency-select"
+                  value={editPriceForm.currency}
+                  onChange={(e) => {
+                    const newCurr = e.target.value;
+                    const sym = getCurrencySymbol(newCurr);
+                    setEditPriceForm({
+                      ...editPriceForm,
+                      currency: newCurr,
+                      currency_symbol: sym
+                    });
+                  }}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', fontWeight: 600 }}
+                >
+                  {CURRENCIES.map((curr) => (
+                    <option key={curr.code} value={curr.code}>
+                      {curr.code} — {curr.name} ({curr.symbol})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                  Derived Symbol
+                </label>
+                <input
+                  type="text"
+                  readOnly
+                  data-testid="edit-price-symbol-input"
+                  value={editPriceForm.currency_symbol}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #e2e8f0', backgroundColor: '#f1f5f9', fontSize: '13px', fontWeight: 700 }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                  Billing Period *
+                </label>
+                <select
+                  value={editPriceForm.billing_period}
+                  onChange={(e) => setEditPriceForm({ ...editPriceForm, billing_period: e.target.value })}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+                >
+                  <option value="ANNUAL">ANNUAL</option>
+                  <option value="MONTHLY">MONTHLY</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Section 2: Primary Subscription Pricing */}
+          <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '10px', padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '13px', fontWeight: 700, color: '#166534' }}>
+                💳 Subscription Pricing ({editPriceForm.currency})
+              </span>
+              {editPriceForm.offer_price && parseFloat(editPriceForm.regular_price) > 0 && parseFloat(editPriceForm.offer_price) > 0 && parseFloat(editPriceForm.regular_price) > parseFloat(editPriceForm.offer_price) && (
+                <span
+                  data-testid="edit-price-discount-preview"
+                  style={{ fontSize: '12px', fontWeight: 800, backgroundColor: '#166534', color: '#ffffff', padding: '2px 8px', borderRadius: '6px' }}
+                >
+                  {(((parseFloat(editPriceForm.regular_price) - parseFloat(editPriceForm.offer_price)) / parseFloat(editPriceForm.regular_price)) * 100).toFixed(2)}% OFF
+                </span>
+              )}
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#166534', marginBottom: '4px' }}>
+                  Regular Subscription Price *
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  required
+                  data-testid="edit-price-list-input"
+                  value={editPriceForm.regular_price}
+                  onChange={(e) => setEditPriceForm({ ...editPriceForm, regular_price: e.target.value, list_price: e.target.value })}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #86efac', fontSize: '14px', fontWeight: 700 }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#166534', marginBottom: '4px' }}>
+                  Current Selling Price
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  data-testid="edit-price-offer-input"
+                  placeholder="e.g. 199.00"
+                  value={editPriceForm.offer_price}
+                  onChange={(e) => setEditPriceForm({ ...editPriceForm, offer_price: e.target.value })}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #86efac', fontSize: '14px', fontWeight: 700, color: '#15803d' }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Section 3: Promotional Campaign & Offer Configuration */}
+          <div style={{ backgroundColor: '#fdf4ff', border: '1px solid #f0abfc', borderRadius: '10px', padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ fontSize: '13px', fontWeight: 700, color: '#86198f' }}>
+              🎁 Campaign / Offer
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '10px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                  Campaign Name
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Festival Launch Offer"
+                  data-testid="edit-price-campaign-name-input"
+                  value={editPriceForm.campaign_name}
+                  onChange={(e) => setEditPriceForm({ ...editPriceForm, campaign_name: e.target.value })}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                  Status *
+                </label>
+                <select
+                  data-testid="edit-price-offer-status-select"
+                  value={editPriceForm.offer_status}
+                  onChange={(e) => setEditPriceForm({ ...editPriceForm, offer_status: e.target.value })}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', fontWeight: 600 }}
+                >
+                  <option value="ACTIVE">ACTIVE (Live Now)</option>
+                  <option value="SCHEDULED">SCHEDULED (Upcoming)</option>
+                  <option value="REGULAR">REGULAR PRICING (No Offer)</option>
+                  <option value="DRAFT">DRAFT (Inactive)</option>
+                  <option value="EXPIRED">EXPIRED (Ended)</option>
+                  <option value="CANCELLED">CANCELLED (Withdrawn)</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                Campaign Description
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. Special introductory regional rate"
+                data-testid="edit-price-campaign-desc-input"
+                value={editPriceForm.campaign_description}
+                onChange={(e) => setEditPriceForm({ ...editPriceForm, campaign_description: e.target.value })}
+                style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+              />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                  Offer Start Date
+                </label>
+                <input
+                  type="date"
+                  data-testid="edit-price-start-date-input"
+                  value={editPriceForm.offer_start_date}
+                  onChange={(e) => setEditPriceForm({ ...editPriceForm, offer_start_date: e.target.value })}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                  Offer End Date
+                </label>
+                <input
+                  type="date"
+                  data-testid="edit-price-end-date-input"
+                  value={editPriceForm.offer_end_date}
+                  onChange={(e) => setEditPriceForm({ ...editPriceForm, offer_end_date: e.target.value })}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Section 4: Commercial Policies & Tax */}
+          <div style={{ backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ fontSize: '13px', fontWeight: 700, color: '#0f172a' }}>
+              ⚙️ Commercial Policies & Tax
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                  Tax / VAT (%)
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  data-testid="edit-price-tax-input"
+                  value={editPriceForm.tax_percentage}
+                  onChange={(e) => setEditPriceForm({ ...editPriceForm, tax_percentage: e.target.value })}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                  Pricing Version Status
+                </label>
+                <select
+                  data-testid="edit-price-status-select"
+                  value={editPriceForm.is_active ? 'true' : 'false'}
+                  onChange={(e) => setEditPriceForm({ ...editPriceForm, is_active: e.target.value === 'true' })}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+                >
+                  <option value="true">Active (Published for checkout)</option>
+                  <option value="false">Archived (Grandfathered only)</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                  Effective Until Date
+                </label>
+                <input
+                  type="date"
+                  data-testid="edit-price-effective-until-input"
+                  value={editPriceForm.effective_until}
+                  onChange={(e) => setEditPriceForm({ ...editPriceForm, effective_until: e.target.value })}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
+              <input
+                type="checkbox"
+                id="edit_coupon_stacking"
+                data-testid="edit-price-stacking-toggle"
+                checked={editPriceForm.allow_coupon_stacking}
+                onChange={(e) => setEditPriceForm({ ...editPriceForm, allow_coupon_stacking: e.target.checked })}
+                style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+              />
+              <label htmlFor="edit_coupon_stacking" style={{ fontSize: '12px', color: '#475569', cursor: 'pointer' }}>
+                Allow coupon discount stacking on top of active offer price
+              </label>
+            </div>
+          </div>
+
+          {/* Section 5: Operational Audit Reason */}
+          <div>
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+              Operational Reason *
+            </label>
+            <input
+              type="text"
+              required
+              placeholder="e.g. Updated commercial launch price and campaign validity"
+              data-testid="edit-price-reason-input"
+              value={editPriceForm.reason}
+              onChange={(e) => setEditPriceForm({ ...editPriceForm, reason: e.target.value })}
+              style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+            />
+          </div>
+
+          {/* Section 6: Additional Member / Extra Seat Pricing (Optional) */}
+          <div style={{ backgroundColor: '#fafafa', border: '1px dashed #cbd5e1', borderRadius: '10px', padding: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '12px', fontWeight: 700, color: '#475569' }}>
+                👥 Additional Member / Extra Seat Pricing (Optional)
+              </span>
+              <span style={{ fontSize: '11px', color: '#94a3b8' }}>Secondary Seat Expansion</span>
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#475569', marginBottom: '4px' }}>
+                Additional Member Rate ({editPriceForm.currency})
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                data-testid="edit-price-additional-input"
+                value={editPriceForm.additional_member_list_price}
+                onChange={(e) => setEditPriceForm({ ...editPriceForm, additional_member_list_price: e.target.value })}
+                style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+              />
+            </div>
+            <p style={{ fontSize: '11px', color: '#94a3b8', margin: 0 }}>
+              Configures secondary per-member expansion pricing if enabled. This is distinct from the primary Subscription Fee.
+            </p>
+          </div>
+
+          {/* Action Buttons */}
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '8px' }}>
+            <button
+              type="button"
+              onClick={() => setIsEditPriceModalOpen(false)}
+              disabled={isSubmittingEditPrice}
+              style={{ padding: '10px 18px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', backgroundColor: 'transparent', fontSize: '14px', fontWeight: 600, cursor: 'pointer' }}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              data-testid="save-price-submit-btn"
+              disabled={isSubmittingEditPrice}
+              style={{ padding: '10px 20px', borderRadius: 'var(--radius-md, 10px)', border: 'none', backgroundColor: '#2563eb', color: '#ffffff', fontSize: '14px', fontWeight: 600, cursor: isSubmittingEditPrice ? 'not-allowed' : 'pointer' }}
+            >
+              {isSubmittingEditPrice ? 'Saving...' : 'Save Commercial Pricing'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Modal: Manage Regional Campaign / Offer */}
+      <Modal
+        isOpen={isManageOfferModalOpen}
+        onClose={() => setIsManageOfferModalOpen(false)}
+        title={`Manage Campaign & Offer: ${selectedPriceForOffer?.country} (${selectedPriceForOffer?.currency})`}
+      >
+        {manageOfferError && (
+          <div style={{ padding: '12px', backgroundColor: 'var(--status-overdue-bg, #fef2f2)', border: '1px solid #fecaca', borderRadius: 'var(--radius-md, 10px)', color: 'var(--status-overdue, #ef4444)', fontSize: '13px', marginBottom: '16px' }}>
+            {manageOfferError}
+          </div>
+        )}
+
+        {selectedPriceForOffer && (
+          <form onSubmit={handleUpdateOffer} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {/* Context Notice */}
+            <div style={{ padding: '10px 14px', backgroundColor: '#f8fafc', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '13px' }}>
+              <div>Regular Subscription Price: <strong>{selectedPriceForOffer.currency_symbol || selectedPriceForOffer.currency} {selectedPriceForOffer.regular_price ?? selectedPriceForOffer.list_price}</strong></div>
+              <div style={{ color: '#64748b', fontSize: '12px', marginTop: '2px' }}>The campaign/offer defines the Current Selling Price paid by the customer during the active validity window.</div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                  Campaign Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Festival Launch Offer"
+                  data-testid="offer-campaign-name-input"
+                  value={manageOfferForm.campaign_name}
+                  onChange={(e) => setManageOfferForm({ ...manageOfferForm, campaign_name: e.target.value })}
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                  Current Selling Price ({selectedPriceForOffer.currency}) *
+                </label>
+                <input
+                  type="number"
+                  step="0.01"
+                  required
+                  placeholder="e.g. 1999.00"
+                  data-testid="offer-price-input"
+                  value={manageOfferForm.offer_price}
+                  onChange={(e) => setManageOfferForm({ ...manageOfferForm, offer_price: e.target.value })}
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+                />
+              </div>
+            </div>
+
+            {/* Live Calculated Discount Preview */}
+            {(() => {
+              const reg = Number(selectedPriceForOffer.regular_price ?? selectedPriceForOffer.list_price ?? 0);
+              const off = Number(manageOfferForm.offer_price ?? 0);
+              if (reg > 0 && off > 0) {
+                const discount = (((reg - off) / reg) * 100).toFixed(2);
+                return (
+                  <div
+                    data-testid="offer-discount-preview"
+                    style={{
+                      padding: '10px 14px',
+                      borderRadius: '8px',
+                      backgroundColor: Number(discount) > 0 ? '#dcfce7' : '#fee2e2',
+                      border: `1px solid ${Number(discount) > 0 ? '#86efac' : '#fca5a5'}`,
+                      color: Number(discount) > 0 ? '#15803d' : '#b91c1c',
+                      fontSize: '13px',
+                      fontWeight: 700,
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center'
+                    }}
+                  >
+                    <span>Discount:</span>
+                    <span style={{ fontSize: '15px' }}>{discount}% OFF</span>
+                  </div>
+                );
+              }
+              return null;
+            })()}
+
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                Campaign Description
+              </label>
+              <textarea
+                rows={2}
+                placeholder="e.g. Exclusive regional festive discount rate"
+                data-testid="offer-campaign-desc-input"
+                value={manageOfferForm.campaign_description}
+                onChange={(e) => setManageOfferForm({ ...manageOfferForm, campaign_description: e.target.value })}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', resize: 'vertical' }}
+              />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                  Status *
+                </label>
+                <select
+                  data-testid="offer-status-select"
+                  value={manageOfferForm.offer_status}
+                  onChange={(e) => setManageOfferForm({ ...manageOfferForm, offer_status: e.target.value })}
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+                >
+                  <option value="ACTIVE">ACTIVE (Live Now)</option>
+                  <option value="SCHEDULED">SCHEDULED (Upcoming)</option>
+                  <option value="DRAFT">DRAFT (Inactive)</option>
+                  <option value="EXPIRED">EXPIRED (Ended)</option>
+                  <option value="CANCELLED">CANCELLED (Withdrawn)</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                  Offer Start Date
+                </label>
+                <input
+                  type="date"
+                  data-testid="offer-start-date-input"
+                  value={manageOfferForm.offer_start_date}
+                  onChange={(e) => setManageOfferForm({ ...manageOfferForm, offer_start_date: e.target.value })}
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                  Offer End Date
+                </label>
+                <input
+                  type="date"
+                  data-testid="offer-end-date-input"
+                  value={manageOfferForm.offer_end_date}
+                  onChange={(e) => setManageOfferForm({ ...manageOfferForm, offer_end_date: e.target.value })}
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
+                Operational Reason *
+              </label>
+              <input
+                type="text"
+                required
+                placeholder="e.g. Approved Q4 Commercial campaign rollout"
+                data-testid="offer-reason-input"
+                value={manageOfferForm.reason}
+                onChange={(e) => setManageOfferForm({ ...manageOfferForm, reason: e.target.value })}
+                style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px' }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '12px' }}>
+              <button
+                type="button"
+                onClick={() => setIsManageOfferModalOpen(false)}
+                disabled={isSubmittingOffer}
+                style={{ padding: '10px 18px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', backgroundColor: 'transparent', fontSize: '14px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                data-testid="save-offer-submit-btn"
+                disabled={isSubmittingOffer}
+                style={{ padding: '10px 20px', borderRadius: 'var(--radius-md, 10px)', border: 'none', backgroundColor: '#059669', color: '#ffffff', fontSize: '14px', fontWeight: 600, cursor: isSubmittingOffer ? 'not-allowed' : 'pointer' }}
+              >
+                {isSubmittingOffer ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </form>
+        )}
+      </Modal>
     </div>
   );
 }

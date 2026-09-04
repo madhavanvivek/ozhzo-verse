@@ -477,16 +477,25 @@ CREATE INDEX IF NOT EXISTS idx_event_participants_user ON event_participants(use
 -- 8. Notifications & Preferences
 CREATE TABLE IF NOT EXISTS notifications (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    home_id UUID NOT NULL REFERENCES homes(id) ON DELETE CASCADE,
+    home_id UUID NULL REFERENCES homes(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    type VARCHAR(50) NOT NULL,
+    type VARCHAR(64) NOT NULL,
     title VARCHAR(200) NOT NULL,
     body TEXT NOT NULL,
+    priority VARCHAR(32) DEFAULT 'NORMAL' NOT NULL,
+    action_type VARCHAR(64) NULL,
+    action_url VARCHAR(255) NULL,
+    action_label VARCHAR(64) NULL,
+    dedup_key VARCHAR(128) NULL,
     data JSONB NULL,
     is_read BOOLEAN DEFAULT FALSE,
     read_at TIMESTAMP WITH TIME ZONE NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, is_read, created_at);
+CREATE INDEX IF NOT EXISTS idx_notifications_user_prio_read ON notifications(user_id, priority, is_read, created_at);
+CREATE INDEX IF NOT EXISTS idx_notifications_dedup ON notifications(dedup_key);
 
 CREATE TABLE IF NOT EXISTS user_notification_preferences (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

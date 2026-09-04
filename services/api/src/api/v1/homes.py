@@ -24,6 +24,7 @@ from src.infrastructure.database.models import (
     UserModel
 )
 from src.infrastructure.cache.redis_client import get_redis_client
+from src.services.notification_service import notification_service
 from src.domain.entitlements import (
     check_can_create_home,
     check_and_reserve_home_member_seat,
@@ -130,6 +131,7 @@ async def create_home(
         timezone=payload.timezone,
         address=payload.address,
         avatar_url=payload.avatar_url,
+        join_policy=payload.join_policy or "REQUEST_TO_JOIN",
         created_by=current_user.id
     )
     db.add(new_home)
@@ -214,11 +216,13 @@ async def resolve_home_qr(
     token: str,
     db: AsyncSession = Depends(get_db)
 ):
+    clean_token = token.strip()
     query = (
         select(HomeModel)
         .options(joinedload(HomeModel.members))
         .where(
-            HomeModel.home_qr_token == token,
+            (HomeModel.home_qr_token == clean_token) |
+            (func.upper(HomeModel.public_home_id) == clean_token.upper()),
             HomeModel.deleted_at.is_(None)
         )
     )
@@ -256,6 +260,7 @@ async def resolve_home_qr(
             owner_name=owner_name,
             member_count=len(active_members),
             qr_status=home.home_qr_status,
+            join_policy=getattr(home, "join_policy", "REQUEST_TO_JOIN") or "REQUEST_TO_JOIN",
             is_active=True,
             accepts_members=True,
             is_already_member=False,
@@ -272,9 +277,11 @@ async def create_join_request(
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    # 1. Resolve Home
+    clean_token = token.strip()
+    # 1. Resolve Home by QR token or public_home_id
     query = select(HomeModel).where(
-        HomeModel.home_qr_token == token,
+        (HomeModel.home_qr_token == clean_token) |
+        (func.upper(HomeModel.public_home_id) == clean_token.upper()),
         HomeModel.deleted_at.is_(None)
     )
     res = await db.execute(query)
@@ -285,6 +292,12 @@ async def create_join_request(
 
     if home.home_qr_status != "ACTIVE":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This Home QR code has been revoked.")
+
+    if getattr(home, "join_policy", "REQUEST_TO_JOIN") == "INVITE_ONLY":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This Home workspace is invite-only and does not accept direct join requests."
+        )
 
     # 2. Check if already active member
     mem_q = select(HomeMemberModel).where(
@@ -317,7 +330,7 @@ async def create_join_request(
     )
     db.add(join_req)
 
-    # 5. Notify Home Admins
+    # 5. Notify Home Admins with action-required priority alert
     admins_q = select(HomeMemberModel).where(
         HomeMemberModel.home_id == home.id,
         HomeMemberModel.role.in_(["HOME_ADMIN", "OWNER", "ADMIN"]),
@@ -326,13 +339,21 @@ async def create_join_request(
     admins = (await db.execute(admins_q)).scalars().all()
     user_name = current_user.profile.display_name if current_user.profile and current_user.profile.display_name else current_user.email
     for adm in admins:
+        dedup = f"join_req_{join_req.id}_{adm.user_id}"
         notif = NotificationModel(
             id=uuid.uuid4(),
             home_id=home.id,
             user_id=adm.user_id,
             title="New Home Join Request",
             body=f"{user_name} has requested to join {home.name}.",
-            type="JOIN_REQUEST",
+            type="JOIN_REQUEST_RECEIVED",
+            priority="HIGH",
+            requires_action=True,
+            action_status="OPEN",
+            action_type="REVIEW_JOIN_REQUEST",
+            action_url="/settings",
+            action_label="Review Request",
+            dedup_key=dedup,
             is_read=False,
             created_at=datetime.now(timezone.utc)
         )
@@ -588,10 +609,16 @@ async def review_join_request(
             title="Join Request Update",
             body=f"Your request to join the home was not accepted.",
             type="JOIN_REQUEST_REJECTED",
+            priority="NORMAL",
+            requires_action=False,
+            action_status="RESOLVED",
             is_read=False,
             created_at=datetime.now(timezone.utc)
         )
         db.add(notif)
+
+    # Auto-resolve admin priority alerts for this join request
+    await notification_service.resolve_by_dedup_prefix(f"join_req_{join_req.id}", db)
 
     await db.commit()
 
@@ -710,6 +737,8 @@ async def update_home_settings(
         home.address = payload.address
     if payload.avatar_url is not None:
         home.avatar_url = payload.avatar_url
+    if payload.join_policy is not None:
+        home.join_policy = payload.join_policy
 
     home.updated_at = datetime.now(timezone.utc)
 
@@ -718,7 +747,7 @@ async def update_home_settings(
         entity_id=home.id,
         action="HOME_UPDATED",
         performed_by=home_ctx.user.id,
-        details=json.dumps({"name": home.name})
+        details=json.dumps({"name": home.name, "join_policy": home.join_policy})
     )
     db.add(audit)
     await db.commit()
@@ -745,6 +774,7 @@ async def update_home_settings(
             timezone=home.timezone,
             address=home.address,
             avatar_url=home.avatar_url,
+            join_policy=getattr(home, "join_policy", "REQUEST_TO_JOIN") or "REQUEST_TO_JOIN",
             created_by=home.created_by,
             role=home_ctx.role,
             created_at=home.created_at,
@@ -793,3 +823,15 @@ async def delete_home_workspace(
     return ApiSuccessResponse(
         data=MessageResponse(message=f"Home workspace '{home.name}' has been archived and deleted.")
     )
+
+
+@router.get("/{home_id}/dashboard-summary", response_model=ApiSuccessResponse[dict])
+async def get_home_dashboard_summary_alias(
+    home_id: UUID,
+    home_ctx: HomeContext = Depends(require_home_permission("dashboard:view")),
+    db: AsyncSession = Depends(get_db),
+):
+    from src.api.v1.dashboard import get_home_dashboard
+    dash_res = await get_home_dashboard(home_id=home_id, home_ctx=home_ctx, db=db)
+    return ApiSuccessResponse(data=dash_res.data.summary.model_dump())
+

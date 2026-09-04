@@ -58,7 +58,12 @@ async def lifespan(app: FastAPI):
                 ("users", "mobile_verified", "BOOLEAN DEFAULT FALSE"),
                 ("invitations", "invitation_code", "VARCHAR(32)"),
                 ("invitations", "revoked_at", "TIMESTAMP WITH TIME ZONE"),
-                ("tasks", "bill_id", "UUID")
+                ("tasks", "bill_id", "UUID"),
+                ("notifications", "priority", "VARCHAR(32) DEFAULT 'NORMAL'"),
+                ("notifications", "action_type", "VARCHAR(64)"),
+                ("notifications", "action_url", "VARCHAR(255)"),
+                ("notifications", "action_label", "VARCHAR(64)"),
+                ("notifications", "dedup_key", "VARCHAR(128)")
             ]
             for table, col, col_type in columns_to_ensure:
                 try:
@@ -70,7 +75,8 @@ async def lifespan(app: FastAPI):
             relax_constraints = [
                 "ALTER TABLE bills ALTER COLUMN category DROP NOT NULL;",
                 "ALTER TABLE bills ALTER COLUMN amount DROP NOT NULL;",
-                "ALTER TABLE bills ALTER COLUMN recurrence_interval DROP NOT NULL;"
+                "ALTER TABLE bills ALTER COLUMN recurrence_interval DROP NOT NULL;",
+                "ALTER TABLE notifications ALTER COLUMN home_id DROP NOT NULL;"
             ]
             for stmt in relax_constraints:
                 try:
@@ -84,13 +90,21 @@ async def lifespan(app: FastAPI):
                 "CREATE INDEX IF NOT EXISTS idx_bills_home_status_due ON bills (home_id, status, due_date);",
                 "CREATE INDEX IF NOT EXISTS idx_sub_audit_time ON subscription_audit_logs (created_at DESC);",
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_homes_public_home_id ON homes (public_home_id) WHERE public_home_id IS NOT NULL;",
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_homes_qr_token ON homes (home_qr_token) WHERE home_qr_token IS NOT NULL;"
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_homes_qr_token ON homes (home_qr_token) WHERE home_qr_token IS NOT NULL;",
+                "CREATE INDEX IF NOT EXISTS idx_notifications_user_prio_read ON notifications (user_id, priority, is_read, created_at);",
+                "CREATE INDEX IF NOT EXISTS idx_notifications_dedup ON notifications (dedup_key);",
+                "CREATE INDEX IF NOT EXISTS idx_ai_usage_home_time ON ai_usage_records (home_id, created_at);",
+                "CREATE INDEX IF NOT EXISTS idx_bg_jobs_status_next_run ON background_jobs (status, next_run_at);",
+                "CREATE INDEX IF NOT EXISTS idx_hh_mem_home_status ON household_memories (home_id, status);",
+                "CREATE INDEX IF NOT EXISTS idx_hh_mem_home_cat ON household_memories (home_id, category);",
+                "CREATE INDEX IF NOT EXISTS idx_auto_exec_home_time ON automation_executions (home_id, created_at);"
             ]
             for idx_stmt in indexes_to_ensure:
                 try:
                     await conn.execute(text(idx_stmt))
                 except Exception:
                     pass
+
 
             # 5. Backfill existing homes missing public_home_id or home_qr_token
             try:

@@ -1,3 +1,4 @@
+import os
 from typing import List
 from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -37,8 +38,8 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     ENABLE_DEMO_SUPER_ADMIN_BOOTSTRAP: bool = True
-    DEMO_SUPER_ADMIN_EMAIL: str = "vivek@zinfog.com"
-    DEMO_SUPER_ADMIN_PASSWORD: str = "Caseno@123"
+    DEMO_SUPER_ADMIN_EMAIL: str = os.getenv("DEMO_SUPER_ADMIN_EMAIL", "admin@ozhzoverse.com")
+    DEMO_SUPER_ADMIN_PASSWORD: str = os.getenv("DEMO_SUPER_ADMIN_PASSWORD", "")
     FORCE_SUPER_ADMIN_PASSWORD_RESET: bool = True
     DEMO_OTP_ENABLED: bool = True
     DEMO_OTP_CODE: str = "123456"
@@ -73,6 +74,16 @@ class Settings(BaseSettings):
     REDIS_PORT: int = 6379
     REDIS_PASSWORD: str = ""
     REDIS_URL: str = Field(default="redis://localhost:6379/0")
+
+    # Payment Gateway Configuration (Stage 2.2C)
+    PAYMENT_GATEWAY_PROVIDER: str = "MOCK_GATEWAY"  # MOCK_GATEWAY, RAZORPAY, STRIPE
+    PAYMENT_GATEWAY_ENVIRONMENT: str = "test"  # development, test, production
+    RAZORPAY_KEY_ID: str | None = None
+    RAZORPAY_KEY_SECRET: str | None = None
+    RAZORPAY_WEBHOOK_SECRET: str | None = None
+    STRIPE_PUBLISHABLE_KEY: str | None = None
+    STRIPE_SECRET_KEY: str | None = None
+    STRIPE_WEBHOOK_SECRET: str | None = None
 
     @computed_field
     @property

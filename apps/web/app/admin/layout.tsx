@@ -16,8 +16,9 @@ export default function AdminLayout({
   const pathname = usePathname();
   const isLoginPage = pathname === '/admin/login' || pathname.startsWith('/admin/login');
 
-  const [user, setUser] = useState<any>(() => apiClient.getUser());
-  const [isLoading, setIsLoading] = useState(() => !isLoginPage && !apiClient.hasToken());
+  const [mounted, setMounted] = useState(false);
+  const [user, setUser] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [isForbidden, setIsForbidden] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
@@ -66,8 +67,12 @@ export default function AdminLayout({
   };
 
   useEffect(() => {
+    setMounted(true);
+    setUser(apiClient.getUser());
     if (!isLoginPage) {
       checkSuperAdminAuth();
+    } else {
+      setIsLoading(false);
     }
   }, [pathname, isLoginPage]);
 
@@ -82,8 +87,8 @@ export default function AdminLayout({
     return <>{children}</>;
   }
 
-  // 1. Loading State (Only when no cached token exists)
-  if (isLoading) {
+  // 1. SSR & Hydration Loading State
+  if (!mounted || isLoading) {
     return (
       <div
         style={{

@@ -1,3 +1,4 @@
+import os
 import urllib.request
 import urllib.error
 import json
@@ -32,9 +33,12 @@ def api_request(method, endpoint, data=None, token=None):
     except Exception as e:
         return {"status": 0, "data": None, "error": str(e)}
 
-print("=== 1. TEST LOGIN CANDIDATES FOR VIVEK@ZINFOG.COM ===")
-passwords = ["Caseno@123", "AdminPassword123!", "Password123!", "Vivek@123", "OzHzo@2026"]
+print("=== 1. TEST LOGIN CANDIDATES ===")
+target_email = os.getenv("SUPER_ADMIN_EMAIL", "admin@example.com")
+passwords = [os.getenv("SUPER_ADMIN_PASSWORD", "")]
 for p in passwords:
-    res = api_request("POST", "/auth/login", {"email": "vivek@zinfog.com", "password": p})
-    print(f"Password '{p}': status={res['status']}, err={res['error']}, data_present={res['data'] is not None}")
+    if not p:
+        continue
+    res = api_request("POST", "/auth/login", {"email": target_email, "password": p})
+    print(f"Candidate check: status={res['status']}, err={res['error']}, data_present={res['data'] is not None}")
 

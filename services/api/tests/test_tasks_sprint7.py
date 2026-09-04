@@ -51,8 +51,20 @@ async def test_create_task_with_assignment_notification():
         recurrence_rule="WEEKLY"
     )
 
+    from src.infrastructure.database.models import HomeMemberModel
+    mock_mem_res = MagicMock()
+    mock_mem_res.scalar_one_or_none.return_value = HomeMemberModel(home_id=home_id, user_id=assigned_user_id, status="ACTIVE")
+    mock_pref_res = MagicMock()
+    mock_pref_res.scalar_one_or_none.return_value = None
+    mock_dedup_res = MagicMock()
+    mock_dedup_res.scalars.return_value.first.return_value = None
+    mock_dedup_res.first.return_value = None
+    mock_db.execute.side_effect = [mock_mem_res, mock_pref_res, mock_dedup_res]
+
+
     mock_redis = AsyncMock()
     res = await create_task(req, home_ctx=ctx, db=mock_db, redis_client=mock_redis)
+
 
     assert res.success is True
     assert res.data.title == "Mop kitchen floor"

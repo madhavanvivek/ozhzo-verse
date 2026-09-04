@@ -1,3 +1,4 @@
+import os
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -15,6 +16,8 @@ from src.api.dependencies import HomeContext, require_super_admin
 from src.schemas.home import CreateHomeRequest, UpdateHomeRequest
 from src.core.exceptions import TierLimitExceededException, PermissionDeniedException
 
+TEST_ADMIN_PASSWORD = os.getenv("TEST_ADMIN_PASSWORD", "TestSuperAdminSecret123!")
+
 
 @pytest.mark.asyncio
 async def test_01_super_admin_login_succeeds():
@@ -22,7 +25,7 @@ async def test_01_super_admin_login_succeeds():
     sa = UserModel(
         id=uuid4(),
         email="vivek@zinfog.com",
-        password_hash=hash_password("Caseno@123"),
+        password_hash=hash_password(TEST_ADMIN_PASSWORD),
         is_active=True,
         is_verified=True,
         is_super_admin=True,
@@ -34,7 +37,7 @@ async def test_01_super_admin_login_succeeds():
     mock_db.execute.return_value = mock_res
     mock_redis = AsyncMock()
 
-    payload = AdminLoginRequest(email="vivek@zinfog.com", password="Caseno@123")
+    payload = AdminLoginRequest(email="vivek@zinfog.com", password=TEST_ADMIN_PASSWORD)
     res = await admin_login(payload=payload, db=mock_db, redis_client=mock_redis)
 
     assert res.success is True
@@ -50,7 +53,7 @@ async def test_02_super_admin_login_fails_with_invalid_password():
     sa = UserModel(
         id=uuid4(),
         email="vivek@zinfog.com",
-        password_hash=hash_password("Caseno@123"),
+        password_hash=hash_password(TEST_ADMIN_PASSWORD),
         is_active=True,
         is_verified=True,
         is_super_admin=True,
@@ -101,7 +104,7 @@ async def test_04_super_admin_rejected_from_household_login():
     sa = UserModel(
         id=uuid4(),
         email="vivek@zinfog.com",
-        password_hash=hash_password("Caseno@123"),
+        password_hash=hash_password(TEST_ADMIN_PASSWORD),
         is_active=True,
         is_verified=True,
         is_super_admin=True,
@@ -114,7 +117,7 @@ async def test_04_super_admin_rejected_from_household_login():
     mock_db.execute.return_value = mock_res
     mock_redis = AsyncMock()
 
-    payload = LoginRequest(email="vivek@zinfog.com", password="Caseno@123")
+    payload = LoginRequest(email="vivek@zinfog.com", password=TEST_ADMIN_PASSWORD)
     with pytest.raises(HTTPException) as exc_info:
         await login(payload=payload, db=mock_db, redis_client=mock_redis)
 

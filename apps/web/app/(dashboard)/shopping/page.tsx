@@ -101,7 +101,15 @@ export default function ShoppingPage() {
 
   useEffect(() => {
     loadData(true);
+
+    const handleHomeChanged = () => {
+      loadData(true);
+    };
+
+    window.addEventListener('home-changed', handleHomeChanged);
+    return () => window.removeEventListener('home-changed', handleHomeChanged);
   }, []);
+
 
   const filteredItems = items.filter(i => {
     if (!search.trim()) return true;

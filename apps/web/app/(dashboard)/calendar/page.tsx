@@ -37,13 +37,6 @@ interface ProjectedItem {
   meta_info?: Record<string, any>;
 }
 
-interface CalendarProjectionResponse {
-  timeline_items: ProjectedItem[];
-  total_events: number;
-  total_tasks: number;
-  total_bills: number;
-}
-
 export default function CalendarPage() {
   const [activeHomeId, setActiveHomeId] = useState<string | null>(null);
   const [items, setItems] = useState<ProjectedItem[]>([]);
@@ -90,33 +83,54 @@ export default function CalendarPage() {
   const loadData = async (showLoading = false) => {
     if (showLoading) setIsLoading(true);
     try {
-      const initialHomeId = apiClient.getActiveHomeId();
-      const start = new Date(Date.now() - 86400000 * 60).toISOString();
-      const end = new Date(Date.now() + 86400000 * 90).toISOString();
-      const queryParams = `?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}`;
-
-      const [homeIdRes, initialProjRes] = await Promise.allSettled([
-        apiClient.getValidActiveHome(),
-        initialHomeId ? apiClient.get<CalendarProjectionResponse>(`/homes/${initialHomeId}/calendar/projection${queryParams}`) : Promise.resolve(null)
-      ]);
-
-      const homeId = homeIdRes.status === 'fulfilled' ? homeIdRes.value : null;
+      const homeId = await apiClient.getValidActiveHome();
       setActiveHomeId(homeId);
 
       if (homeId) {
-        if (homeId === initialHomeId && initialProjRes.status === 'fulfilled' && initialProjRes.value) {
-          setItems(initialProjRes.value.timeline_items || []);
-        } else {
+        const start = new Date(Date.now() - 86400000 * 90).toISOString();
+        const end = new Date(Date.now() + 86400000 * 180).toISOString();
+        const queryParams = `?start_date=${encodeURIComponent(start)}&end_date=${encodeURIComponent(end)}`;
+
+        try {
+          const projection = await apiClient.get<any>(`/homes/${homeId}/calendar/projection${queryParams}`);
+          const rawList = Array.isArray(projection)
+            ? projection
+            : (projection?.items || projection?.timeline_items || projection?.data?.items || projection?.data?.timeline_items || projection?.data || []);
+
+          if (Array.isArray(rawList)) {
+            setItems(rawList);
+          } else {
+            setItems([]);
+          }
+        } catch (projErr) {
+          console.warn('Calendar projection failed, using fallback events endpoint:', projErr);
           try {
-            const projection = await apiClient.get<CalendarProjectionResponse>(`/homes/${homeId}/calendar/projection${queryParams}`);
-            setItems(projection?.timeline_items || []);
+            const fallbackEvents = await apiClient.get<any>(`/homes/${homeId}/events`);
+            const list = Array.isArray(fallbackEvents) ? fallbackEvents : (fallbackEvents?.data || []);
+            const mapped: ProjectedItem[] = list.map((e: any) => ({
+              source_type: 'EVENT',
+              source_id: e.id,
+              title: e.title,
+              start: e.start_time,
+              end: e.end_time,
+              all_day: Boolean(e.is_all_day),
+              editable: true,
+              navigation_target: `/calendar/${e.id}`,
+              status: e.status || 'CONFIRMED',
+              category_name: e.category_name,
+              location: e.location,
+              meta_info: { description: e.description, recurrence_type: e.recurrence_type }
+            }));
+            setItems(mapped);
           } catch {
             setItems([]);
           }
         }
+      } else {
+        setItems([]);
       }
     } catch (err) {
-      console.error('Failed to load calendar projection:', err);
+      console.error('Failed to load calendar data:', err);
       setItems([]);
     } finally {
       setIsLoading(false);
@@ -125,6 +139,13 @@ export default function CalendarPage() {
 
   useEffect(() => {
     loadData(true);
+
+    const handleHomeChanged = () => {
+      loadData(true);
+    };
+
+    window.addEventListener('home-changed', handleHomeChanged);
+    return () => window.removeEventListener('home-changed', handleHomeChanged);
   }, []);
 
   const presetChips = [
@@ -146,8 +167,10 @@ export default function CalendarPage() {
 
       const [y, m, d] = quickDate.split('-').map(Number);
       if (quickAllDay) {
-        startIso = new Date(Date.UTC(y, m - 1, d, 0, 0, 0)).toISOString();
-        endIso = new Date(Date.UTC(y, m - 1, d, 23, 59, 59)).toISOString();
+        const startDate = new Date(y, m - 1, d, 0, 0, 0);
+        const endDate = new Date(y, m - 1, d, 23, 59, 59);
+        startIso = startDate.toISOString();
+        endIso = endDate.toISOString();
       } else {
         const [sH, sM] = (quickStartTime || '10:00').split(':').map(Number);
         const [eH, eM] = (quickEndTime || '11:00').split(':').map(Number);
@@ -172,7 +195,28 @@ export default function CalendarPage() {
         reminder_minutes_before: 30
       };
 
-      await apiClient.post(`/homes/${activeHomeId}/events`, payload);
+      const res = await apiClient.post<any>(`/homes/${activeHomeId}/events`, payload);
+      const createdEvent = res?.data || res;
+
+      // Optimistically add item to UI immediately
+      const newProjectedItem: ProjectedItem = {
+        source_type: 'EVENT',
+        source_id: createdEvent?.id || `temp-${Date.now()}`,
+        title: payload.title,
+        start: payload.start_time,
+        end: payload.end_time,
+        all_day: payload.is_all_day,
+        editable: true,
+        navigation_target: `/calendar/${createdEvent?.id || ''}`,
+        status: 'CONFIRMED',
+        category_name: payload.category_name,
+        location: payload.location,
+        meta_info: {
+          description: payload.description,
+          recurrence_type: payload.recurrence_type
+        }
+      };
+      setItems(prev => [newProjectedItem, ...prev]);
 
       setQuickTitle('');
       setQuickLocation('');
@@ -223,8 +267,10 @@ export default function CalendarPage() {
 
       const [y, m, d] = editDate.split('-').map(Number);
       if (editAllDay) {
-        startIso = new Date(Date.UTC(y, m - 1, d, 0, 0, 0)).toISOString();
-        endIso = new Date(Date.UTC(y, m - 1, d, 23, 59, 59)).toISOString();
+        const startDate = new Date(y, m - 1, d, 0, 0, 0);
+        const endDate = new Date(y, m - 1, d, 23, 59, 59);
+        startIso = startDate.toISOString();
+        endIso = endDate.toISOString();
       } else {
         const [sH, sM] = (editStartTime || '10:00').split(':').map(Number);
         const [eH, eM] = (editEndTime || '11:00').split(':').map(Number);

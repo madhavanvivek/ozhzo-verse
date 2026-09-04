@@ -23,9 +23,15 @@ import {
   Menu,
   Users,
   User,
-  ArrowRight
+  ArrowRight,
+  ShieldAlert,
+  Sparkles,
+  Zap
 } from 'lucide-react';
+
+
 import { apiClient } from '@/lib/apiClient';
+import { AIAssistantWidget } from '@/components/ai/AIAssistantWidget';
 
 interface SearchItemResult {
   id: string;
@@ -55,6 +61,21 @@ export default function DashboardLayout({
     mobile_verified?: boolean;
   } | null>(() => apiClient.getUser());
   const [unreadCount, setUnreadCount] = useState(0);
+  const [priorityAlerts, setPriorityAlerts] = useState<{
+    action_required_count: number;
+    critical_count: number;
+    high_count: number;
+    unread_count: number;
+    items: Array<{
+      id: string;
+      title: string;
+      body: string;
+      home_name?: string | null;
+      priority: string;
+      action_url?: string | null;
+      action_label?: string | null;
+    }>;
+  } | null>(null);
 
   // Modals & Navigation state
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -63,6 +84,7 @@ export default function DashboardLayout({
   const [isSearching, setIsSearching] = useState(false);
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
   const [isMobileMoreOpen, setIsMobileMoreOpen] = useState(false);
+  const [isAIAssistantOpen, setIsAIAssistantOpen] = useState(false);
 
   const loadUserDataAndHomes = async () => {
     try {
@@ -129,15 +151,28 @@ export default function DashboardLayout({
     return () => window.removeEventListener('home-changed', handleHomeChanged);
   }, []);
 
-  // Check unread notifications count
+  // Check unread notifications and priority alerts
   useEffect(() => {
     const checkNotifications = async () => {
       try {
-        const res = await apiClient.get<{ unread_count?: number; items?: any[] }>('/notifications');
-        if (typeof res?.unread_count === 'number') {
-          setUnreadCount(res.unread_count);
-        } else if (Array.isArray(res?.items)) {
-          setUnreadCount(res.items.filter((n: any) => !n.is_read).length);
+        const [res, prioRes] = await Promise.all([
+          apiClient.get<{ unread_count?: number; items?: any[] }>('/notifications').catch(() => null),
+          apiClient.get<{ action_required_count: number; critical_count: number; high_count: number; unread_count: number; items: any[] }>('/notifications/priority').catch(() => null)
+        ]);
+
+        if (prioRes) {
+          setPriorityAlerts(prioRes);
+          if (prioRes.action_required_count > 0) {
+            setUnreadCount(prioRes.action_required_count);
+          }
+        }
+
+        if (res) {
+          if (typeof res.unread_count === 'number') {
+            setUnreadCount(res.unread_count);
+          } else if (Array.isArray(res.items)) {
+            setUnreadCount(res.items.filter((n: any) => !n.is_read).length);
+          }
         }
       } catch (err) {
         // Silently ignore notification fetch failure
@@ -175,16 +210,17 @@ export default function DashboardLayout({
     const timer = setTimeout(async () => {
       setIsSearching(true);
       try {
-        const res = await apiClient.get<{ results: SearchItemResult[] }>(
+        const res = await apiClient.get<any>(
           `/homes/${activeHomeId}/search?q=${encodeURIComponent(searchQuery.trim())}`
         );
-        setSearchResults(res?.results || []);
+        setSearchResults(res?.items || res?.results || []);
       } catch (err) {
         console.error('Search query failed:', err);
         setSearchResults([]);
       } finally {
         setIsSearching(false);
       }
+
     }, 250);
 
     return () => clearTimeout(timer);
@@ -210,8 +246,10 @@ export default function DashboardLayout({
     { label: 'Bills & Reminders', href: '/bills', icon: Receipt },
     { label: 'Calendar', href: '/calendar', icon: Calendar },
     { label: 'Family Members', href: '/members', icon: Users },
+    { label: 'Automations', href: '/automations', icon: Zap },
     { label: 'Home Settings', href: '/settings', icon: Settings },
   ];
+
 
   const handleSearchResultClick = (target?: string | null) => {
     setIsSearchOpen(false);
@@ -400,6 +438,19 @@ export default function DashboardLayout({
               <span className="ozhzo-desktop-only">Add</span>
             </Button>
 
+            {/* AI Assistant Button */}
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setIsAIAssistantOpen(true)}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', minHeight: '36px', padding: '0 12px' }}
+              aria-label="Open AI Assistant"
+            >
+              <Sparkles size={16} color="var(--color-primary-900)" />
+              <span className="ozhzo-desktop-only">Assistant</span>
+            </Button>
+
+
             {/* Notifications link with unread dot */}
             <Link
               href="/notifications"
@@ -471,6 +522,48 @@ export default function DashboardLayout({
             overflowX: 'hidden'
           }}
         >
+          {/* Priority Alert Area (Non-intrusive action-required banner) */}
+          {priorityAlerts && priorityAlerts.action_required_count > 0 && pathname !== '/notifications' && (
+            <div
+              style={{
+                marginBottom: 'var(--space-4)',
+                padding: '12px 18px',
+                backgroundColor: 'rgba(239, 68, 68, 0.05)',
+                border: '1px solid rgba(239, 68, 68, 0.25)',
+                borderLeft: '4px solid var(--status-overdue, #ef4444)',
+                borderRadius: 'var(--radius-md)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '12px',
+                flexWrap: 'wrap'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+                <ShieldAlert size={18} color="var(--status-overdue, #ef4444)" style={{ flexShrink: 0 }} />
+                <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--color-primary-900)' }}>
+                  {priorityAlerts.action_required_count === 1
+                    ? `1 action requires your attention: ${priorityAlerts.items[0]?.title || 'Action Required'}`
+                    : `⚠ ${priorityAlerts.action_required_count} actions require your attention`}
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {priorityAlerts.items[0]?.action_url && (
+                  <Link href={priorityAlerts.items[0].action_url} style={{ textDecoration: 'none' }}>
+                    <Button size="sm" style={{ minHeight: '30px', padding: '0 12px', fontSize: '12px', fontWeight: 700 }}>
+                      <span>{priorityAlerts.items[0].action_label || 'Resolve'}</span>
+                    </Button>
+                  </Link>
+                )}
+                <Link href="/notifications" style={{ textDecoration: 'none' }}>
+                  <Button size="sm" variant="ghost" style={{ minHeight: '30px', padding: '0 10px', fontSize: '12px', fontWeight: 600 }}>
+                    <span>View All ({priorityAlerts.action_required_count})</span>
+                  </Button>
+                </Link>
+              </div>
+            </div>
+          )}
+
           {children}
         </main>
       </div>
@@ -680,6 +773,31 @@ export default function DashboardLayout({
                 );
               })}
 
+              <div
+                onClick={() => {
+                  setIsMobileMoreOpen(false);
+                  setIsAIAssistantOpen(true);
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  padding: '12px 14px',
+                  borderRadius: 'var(--radius-md)',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  color: 'var(--color-primary-900)',
+                  backgroundColor: 'rgba(59, 130, 246, 0.08)',
+                  border: '1px solid rgba(59, 130, 246, 0.2)',
+                  cursor: 'pointer',
+                  minHeight: '44px'
+                }}
+              >
+                <Sparkles size={20} color="var(--color-primary-900)" />
+                <span style={{ flex: 1 }}>AI Household Assistant</span>
+                <ArrowRight size={14} color="var(--color-primary-900)" />
+              </div>
+
               <div style={{ borderTop: '1px solid var(--color-border-subtle)', marginTop: '8px', paddingTop: '8px' }}>
                 <Link
                   href="/profile"
@@ -703,6 +821,7 @@ export default function DashboardLayout({
                   <ArrowRight size={14} color="var(--color-text-tertiary)" />
                 </Link>
               </div>
+
             </div>
           </div>
         </div>
@@ -1013,6 +1132,15 @@ export default function DashboardLayout({
           </div>
         </div>
       )}
+
+      {/* Stage 3 AI Assistant Widget */}
+      <AIAssistantWidget
+        isOpen={isAIAssistantOpen}
+        onClose={() => setIsAIAssistantOpen(false)}
+        activeHomeName={activeHome?.name}
+        activeHomeId={activeHomeId}
+      />
     </div>
   );
 }
+

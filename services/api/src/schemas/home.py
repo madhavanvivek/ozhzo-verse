@@ -14,6 +14,7 @@ class CreateHomeRequest(BaseModel):
     timezone: str = Field(default="UTC", max_length=64, description="IANA timezone string")
     address: Optional[str] = Field(None, max_length=500, description="Optional physical address or neighborhood")
     avatar_url: Optional[str] = Field(None, max_length=512, description="Optional avatar image URL")
+    join_policy: Optional[str] = Field(default="REQUEST_TO_JOIN", pattern="^(REQUEST_TO_JOIN|INVITE_ONLY|PUBLIC_JOIN)$")
 
     @field_validator("currency")
     @classmethod
@@ -39,6 +40,7 @@ class UpdateHomeRequest(BaseModel):
     timezone: Optional[str] = Field(None, max_length=64)
     address: Optional[str] = Field(None, max_length=500)
     avatar_url: Optional[str] = Field(None, max_length=512)
+    join_policy: Optional[str] = Field(None, pattern="^(REQUEST_TO_JOIN|INVITE_ONLY|PUBLIC_JOIN)$")
 
     @field_validator("currency")
     @classmethod
@@ -72,6 +74,7 @@ class HomeDTO(BaseModel):
     timezone: Optional[str] = "UTC"
     address: Optional[str] = None
     avatar_url: Optional[str] = None
+    join_policy: Optional[str] = "REQUEST_TO_JOIN"
     created_by: Optional[UUID] = None
     role: Optional[str] = None
     created_at: Optional[datetime] = None
@@ -103,6 +106,7 @@ class HomePublicInfoDTO(BaseModel):
     owner_name: Optional[str] = None
     member_count: int = 1
     qr_status: str = "ACTIVE"
+    join_policy: str = "REQUEST_TO_JOIN"
     is_active: bool = True
     accepts_members: bool = True
     is_already_member: bool = False
@@ -145,6 +149,52 @@ class MemberDTO(BaseModel):
     role: str
     status: str
     joined_at: Optional[datetime] = None
+    access_status: Optional[str] = "ACTIVE"
+    access_expires_at: Optional[datetime] = None
+    days_until_expiry: Optional[int] = None
+    is_expiring_soon: Optional[bool] = False
+    plan_name: Optional[str] = None
+    is_reserved: Optional[bool] = False
+
+
+class MemberActivityItemDTO(BaseModel):
+    id: UUID
+    action: str
+    description: str
+    created_at: datetime
+
+
+class MemberDetailDTO(BaseModel):
+    id: UUID
+    user_id: UUID
+    display_name: str
+    email: Optional[str] = None
+    phone_number: Optional[str] = None
+    avatar_url: Optional[str] = None
+    role: str
+    status: str
+    joined_at: Optional[datetime] = None
+    access_status: str = "ACTIVE"
+    access_expires_at: Optional[datetime] = None
+    days_until_expiry: Optional[int] = None
+    is_expiring_soon: bool = False
+    plan_name: Optional[str] = None
+    is_reserved: bool = False
+    mobile_verified: bool = False
+    recent_activity: List[MemberActivityItemDTO] = []
+
+
+class HomeAdminSummaryDTO(BaseModel):
+    home_id: UUID
+    home_name: str
+    public_home_id: str
+    qr_status: str
+    join_policy: str = "REQUEST_TO_JOIN"
+    active_members_count: int = 0
+    pending_invitations_count: int = 0
+    pending_join_requests_count: int = 0
+    expiring_access_count: int = 0
+    expired_access_count: int = 0
 
 
 class UpdateMemberRoleRequest(BaseModel):
@@ -210,6 +260,8 @@ class InvitationDetailDTO(BaseModel):
     created_at: Optional[datetime] = None
     is_expired: bool = False
     is_already_member: bool = False
+    is_identity_matched: Optional[bool] = None
+    identity_mismatch_reason: Optional[str] = None
 
 
 class RedeemInvitationRequest(BaseModel):

@@ -668,6 +668,49 @@ async def consume_inventory_item(
     item.status = calculate_stock_status(new_qty, item.min_threshold)
     item.updated_at = now
 
+    # Dispatch low-stock / out-of-stock alerts for consumables
+    if item.item_type == "CONSUMABLE":
+        from src.infrastructure.database.models import HomeMemberModel
+        from src.services.notification_service import notification_service
+        if new_qty <= Decimal("0.000"):
+            members_res = await db.execute(
+                select(HomeMemberModel.user_id).where(HomeMemberModel.home_id == home_ctx.home_id, HomeMemberModel.status == "ACTIVE")
+            )
+            uids = members_res.scalars().all()
+            for uid in uids:
+                await notification_service.dispatch_notification(
+                    db=db,
+                    user_id=uid,
+                    home_id=home_ctx.home_id,
+                    title=f"Out of Stock: {item.name}",
+                    body=f"{item.name} is completely out of stock in your household.",
+                    notification_type="INVENTORY_OUT_OF_STOCK",
+                    priority="HIGH",
+                    requires_action=True,
+                    action_url=f"/inventory",
+                    action_label="Restock",
+                    dedup_key=f"inv_out_stock_{item.home_id}_{item.id}_{date.today()}_{uid}"
+                )
+        elif item.min_threshold is not None and new_qty <= item.min_threshold:
+            members_res = await db.execute(
+                select(HomeMemberModel.user_id).where(HomeMemberModel.home_id == home_ctx.home_id, HomeMemberModel.status == "ACTIVE")
+            )
+            uids = members_res.scalars().all()
+            for uid in uids:
+                await notification_service.dispatch_notification(
+                    db=db,
+                    user_id=uid,
+                    home_id=home_ctx.home_id,
+                    title=f"Low Stock Alert: {item.name}",
+                    body=f"{item.name} is running low ({new_qty} {item.unit} remaining).",
+                    notification_type="INVENTORY_LOW_STOCK",
+                    priority="NORMAL",
+                    requires_action=True,
+                    action_url=f"/inventory",
+                    action_label="Restock",
+                    dedup_key=f"inv_low_stock_{item.home_id}_{item.id}_{date.today()}_{uid}"
+                )
+
     await db.commit()
     path_map = await build_location_path_map(db, home_ctx.home_id)
     cat_name = (await db.get(InventoryCategoryModel, item.category_id)).name if item.category_id else None
@@ -715,10 +758,17 @@ async def restock_inventory_item(
     item.status = calculate_stock_status(new_qty, item.min_threshold)
     item.updated_at = now
 
+    # Auto-resolve low-stock / out-of-stock alerts if stock restored above threshold
+    if new_qty > (item.min_threshold or Decimal("0.000")):
+        from src.services.notification_service import notification_service
+        await notification_service.resolve_by_dedup_prefix(db, f"inv_low_stock_{item.home_id}_{item.id}")
+        await notification_service.resolve_by_dedup_prefix(db, f"inv_out_stock_{item.home_id}_{item.id}")
+
     await db.commit()
     path_map = await build_location_path_map(db, home_ctx.home_id)
     cat_name = (await db.get(InventoryCategoryModel, item.category_id)).name if item.category_id else None
     return ApiSuccessResponse(data=to_inventory_item_dto(item, path_map, cat_name))
+
 
 
 @router.post("/items/{item_id}/add-to-shopping", response_model=ApiSuccessResponse[MessageResponse])

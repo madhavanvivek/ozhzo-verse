@@ -14,6 +14,24 @@ test.describe('Stage 2.2 Monetization & Subscription Management Suite', () => {
         body: JSON.stringify({ success: true, data: [] })
       });
     });
+
+    // Default mock for credits
+    await page.route('**/api/v1/subscription/my-credits**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: [] })
+      });
+    });
+
+    // Default mock for transactions
+    await page.route('**/api/v1/subscription/transactions**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: [] })
+      });
+    });
   });
 
   test('1. User visits /settings/subscription and sees Entitlement Quota & Plans', async ({ page }) => {

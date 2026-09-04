@@ -1,3 +1,4 @@
+import json
 from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -14,11 +15,35 @@ from src.infrastructure.database.models import (
     HomeModel,
     HomeMemberModel,
     InvitationModel,
+    NotificationModel,
+    SubscriptionAuditLogModel,
     SubscriptionCreditModel,
     SubscriptionModel,
     SubscriptionPlanModel,
     UserModel
 )
+
+
+async def record_audit_log(
+    db: AsyncSession,
+    entity_type: str,
+    entity_id: UUID,
+    action: str,
+    performed_by: UUID,
+    old_values: Optional[dict] = None,
+    new_values: Optional[dict] = None,
+    reason: Optional[str] = None
+):
+    audit_entry = SubscriptionAuditLogModel(
+        entity_type=entity_type,
+        entity_id=entity_id,
+        action=action,
+        performed_by=performed_by,
+        old_values=json.dumps(old_values, default=str) if old_values else None,
+        new_values=json.dumps(new_values, default=str) if new_values else None,
+        reason=reason
+    )
+    db.add(audit_entry)
 
 
 async def check_can_create_home(current_user: UserModel, db: AsyncSession, lock_user: bool = True) -> None:
@@ -171,14 +196,20 @@ async def get_user_entitlement_summary(current_user: UserModel, db: AsyncSession
             plan_max = getattr(sub.plan, "max_homes", 10) if sub.plan else 10
             total_allowed_homes = max(total_allowed_homes, plan_max)
             if not active_sub_dto:
+                lifecycle_st = compute_subscription_lifecycle_status(sub, now)
+                sub_end_dt = sub.current_period_ends_at if (sub.current_period_ends_at and sub.current_period_ends_at.tzinfo) else (sub.current_period_ends_at.replace(tzinfo=timezone.utc) if sub.current_period_ends_at else None)
+                days_left = max(0, (sub_end_dt.date() - now.date()).days) if sub_end_dt else None
                 active_sub_dto = {
                     "id": str(sub.id),
                     "plan_name": sub.plan.name if sub.plan else "Ozhzo Standard",
                     "plan_code": sub.plan.code if sub.plan else "OZHZO_HOME",
                     "status": sub.status,
+                    "lifecycle_status": lifecycle_st,
                     "max_homes": plan_max,
                     "paid_member_seats": sub.paid_member_seats,
                     "current_period_ends_at": sub.current_period_ends_at.isoformat() if sub.current_period_ends_at else None,
+                    "days_until_expiry": days_left,
+                    "is_expiring_soon": lifecycle_st == "EXPIRING",
                     "currency": sub.currency_snapshot or "USD",
                 }
 
@@ -682,4 +713,250 @@ async def revoke_user_credit(
     credit.description = f"{credit.description or ''} [REVOKED: {reason}]".strip()
 
     return credit
+
+
+# ==============================================================================
+# SUBSCRIPTION LIFECYCLE, RENEWAL & EXPIRY TRANSITIONS (Stage 2.2B)
+# ==============================================================================
+
+def compute_subscription_lifecycle_status(
+    sub: Optional[SubscriptionModel],
+    now: Optional[datetime] = None,
+    warning_days: int = 7
+) -> str:
+    """
+    Deterministically computes subscription lifecycle state:
+      PENDING -> ACTIVE -> EXPIRING -> EXPIRED (and CANCELLED / FAILED / TRIALING / RESERVED).
+    """
+    if not sub:
+        return "INACTIVE"
+
+    if sub.status in ["CANCELLED", "FAILED", "PENDING", "RESERVED"]:
+        return sub.status
+
+    if not sub.current_period_ends_at:
+        return sub.status or "ACTIVE"
+
+    now = now or datetime.now(timezone.utc)
+    if sub.current_period_ends_at.tzinfo is None:
+        sub_end = sub.current_period_ends_at.replace(tzinfo=timezone.utc)
+    else:
+        sub_end = sub.current_period_ends_at
+
+    if now >= sub_end:
+        return "EXPIRED"
+
+    warning_threshold = sub_end - timedelta(days=warning_days)
+    if now >= warning_threshold:
+        return "EXPIRING"
+
+    return sub.status or "ACTIVE"
+
+
+async def process_subscription_lifecycle_transitions(
+    db: AsyncSession,
+    warning_days: int = 7,
+    now: Optional[datetime] = None
+) -> Dict[str, Any]:
+    """
+    Authoritative, idempotent subscription lifecycle transition engine.
+    1. Transitions expired subscriptions and entitlements (ACTIVE/EXPIRING -> EXPIRED).
+    2. Identifies subscriptions in the proactive warning window (EXPIRING).
+    3. Idempotently creates PRIORITY notifications with dedup_key guards.
+    """
+    now = now or datetime.now(timezone.utc)
+    warning_threshold = now + timedelta(days=warning_days)
+
+    expired_subs_count = 0
+    expiring_subs_count = 0
+    expired_ents_count = 0
+    notifs_created = 0
+
+    # 1. Query all subscriptions that are currently active or expiring
+    sub_query = select(SubscriptionModel).options(selectinload(SubscriptionModel.plan)).where(
+        SubscriptionModel.status.in_(["ACTIVE", "EXPIRING", "TRIALING"])
+    )
+    sub_res = await db.execute(sub_query)
+    subs = []
+    if hasattr(sub_res, "scalars"):
+        scalars_obj = sub_res.scalars()
+        if hasattr(scalars_obj, "all") and callable(scalars_obj.all):
+            all_v = scalars_obj.all()
+            if isinstance(all_v, list):
+                subs = all_v
+    elif hasattr(sub_res, "all") and callable(sub_res.all):
+        all_v = sub_res.all()
+        if isinstance(all_v, list):
+            subs = all_v
+
+    for sub in subs:
+        if not sub.current_period_ends_at:
+            continue
+
+        sub_end = sub.current_period_ends_at if sub.current_period_ends_at.tzinfo else sub.current_period_ends_at.replace(tzinfo=timezone.utc)
+        plan_name = sub.plan.name if (sub.plan and hasattr(sub.plan, "name")) else "Household Plan"
+
+        # Case A: Subscription has expired (now >= sub_end)
+        if now >= sub_end:
+            sub.status = "EXPIRED"
+            sub.updated_at = now
+            expired_subs_count += 1
+
+            # Sync linked entitlements
+            ent_q = select(HomeAccessEntitlementModel).where(
+                HomeAccessEntitlementModel.subscription_id == sub.id,
+                HomeAccessEntitlementModel.status == "ACTIVE"
+            )
+            ent_res = await db.execute(ent_q)
+            ents = []
+            if hasattr(ent_res, "scalars"):
+                s_obj = ent_res.scalars()
+                if hasattr(s_obj, "all") and callable(s_obj.all):
+                    e_all = s_obj.all()
+                    if isinstance(e_all, list):
+                        ents = e_all
+            elif hasattr(ent_res, "all") and callable(ent_res.all):
+                e_all = ent_res.all()
+                if isinstance(e_all, list):
+                    ents = e_all
+
+            for ent in ents:
+                ent.status = "EXPIRED"
+                ent.updated_at = now
+                expired_ents_count += 1
+
+            # Idempotently emit SUBSCRIPTION_EXPIRED notification if target user exists
+            if sub.user_id:
+                dedup = f"sub_expired_{sub.id}_{sub_end.date()}"
+                existing_n = await db.execute(select(NotificationModel.id).where(NotificationModel.dedup_key == dedup))
+                has_existing = False
+                if hasattr(existing_n, "scalars"):
+                    s_first = existing_n.scalars().first() if hasattr(existing_n.scalars(), "first") else None
+                    if s_first:
+                        has_existing = True
+                elif hasattr(existing_n, "first") and existing_n.first():
+                    has_existing = True
+
+                if not has_existing:
+                    notif = NotificationModel(
+                        id=uuid4(),
+                        home_id=sub.home_id,
+                        user_id=sub.user_id,
+                        title="Subscription Expired",
+                        body=f"Your subscription for {plan_name} has expired. Renew to restore full access.",
+                        type="SUBSCRIPTION_EXPIRED",
+                        priority="PRIORITY",
+                        requires_action=True,
+                        action_status="OPEN",
+                        action_type="RENEW",
+                        action_url="/settings/subscription",
+                        action_label="Renew Now",
+                        dedup_key=dedup,
+                        is_read=False,
+                        created_at=now
+                    )
+                    db.add(notif)
+                    notifs_created += 1
+
+        # Case B: Subscription is in warning window (now < sub_end and sub_end <= warning_threshold)
+        elif now < sub_end and sub_end <= warning_threshold:
+            expiring_subs_count += 1
+            days_left = max(1, (sub_end.date() - now.date()).days)
+
+            if sub.user_id:
+                dedup = f"sub_expiring_{sub.id}_{sub_end.date()}"
+                existing_n = await db.execute(select(NotificationModel.id).where(NotificationModel.dedup_key == dedup))
+                has_existing = False
+                if hasattr(existing_n, "scalars"):
+                    s_first = existing_n.scalars().first() if hasattr(existing_n.scalars(), "first") else None
+                    if s_first:
+                        has_existing = True
+                elif hasattr(existing_n, "first") and existing_n.first():
+                    has_existing = True
+
+                if not has_existing:
+                    day_str = f"{days_left} day" if days_left == 1 else f"{days_left} days"
+                    notif = NotificationModel(
+                        id=uuid4(),
+                        home_id=sub.home_id,
+                        user_id=sub.user_id,
+                        title="Subscription Expiring Soon",
+                        body=f"Your subscription for {plan_name} will expire in {day_str}. Renew now to avoid interruption.",
+                        type="SUBSCRIPTION_EXPIRING",
+                        priority="PRIORITY",
+                        requires_action=True,
+                        action_status="OPEN",
+                        action_type="RENEW",
+                        action_url="/settings/subscription",
+                        action_label="Renew Now",
+                        dedup_key=dedup,
+                        is_read=False,
+                        created_at=now
+                    )
+                    db.add(notif)
+                    notifs_created += 1
+
+    # 2. Query standalone FIRST_YEAR_FREE / PAID_SEAT entitlements that expired
+    free_ent_q = select(HomeAccessEntitlementModel).where(
+        HomeAccessEntitlementModel.status == "ACTIVE",
+        HomeAccessEntitlementModel.expires_at < now
+    )
+    free_ent_res = await db.execute(free_ent_q)
+    free_ents = []
+    if hasattr(free_ent_res, "scalars"):
+        s_obj = free_ent_res.scalars()
+        if hasattr(s_obj, "all") and callable(s_obj.all):
+            f_all = s_obj.all()
+            if isinstance(f_all, list):
+                free_ents = f_all
+    elif hasattr(free_ent_res, "all") and callable(free_ent_res.all):
+        f_all = free_ent_res.all()
+        if isinstance(f_all, list):
+            free_ents = f_all
+
+    for ent in free_ents:
+        ent.status = "EXPIRED"
+        ent.updated_at = now
+        expired_ents_count += 1
+
+        if ent.user_id:
+            ent_end = ent.expires_at if ent.expires_at.tzinfo else ent.expires_at.replace(tzinfo=timezone.utc)
+            dedup = f"ent_expired_{ent.id}_{ent_end.date()}"
+            existing_n = await db.execute(select(NotificationModel.id).where(NotificationModel.dedup_key == dedup))
+            has_existing = False
+            if hasattr(existing_n, "scalars"):
+                s_first = existing_n.scalars().first() if hasattr(existing_n.scalars(), "first") else None
+                if s_first:
+                    has_existing = True
+            elif hasattr(existing_n, "first") and existing_n.first():
+                has_existing = True
+
+            if not has_existing:
+                notif = NotificationModel(
+                    id=uuid4(),
+                    home_id=ent.home_id,
+                    user_id=ent.user_id,
+                    title="Access Entitlement Expired",
+                    body="Your access entitlement to this Home has expired. A valid subscription is required to continue.",
+                    type="SUBSCRIPTION_EXPIRED",
+                    priority="PRIORITY",
+                    requires_action=True,
+                    action_status="OPEN",
+                    action_type="RENEW",
+                    action_url="/settings/subscription",
+                    action_label="Renew Now",
+                    dedup_key=dedup,
+                    is_read=False,
+                    created_at=now
+                )
+                db.add(notif)
+                notifs_created += 1
+
+    return {
+        "expired_subscriptions": expired_subs_count,
+        "expiring_subscriptions": expiring_subs_count,
+        "expired_entitlements": expired_ents_count,
+        "notifications_created": notifs_created,
+        "evaluated_at": now.isoformat()
+    }
 

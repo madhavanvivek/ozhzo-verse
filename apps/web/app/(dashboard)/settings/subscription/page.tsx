@@ -18,6 +18,7 @@ import {
   Coins
 } from 'lucide-react';
 import { apiClient } from '@/lib/apiClient';
+import { getCurrencyInfo } from '@/lib/countries';
 
 interface UserEntitlementSummary {
   free_home_consumed: boolean;
@@ -29,7 +30,10 @@ interface UserEntitlementSummary {
     id: string;
     plan_name: string;
     status: string;
+    lifecycle_status?: string;
     current_period_ends_at?: string | null;
+    days_until_expiry?: number | null;
+    is_expiring_soon?: boolean;
     cancel_at_period_end?: boolean;
     paid_member_seats: number;
     effective_price: number | string;
@@ -41,9 +45,20 @@ interface SubscriptionPrice {
   id: string;
   plan_id: string;
   country: string;
+  country_name?: string;
   currency: string;
+  currency_symbol?: string;
   billing_period: string;
+  regular_price?: number | string;
   list_price: number | string;
+  offer_price?: number | string | null;
+  current_selling_price?: number | string;
+  campaign_name?: string | null;
+  campaign_description?: string | null;
+  offer_status?: string;
+  offer_start_date?: string | null;
+  offer_end_date?: string | null;
+  calculated_discount_percentage?: number | string | null;
   additional_member_list_price: number | string;
   is_active: boolean;
 }
@@ -139,8 +154,8 @@ export default function SubscriptionPage() {
     setIsLoading(true);
     try {
       const [entData, plansData, txData, credData] = await Promise.all([
-        apiClient.get<UserEntitlementSummary>('/subscription/me'),
-        apiClient.get<SubscriptionPlanDetail[]>('/subscription/plans'),
+        apiClient.get<UserEntitlementSummary>('/subscription/me').catch(() => null),
+        apiClient.get<SubscriptionPlanDetail[]>('/subscription/plans').catch(() => []),
         apiClient.get<PaymentTransaction[]>('/subscription/transactions').catch(() => []),
         apiClient.get<SubscriptionCreditItem[]>('/subscription/my-credits').catch(() => [])
       ]);
@@ -155,7 +170,7 @@ export default function SubscriptionPage() {
       }
 
       // Load members for active home if present
-      const homeId = await apiClient.getValidActiveHome();
+      const homeId = await apiClient.getValidActiveHome().catch(() => null);
       if (homeId) {
         const memData = await apiClient.get<MemberDTO[]>(`/homes/${homeId}/members`).catch(() => []);
         setMembers(memData || []);
@@ -258,6 +273,16 @@ export default function SubscriptionPage() {
     }
   };
 
+  const availableCurrencies = React.useMemo(() => {
+    const currencies = new Set<string>(['USD', 'INR', 'AED', 'GBP', 'EUR', 'SAR']);
+    plans.forEach(p => {
+      (p.prices || []).forEach(pr => {
+        if (pr.currency) currencies.add(pr.currency);
+      });
+    });
+    return Array.from(currencies);
+  }, [plans]);
+
   const selectedPlan = plans.find((p) => p.id === selectedPlanId) || plans[0];
 
   if (isLoading) {
@@ -308,9 +333,25 @@ export default function SubscriptionPage() {
                 <h2 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--color-primary-900)' }}>
                   {entitlements?.active_subscription ? entitlements.active_subscription.plan_name : 'Ozhzo Free Household Tier'}
                 </h2>
-                <Badge variant={entitlements?.active_subscription ? 'in-stock' : 'neutral'}>
-                  {entitlements?.active_subscription ? 'Active Subscriber' : '1 Free Home Tier'}
-                </Badge>
+                {entitlements?.active_subscription ? (
+                  entitlements.active_subscription.lifecycle_status === 'EXPIRING' ? (
+                    <Badge variant="overdue">
+                      Expiring Soon ({entitlements.active_subscription.days_until_expiry ?? 7}d left)
+                    </Badge>
+                  ) : entitlements.active_subscription.lifecycle_status === 'EXPIRED' ? (
+                    <Badge variant="overdue">
+                      Expired
+                    </Badge>
+                  ) : (
+                    <Badge variant="in-stock">
+                      Active Subscriber
+                    </Badge>
+                  )
+                ) : (
+                  <Badge variant="neutral">
+                    1 Free Home Tier
+                  </Badge>
+                )}
               </div>
               <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
                 {entitlements?.free_home_consumed
@@ -333,9 +374,9 @@ export default function SubscriptionPage() {
             {entitlements?.active_subscription && (
               <div>
                 <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-secondary)', textTransform: 'uppercase' }}>
-                  Renewal / Expiry
+                  {entitlements.active_subscription.lifecycle_status === 'EXPIRED' ? 'Expired On' : 'Renewal / Expiry'}
                 </div>
-                <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-primary-900)', marginTop: '4px' }}>
+                <div style={{ fontSize: '14px', fontWeight: 700, color: entitlements.active_subscription.lifecycle_status === 'EXPIRING' ? 'var(--status-overdue)' : 'var(--color-primary-900)', marginTop: '4px' }}>
                   {entitlements.active_subscription.current_period_ends_at
                     ? new Date(entitlements.active_subscription.current_period_ends_at).toLocaleDateString()
                     : '1 Year'}
@@ -346,7 +387,20 @@ export default function SubscriptionPage() {
         </div>
 
         {entitlements?.active_subscription && (
-          <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--color-border-subtle)', display: 'flex', justifyContent: 'flex-end' }}>
+          <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--color-border-subtle)', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+            {(entitlements.active_subscription.lifecycle_status === 'EXPIRING' || entitlements.active_subscription.lifecycle_status === 'EXPIRED') && (
+              <Button
+                size="sm"
+                onClick={() => {
+                  if (plans.length > 0) {
+                    setSelectedPlanId(plans[0].id);
+                  }
+                  window.scrollTo({ top: 600, behavior: 'smooth' });
+                }}
+              >
+                <span>Renew Subscription</span>
+              </Button>
+            )}
             <Button size="sm" variant="secondary" onClick={handleCancelSubscription}>
               Cancel Auto-Renew
             </Button>
@@ -361,25 +415,37 @@ export default function SubscriptionPage() {
             Choose Household Plan
           </h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px' }}>
-            <span style={{ color: 'var(--color-text-secondary)' }}>Currency:</span>
+            <span style={{ color: 'var(--color-text-secondary)' }}>Billing Currency:</span>
             <select
+              data-testid="customer-currency-selector"
               value={selectedCurrency}
               onChange={(e) => setSelectedCurrency(e.target.value)}
-              style={{ padding: '4px 8px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border-subtle)', fontSize: '13px' }}
+              style={{ padding: '6px 10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border-subtle)', fontSize: '13px', fontWeight: 600 }}
             >
-              <option value="USD">USD ($)</option>
-              <option value="EUR">EUR (€)</option>
-              <option value="GBP">GBP (£)</option>
-              <option value="INR">INR (₹)</option>
+              {availableCurrencies.map((curr) => {
+                const info = getCurrencyInfo(curr);
+                return (
+                  <option key={curr} value={curr}>
+                    {curr} — {info.name} ({info.symbol})
+                  </option>
+                );
+              })}
             </select>
           </div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 'var(--space-4)' }}>
           {plans.map((p) => {
-            const isSelected = selectedPlanId === p.id;
             const price = p.prices?.find((pr) => pr.currency === selectedCurrency) || p.prices?.[0];
-            const amount = price?.list_price || p.introductory_price || '49.00';
+            const regularAmount = price?.regular_price ?? price?.list_price ?? (p.introductory_price || '0.00');
+            const sellingAmount = price?.current_selling_price ?? price?.offer_price ?? regularAmount;
+            const hasOffer = Boolean(price?.offer_price && Number(price.offer_price) > 0 && price.offer_status === 'ACTIVE');
+            const discountPct = price?.calculated_discount_percentage != null
+              ? Number(price.calculated_discount_percentage).toFixed(0)
+              : (hasOffer && Number(regularAmount) > 0
+                  ? (((Number(regularAmount) - Number(sellingAmount)) / Number(regularAmount)) * 100).toFixed(0)
+                  : null);
+            const isSelected = selectedPlanId === p.id;
 
             return (
               <Card
@@ -401,9 +467,30 @@ export default function SubscriptionPage() {
                     {isSelected && <Badge variant="in-stock">Selected</Badge>}
                   </div>
 
-                  <div style={{ fontSize: '24px', fontWeight: 800, color: 'var(--color-primary-900)', marginBottom: '8px' }}>
-                    {selectedCurrency} {Number(amount).toFixed(2)}{' '}
-                    <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)' }}>/ year</span>
+                  <div style={{ marginBottom: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap' }}>
+                      {hasOffer && (
+                        <span style={{ fontSize: '15px', color: 'var(--color-text-secondary)', textDecoration: 'line-through' }}>
+                          {selectedCurrency} {Number(regularAmount).toFixed(2)}
+                        </span>
+                      )}
+                      <span style={{ fontSize: '24px', fontWeight: 800, color: 'var(--color-primary-900)' }} data-testid="customer-selling-price">
+                        {selectedCurrency} {Number(sellingAmount).toFixed(2)}
+                      </span>
+                      <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)' }}>/ year</span>
+                      {hasOffer && discountPct && Number(discountPct) > 0 && (
+                        <span style={{ marginLeft: '4px' }}>
+                          <Badge variant="in-stock">
+                            {discountPct}% OFF
+                          </Badge>
+                        </span>
+                      )}
+                    </div>
+                    {hasOffer && price?.campaign_name && (
+                      <div style={{ fontSize: '11px', color: '#15803d', fontWeight: 600, marginTop: '2px' }}>
+                        🎁 {price.campaign_name}
+                      </div>
+                    )}
                   </div>
 
                   <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '14px' }}>

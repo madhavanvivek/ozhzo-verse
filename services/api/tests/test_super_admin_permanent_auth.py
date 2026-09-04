@@ -1,3 +1,4 @@
+import os
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -10,14 +11,16 @@ from src.api.v1.admin_auth import admin_login, AdminLoginRequest
 from src.api.v1.auth import login, LoginRequest
 from src.api.dependencies import require_super_admin
 
+TEST_ADMIN_PASSWORD = os.getenv("TEST_ADMIN_PASSWORD", "TestSuperAdminSecret123!")
+
 
 @pytest.mark.asyncio
 async def test_01_valid_super_admin_credentials_succeed():
-    """TEST 1: Valid Super Admin credentials (vivek@zinfog.com + Caseno@123) succeed at /admin/auth/login."""
+    """TEST 1: Valid Super Admin credentials succeed at /admin/auth/login."""
     user = UserModel(
         id=uuid4(),
         email="vivek@zinfog.com",
-        password_hash=hash_password("Caseno@123"),
+        password_hash=hash_password(TEST_ADMIN_PASSWORD),
         is_active=True,
         is_verified=True,
         is_super_admin=True,
@@ -31,7 +34,7 @@ async def test_01_valid_super_admin_credentials_succeed():
     mock_db.execute.return_value = mock_res
     mock_redis = AsyncMock()
 
-    payload = AdminLoginRequest(email="vivek@zinfog.com", password="Caseno@123")
+    payload = AdminLoginRequest(email="vivek@zinfog.com", password=TEST_ADMIN_PASSWORD)
     res = await admin_login(payload=payload, db=mock_db, redis_client=mock_redis)
 
     assert res.success is True
@@ -44,7 +47,7 @@ async def test_02_invalid_super_admin_password_rejected():
     user = UserModel(
         id=uuid4(),
         email="vivek@zinfog.com",
-        password_hash=hash_password("Caseno@123"),
+        password_hash=hash_password(TEST_ADMIN_PASSWORD),
         is_active=True,
         is_verified=True,
         is_super_admin=True,

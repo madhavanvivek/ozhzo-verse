@@ -1,4 +1,5 @@
 import json
+import os
 import pytest
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -29,6 +30,8 @@ from src.schemas.admin_security import VerifyEmailOTPRequest, AdminChangePasswor
 from src.api.dependencies import require_super_admin, require_admin_permission
 from src.domain.permissions import has_permission, ROLE_OWNER, ROLE_HOME_ADMIN, ROLE_MEMBER
 
+TEST_ADMIN_PASSWORD = os.getenv("TEST_ADMIN_PASSWORD", "TestSuperAdminSecret123!")
+
 
 # ==============================================================================
 # TEST A: Super Admin Profile Serialization
@@ -39,7 +42,7 @@ async def test_a_super_admin_profile_serialization():
     user = UserModel(
         id=uuid4(),
         email="vivek@zinfog.com",
-        password_hash=hash_password("Caseno@123"),
+        password_hash=hash_password(TEST_ADMIN_PASSWORD),
         is_active=True,
         is_verified=True,
         is_super_admin=True,
@@ -60,7 +63,7 @@ async def test_a_super_admin_profile_serialization():
     # Verify password hash is NEVER serialized
     serialized_str = profile_res.model_dump_json() if hasattr(profile_res, "model_dump_json") else json.dumps(profile_res.dict(), default=str)
     assert "password_hash" not in serialized_str
-    assert "Caseno@123" not in serialized_str
+    assert TEST_ADMIN_PASSWORD not in serialized_str
 
 
 # ==============================================================================
@@ -68,8 +71,8 @@ async def test_a_super_admin_profile_serialization():
 # ==============================================================================
 @pytest.mark.asyncio
 async def test_b_c_d_same_credentials_for_household_and_admin_login():
-    """B, C, D: Same credentials (vivek@zinfog.com / Caseno@123) authenticate successfully on both portals."""
-    temp_password = "Caseno@123"
+    """B, C, D: Same credentials authenticate successfully on both portals."""
+    temp_password = TEST_ADMIN_PASSWORD
     user = UserModel(
         id=uuid4(),
         email="vivek@zinfog.com",
@@ -121,7 +124,7 @@ async def test_e_super_admin_coexists_with_household_owner():
     user = UserModel(
         id=user_id,
         email="vivek@zinfog.com",
-        password_hash=hash_password("Caseno@123"),
+        password_hash=hash_password(TEST_ADMIN_PASSWORD),
         is_active=True,
         is_super_admin=True,
         system_role="SUPER_ADMIN"
@@ -204,7 +207,7 @@ async def test_j_platform_endpoints_accessible_to_super_admin():
     super_admin = UserModel(
         id=uuid4(),
         email="vivek@zinfog.com",
-        password_hash=hash_password("Caseno@123"),
+        password_hash=hash_password(TEST_ADMIN_PASSWORD),
         is_active=True,
         is_super_admin=True,
         system_role="SUPER_ADMIN"
@@ -228,7 +231,7 @@ async def test_k_l_password_change_flow_preserves_super_admin():
     user = UserModel(
         id=uuid4(),
         email="vivek@zinfog.com",
-        password_hash=hash_password("Caseno@123"),
+        password_hash=hash_password(TEST_ADMIN_PASSWORD),
         is_active=True,
         is_super_admin=True,
         system_role="SUPER_ADMIN"
@@ -249,7 +252,7 @@ async def test_k_l_password_change_flow_preserves_super_admin():
 
     # 1. New password verifies; old temporary password fails
     assert verify_password("NewPermanentSuperAdminPass@2026", user.password_hash) is True
-    assert verify_password("Caseno@123", user.password_hash) is False
+    assert verify_password(TEST_ADMIN_PASSWORD, user.password_hash) is False
 
     # 2. Super Admin flags remain completely intact
     assert user.is_super_admin is True
@@ -267,7 +270,7 @@ async def test_m_n_super_admin_mobile_verification_enforcement():
     unverified_super_admin = UserModel(
         id=uuid4(),
         email="vivek@zinfog.com",
-        password_hash=hash_password("Caseno@123"),
+        password_hash=hash_password(TEST_ADMIN_PASSWORD),
         is_active=True,
         mobile_verified=False,  # NOT mobile verified
         is_super_admin=True,
@@ -285,7 +288,7 @@ async def test_m_n_super_admin_mobile_verification_enforcement():
     verified_super_admin = UserModel(
         id=uuid4(),
         email="vivek@zinfog.com",
-        password_hash=hash_password("Caseno@123"),
+        password_hash=hash_password(TEST_ADMIN_PASSWORD),
         is_active=True,
         mobile_verified=True,  # Verified
         is_super_admin=True,
@@ -357,14 +360,14 @@ async def test_q_bootstrap_idempotency_and_password_preservation():
 
     with patch.object(settings, "ENABLE_DEMO_SUPER_ADMIN_BOOTSTRAP", True), \
          patch.object(settings, "DEMO_SUPER_ADMIN_EMAIL", "vivek@zinfog.com"), \
-         patch.object(settings, "DEMO_SUPER_ADMIN_PASSWORD", "Caseno@123"):
+         patch.object(settings, "DEMO_SUPER_ADMIN_PASSWORD", TEST_ADMIN_PASSWORD):
 
         created_user = await seed_demo_super_admin(mock_db)
         assert created_user is not None
         assert created_user.email == "vivek@zinfog.com"
         assert created_user.is_super_admin is True
         assert created_user.system_role == "SUPER_ADMIN"
-        assert verify_password("Caseno@123", created_user.password_hash) is True
+        assert verify_password(TEST_ADMIN_PASSWORD, created_user.password_hash) is True
 
     # 2. Subsequent server restart after user changed password: password must NOT be overwritten
     user_with_changed_password = UserModel(
@@ -389,7 +392,7 @@ async def test_q_bootstrap_idempotency_and_password_preservation():
         assert restarted_user.system_role == "SUPER_ADMIN"
         # User's changed password is preserved!
         assert verify_password("MyNewChangedPass@2026", restarted_user.password_hash) is True
-        assert verify_password("Caseno@123", restarted_user.password_hash) is False
+        assert verify_password(TEST_ADMIN_PASSWORD, restarted_user.password_hash) is False
 
 
 # ==============================================================================
@@ -403,7 +406,7 @@ async def test_r_admin_users_list_includes_super_admin():
     super_user = UserModel(
         id=uuid4(),
         email="vivek@zinfog.com",
-        password_hash=hash_password("Caseno@123"),
+        password_hash=hash_password(TEST_ADMIN_PASSWORD),
         is_active=True,
         is_verified=True,
         is_super_admin=True,
@@ -439,7 +442,7 @@ async def test_s_admin_users_search_and_filters():
     super_user = UserModel(
         id=uuid4(),
         email="vivek@zinfog.com",
-        password_hash=hash_password("Caseno@123"),
+        password_hash=hash_password(TEST_ADMIN_PASSWORD),
         is_active=True,
         is_verified=True,
         is_super_admin=True,
@@ -479,7 +482,7 @@ async def test_t_admin_user_detail_never_exposes_secrets():
     super_user = UserModel(
         id=user_id,
         email="vivek@zinfog.com",
-        password_hash=hash_password("Caseno@123"),
+        password_hash=hash_password(TEST_ADMIN_PASSWORD),
         is_active=True,
         is_verified=True,
         is_super_admin=True,
@@ -507,7 +510,7 @@ async def test_t_admin_user_detail_never_exposes_secrets():
     # Verify no secret leakage
     detail_str = res.model_dump_json() if hasattr(res, "model_dump_json") else json.dumps(res.dict(), default=str)
     assert "password_hash" not in detail_str
-    assert "Caseno@123" not in detail_str
+    assert TEST_ADMIN_PASSWORD not in detail_str
     assert "refresh_token" not in detail_str
     assert "access_token" not in detail_str
 

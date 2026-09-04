@@ -41,15 +41,37 @@ class SubscriptionPriceDTO(BaseModel):
     id: UUID
     plan_id: UUID
     country: str
+    country_name: str = "Global"
+    country_iso3: str = "GLB"
     region: str
     currency: str
+    currency_symbol: str = "$"
     billing_period: str
-    list_price: Decimal
-    additional_member_list_price: Decimal
-    base_price: Decimal
-    additional_member_price: Decimal
-    version: int
-    is_active: bool
+    
+    # Commercial Prices
+    regular_price: Decimal = Decimal("0.00")
+    list_price: Decimal = Decimal("0.00")
+    additional_member_list_price: Decimal = Decimal("0.00")
+    
+    # Campaign / Offer Specifications
+    offer_price: Optional[Decimal] = None
+    campaign_name: Optional[str] = None
+    campaign_description: Optional[str] = None
+    offer_status: str = "DRAFT"
+    offer_start_date: Optional[datetime] = None
+    offer_end_date: Optional[datetime] = None
+    calculated_discount_percentage: Optional[Decimal] = None
+    current_selling_price: Decimal = Decimal("0.00")
+    
+    # Tax & Policies
+    tax_percentage: Decimal = Decimal("0.00")
+    allow_coupon_stacking: bool = False
+    
+    # Versioning & Audit
+    base_price: Decimal = Decimal("0.00")
+    additional_member_price: Decimal = Decimal("0.00")
+    version: int = 1
+    is_active: bool = True
     effective_from: datetime
     effective_until: Optional[datetime] = None
     active_promotion: Optional[PromotionDTO] = None
@@ -210,11 +232,30 @@ class UpdateSubscriptionPlanRequest(BaseModel):
 class CreateSubscriptionPriceRequest(BaseModel):
     plan_id: UUID
     country: str = Field(default="GLOBAL", max_length=8)
+    country_name: Optional[str] = None
+    country_iso3: Optional[str] = None
     region: str = Field(default="GLOBAL", max_length=32)
     currency: str = Field(default="USD", min_length=3, max_length=3)
+    currency_symbol: Optional[str] = None
     billing_period: str = Field(default="ANNUAL")
+    
+    # Commercial Pricing
+    regular_price: Optional[Decimal] = None
     list_price: Decimal = Field(default=Decimal("0.00"), ge=0)
     additional_member_list_price: Decimal = Field(default=Decimal("20.00"), ge=0)
+    
+    # Offer / Campaign
+    offer_price: Optional[Decimal] = None
+    campaign_name: Optional[str] = None
+    campaign_description: Optional[str] = None
+    offer_status: Optional[str] = "DRAFT"
+    offer_start_date: Optional[datetime] = None
+    offer_end_date: Optional[datetime] = None
+    
+    # Taxes & Policy
+    tax_percentage: Optional[Decimal] = Decimal("0.00")
+    allow_coupon_stacking: Optional[bool] = False
+    
     base_price: Optional[Decimal] = None
     additional_member_price: Optional[Decimal] = None
     effective_from: Optional[datetime] = None
@@ -222,12 +263,43 @@ class CreateSubscriptionPriceRequest(BaseModel):
 
 
 class UpdateSubscriptionPriceRequest(BaseModel):
+    # Commercial Prices
+    regular_price: Optional[Decimal] = None
     list_price: Optional[Decimal] = None
     additional_member_list_price: Optional[Decimal] = None
+    
+    # Regional Metadata
+    country_name: Optional[str] = None
+    country_iso3: Optional[str] = None
+    currency: Optional[str] = None
+    currency_symbol: Optional[str] = None
+    billing_period: Optional[str] = None
+    tax_percentage: Optional[Decimal] = None
+    allow_coupon_stacking: Optional[bool] = None
+    
+    # Offer & Campaign
+    offer_price: Optional[Decimal] = None
+    campaign_name: Optional[str] = None
+    campaign_description: Optional[str] = None
+    offer_status: Optional[str] = None
+    offer_start_date: Optional[datetime] = None
+    offer_end_date: Optional[datetime] = None
+    
+    # Versioning & Status
     base_price: Optional[Decimal] = None
     additional_member_price: Optional[Decimal] = None
     is_active: Optional[bool] = None
     effective_until: Optional[datetime] = None
+    reason: Optional[str] = None
+
+
+class ManageRegionalOfferRequest(BaseModel):
+    campaign_name: str = Field(..., min_length=2, max_length=150)
+    campaign_description: Optional[str] = None
+    offer_price: Decimal = Field(..., ge=0)
+    offer_status: str = Field(default="ACTIVE")  # DRAFT, SCHEDULED, ACTIVE, EXPIRED, CANCELLED
+    offer_start_date: Optional[datetime] = None
+    offer_end_date: Optional[datetime] = None
     reason: Optional[str] = None
 
 

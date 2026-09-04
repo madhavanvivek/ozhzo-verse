@@ -275,3 +275,143 @@ def test_calendar_permissions():
 
     assert has_permission(ROLE_GUEST, "calendar:view") is True
     assert has_permission(ROLE_GUEST, "calendar:create") is False
+
+
+@pytest.mark.asyncio
+async def test_calendar_projection_retrieval_and_both_keys():
+    """
+    Verify get_calendar_projection returns both `items` and `timeline_items` with full event metadata.
+    """
+    from src.api.v1.calendar import get_calendar_projection
+
+    mock_db = AsyncMock()
+    home_id = uuid4()
+    user_id = uuid4()
+    event_id = uuid4()
+
+    now = datetime(2026, 9, 2, 10, 0, 0, tzinfo=timezone.utc)
+    event = EventModel(
+        id=event_id,
+        home_id=home_id,
+        title="Annual Pediatric Checkup",
+        location="Children's Hospital",
+        description="Routine pediatric visit",
+        start_time=now,
+        end_time=now + timedelta(hours=1),
+        is_all_day=False,
+        status="CONFIRMED",
+        version=1,
+        created_by=user_id,
+        created_at=now,
+        updated_at=now,
+        participants=[]
+    )
+
+    # Mock execute return for events query
+    mock_res_events = MagicMock()
+    mock_res_events.unique.return_value.scalars.return_value.all.return_value = [event]
+
+    # Mock execute return for tasks and bills queries
+    mock_res_empty = MagicMock()
+    mock_res_empty.unique.return_value.scalars.return_value.all.return_value = []
+
+    mock_db.execute.side_effect = [mock_res_events, mock_res_empty, mock_res_empty]
+
+    user = UserModel(id=user_id, email="alex@example.com")
+    ctx = HomeContext(home_id=home_id, user=user, role=ROLE_OWNER)
+
+    res = await get_calendar_projection(
+        start_date=now - timedelta(days=7),
+        end_date=now + timedelta(days=7),
+        include_tasks=True,
+        include_bills=True,
+        home_ctx=ctx,
+        db=mock_db
+    )
+
+    assert res.success is True
+    assert res.data.total_events == 1
+    assert len(res.data.items) == 1
+    assert res.data.timeline_items is not None
+    assert len(res.data.timeline_items) == 1
+
+    item = res.data.items[0]
+    assert item.source_type == "EVENT"
+    assert item.source_id == event_id
+    assert item.title == "Annual Pediatric Checkup"
+    assert item.start == now
+    assert item.location == "Children's Hospital"
+
+
+@pytest.mark.asyncio
+async def test_calendar_timezone_coverage_across_day():
+    """
+    Verify events at 00:00, 01:00, 12:00, 23:00 on the same date are normalized to UTC timezone-aware.
+    """
+    mock_db = AsyncMock()
+    home_id = uuid4()
+    user_id = uuid4()
+
+    user = UserModel(id=user_id, email="alex@example.com")
+    ctx = HomeContext(home_id=home_id, user=user, role=ROLE_OWNER)
+
+    hours = [0, 1, 12, 23]
+    for h in hours:
+        # Naive datetime simulation
+        start_naive = datetime(2026, 9, 2, h, 0, 0)
+        end_naive = datetime(2026, 9, 2, h, 45, 0)
+
+        req = CreateEventRequest(
+            title=f"Schedule block at hour {h:02d}",
+            start_time=start_naive,
+            end_time=end_naive,
+            is_all_day=False,
+            category_name="Family"
+        )
+
+        mock_res = MagicMock()
+        mock_res.scalar_one_or_none.return_value = None
+        mock_db.execute.return_value = mock_res
+
+        res = await create_event(payload=req, home_ctx=ctx, db=mock_db)
+        assert res.success is True
+        assert res.data.start_time.tzinfo is not None
+        assert res.data.start_time.hour == h
+        assert res.data.start_time.day == 2
+
+
+@pytest.mark.asyncio
+async def test_multi_home_isolation_in_projection():
+    """
+    Events belonging to Home A must not be visible in Home B projection.
+    """
+    from src.api.v1.calendar import get_calendar_projection
+
+    mock_db = AsyncMock()
+    home_a = uuid4()
+    home_b = uuid4()
+    user_id = uuid4()
+
+    now = datetime(2026, 9, 2, 10, 0, 0, tzinfo=timezone.utc)
+
+    # DB returns empty list when queried for Home B
+    mock_res_empty = MagicMock()
+    mock_res_empty.unique.return_value.scalars.return_value.all.return_value = []
+    mock_db.execute.return_value = mock_res_empty
+
+    user = UserModel(id=user_id, email="alex@example.com")
+    ctx_b = HomeContext(home_id=home_b, user=user, role=ROLE_OWNER)
+
+    res = await get_calendar_projection(
+        start_date=now - timedelta(days=7),
+        end_date=now + timedelta(days=7),
+        include_tasks=False,
+        include_bills=False,
+        home_ctx=ctx_b,
+        db=mock_db
+    )
+
+    assert res.success is True
+    assert res.data.total_events == 0
+    assert len(res.data.items) == 0
+

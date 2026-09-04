@@ -35,6 +35,8 @@ interface InvitationDetail {
   expires_at: string;
   is_expired?: boolean;
   is_already_member?: boolean;
+  is_identity_matched?: boolean | null;
+  identity_mismatch_reason?: string | null;
 }
 
 interface UserProfile {
@@ -42,6 +44,8 @@ interface UserProfile {
   display_name: string;
   email?: string | null;
   phone_number?: string | null;
+  mobile_verified?: boolean;
+  email_verified?: boolean;
   is_active: boolean;
 }
 
@@ -103,8 +107,93 @@ export default function InvitationPage() {
     }
   }, [token]);
 
+  const normalizePhone = (p?: string | null) => {
+    if (!p) return '';
+    let digits = p.replace(/\D/g, '');
+    if (digits.length === 10) {
+      digits = '91' + digits;
+    }
+    return digits;
+  };
+
+  const getIdentityMismatch = (): { isMismatch: boolean; reason: string | null } => {
+    if (!invitation || !currentUser) {
+      return { isMismatch: false, reason: null };
+    }
+
+    // 1. Authoritative server check if evaluated
+    if (invitation.is_identity_matched !== undefined && invitation.is_identity_matched !== null) {
+      if (invitation.is_identity_matched === false) {
+        return {
+          isMismatch: true,
+          reason: invitation.identity_mismatch_reason || 'This invitation was issued to a different account.'
+        };
+      }
+      if (invitation.is_identity_matched === true) {
+        return { isMismatch: false, reason: null };
+      }
+    }
+
+    // 2. Client-side verified check fallback for phone number
+    if (invitation.phone_number) {
+      const userPhone = currentUser.phone_number;
+      if (!userPhone || !currentUser.mobile_verified) {
+        return {
+          isMismatch: true,
+          reason: 'Please verify your mobile number before accepting this invitation.'
+        };
+      }
+      if (normalizePhone(userPhone) !== normalizePhone(invitation.phone_number)) {
+        return {
+          isMismatch: true,
+          reason: 'This invitation was issued to a different mobile number.'
+        };
+      }
+    }
+
+    // 3. Client-side verified check fallback for email
+    if (invitation.email) {
+      const userEmail = currentUser.email;
+      if (!userEmail || userEmail.toLowerCase().trim() !== invitation.email.toLowerCase().trim()) {
+        return {
+          isMismatch: true,
+          reason: 'This invitation was issued to a different email address.'
+        };
+      }
+    }
+
+    // 4. Server error message check from previous accept attempt
+    if (
+      errorMessage &&
+      (errorMessage.includes('different mobile') ||
+        errorMessage.includes('different email') ||
+        errorMessage.includes('verify your mobile') ||
+        errorMessage.includes('verify your email'))
+    ) {
+      return {
+        isMismatch: true,
+        reason: errorMessage
+      };
+    }
+
+    return { isMismatch: false, reason: null };
+  };
+
+  const handleSwitchAccount = () => {
+    apiClient.clearSession();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('auth-changed'));
+    }
+    router.push(`/login?redirect=/invite/${encodeURIComponent(token)}`);
+  };
+
   const handleAccept = async () => {
     if (!token) return;
+    const { isMismatch, reason } = getIdentityMismatch();
+    if (isMismatch) {
+      setErrorMessage(reason || 'Identity mismatch detected.');
+      return;
+    }
     setIsAccepting(true);
     setErrorMessage(null);
     try {
@@ -305,7 +394,7 @@ export default function InvitationPage() {
             )}
 
             {/* Error Banner */}
-            {errorMessage && (
+            {errorMessage && !getIdentityMismatch().isMismatch && (
               <div
                 style={{
                   padding: '12px 16px',
@@ -385,17 +474,62 @@ export default function InvitationPage() {
                 <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', textAlign: 'center', marginBottom: '4px' }}>
                   Sign in or create an account to accept this invitation:
                 </p>
-                <Link href={`/login?redirect=/invite/${token}`} style={{ textDecoration: 'none' }}>
+                <Link href={`/login?redirect=/invite/${encodeURIComponent(token)}`} style={{ textDecoration: 'none' }}>
                   <Button style={{ width: '100%', minHeight: '44px' }}>
                     <span>Sign In to Accept</span>
                     <ArrowRight size={16} />
                   </Button>
                 </Link>
-                <Link href={`/register?redirect=/invite/${token}`} style={{ textDecoration: 'none' }}>
+                <Link href={`/register?redirect=/invite/${encodeURIComponent(token)}`} style={{ textDecoration: 'none' }}>
                   <Button variant="secondary" style={{ width: '100%', minHeight: '44px' }}>
                     Create New Account
                   </Button>
                 </Link>
+              </div>
+            ) : getIdentityMismatch().isMismatch ? (
+              /* Authenticated identity mismatch flow */
+              <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div
+                  style={{
+                    padding: '12px 16px',
+                    backgroundColor: 'var(--status-overdue-bg, #fef2f2)',
+                    color: 'var(--status-overdue, #ef4444)',
+                    borderRadius: 'var(--radius-md, 10px)',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    textAlign: 'left'
+                  }}
+                >
+                  <AlertCircle size={18} style={{ flexShrink: 0 }} />
+                  <span>{getIdentityMismatch().reason}</span>
+                </div>
+
+                <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+                  Please sign in with the account associated with this invitation to join <strong>{invitation.home_name}</strong>.
+                </p>
+
+                <div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>
+                  Signed in as <strong>{currentUser.display_name || currentUser.email || currentUser.phone_number}</strong>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
+                  <Button
+                    variant="secondary"
+                    onClick={handleSwitchAccount}
+                    style={{ width: '100%', minHeight: '44px' }}
+                  >
+                    <UserCheck size={16} />
+                    <span>Sign In with Invited Account</span>
+                  </Button>
+                  <Link href="/dashboard" style={{ textDecoration: 'none' }}>
+                    <Button variant="ghost" style={{ width: '100%', minHeight: '40px', color: 'var(--color-text-secondary)' }}>
+                      Return to Dashboard
+                    </Button>
+                  </Link>
+                </div>
               </div>
             ) : (
               /* Authenticated active member joining flow */

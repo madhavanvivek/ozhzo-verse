@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 from sqlalchemy import (
-    Boolean, Column, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
+    Boolean, Column, Date, DateTime, ForeignKey, Index, Integer, JSON, Numeric, String, Text, UniqueConstraint
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -37,6 +37,7 @@ class UserModel(Base):
 
 
 class UserProfileModel(Base):
+
     __tablename__ = "user_profiles"
 
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
@@ -75,6 +76,7 @@ class OTPVerificationModel(Base):
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
 
 
+
 class AuditLogModel(Base):
     __tablename__ = "audit_logs"
 
@@ -106,6 +108,7 @@ class HomeModel(Base):
     timezone = Column(String(64), default="UTC", nullable=False)
     address = Column(Text, nullable=True)
     avatar_url = Column(String(512), nullable=True)
+    join_policy = Column(String(32), default="REQUEST_TO_JOIN", nullable=False)  # REQUEST_TO_JOIN, INVITE_ONLY, PUBLIC_JOIN
     status = Column(String(32), default="ACTIVE", nullable=False)  # ACTIVE, SUSPENDED
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
@@ -132,6 +135,7 @@ class HomeModel(Base):
     shopping_lists = relationship("ShoppingListModel", back_populates="home", cascade="all, delete-orphan")
     event_categories = relationship("EventCategoryModel", back_populates="home", cascade="all, delete-orphan")
     events = relationship("EventModel", back_populates="home", cascade="all, delete-orphan")
+    automations = relationship("AutomationModel", back_populates="home", cascade="all, delete-orphan")
     subscription = relationship("SubscriptionModel", back_populates="home", uselist=False, cascade="all, delete-orphan")
     access_entitlements = relationship("HomeAccessEntitlementModel", back_populates="home", cascade="all, delete-orphan")
 
@@ -885,20 +889,34 @@ class NotificationModel(Base):
     __tablename__ = "notifications"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    home_id = Column(UUID(as_uuid=True), ForeignKey("homes.id", ondelete="CASCADE"), nullable=False, index=True)
+    home_id = Column(UUID(as_uuid=True), ForeignKey("homes.id", ondelete="CASCADE"), nullable=True, index=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     title = Column(String(160), nullable=False)
     body = Column(Text, nullable=False)
     type = Column(String(64), nullable=False)
+    priority = Column(String(32), default="NORMAL", nullable=False)  # CRITICAL, HIGH, NORMAL, LOW
+    requires_action = Column(Boolean, default=False, nullable=False)
+    action_status = Column(String(32), default="OPEN", nullable=False)  # OPEN, ACKNOWLEDGED, RESOLVED, DISMISSED
+    action_type = Column(String(64), nullable=True)                  # RENEW, JOIN_HOME, RETRY_PAYMENT, REVIEW_RESERVATION
+    action_url = Column(String(255), nullable=True)
+    action_label = Column(String(64), nullable=True)
+    dedup_key = Column(String(128), nullable=True, index=True)
+    extra_metadata = Column(Text, nullable=True)
     is_read = Column(Boolean, default=False, nullable=False)
     read_at = Column(DateTime(timezone=True), nullable=True)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+    dismissed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     __table_args__ = (
         Index("idx_notifications_user_read", "user_id", "is_read", "created_at"),
+        Index("idx_notifications_user_prio_read", "user_id", "priority", "is_read", "created_at"),
+        Index("idx_notifications_user_action_status", "user_id", "requires_action", "action_status"),
+        Index("idx_notifications_dedup", "dedup_key"),
     )
 
     user = relationship("UserModel", back_populates="notifications")
+    home = relationship("HomeModel")
 
     def __init__(self, **kwargs):
         if "notification_type" in kwargs and "type" not in kwargs:
@@ -983,9 +1001,27 @@ class SubscriptionPriceModel(Base):
     currency = Column(String(3), default="USD", nullable=False)               # USD, INR, AED, GBP, EUR
     billing_period = Column(String(32), default="ANNUAL", nullable=False)     # MONTHLY, QUARTERLY, HALF_YEARLY, ANNUAL, CUSTOM
     
-    # Standard / Published List Prices
-    list_price = Column(Numeric(10, 2), default=0.00, nullable=False)                   # Base plan list price
+    # Standard / Published List Prices & Commercial Model
+    country_name = Column(String(100), default="Global", nullable=False)
+    country_iso3 = Column(String(4), default="GLB", nullable=False)
+    currency_symbol = Column(String(16), default="$", nullable=False)
+    
+    # Regular Commercial Price (Authoritative long-term commercial price)
+    regular_price = Column(Numeric(10, 2), default=0.00, nullable=False)
+    list_price = Column(Numeric(10, 2), default=0.00, nullable=False)                   # Base plan list price (alias)
     additional_member_list_price = Column(Numeric(10, 2), default=20.00, nullable=False) # Standard seat list price ($20/yr, ₹1799/yr, AED 99/yr)
+    
+    # Campaign / Offer Price (Active promotional selling price)
+    offer_price = Column(Numeric(10, 2), nullable=True)
+    campaign_name = Column(String(150), nullable=True)
+    campaign_description = Column(Text, nullable=True)
+    offer_status = Column(String(32), default="DRAFT", nullable=False)  # DRAFT, SCHEDULED, ACTIVE, EXPIRED, CANCELLED
+    offer_start_date = Column(DateTime(timezone=True), nullable=True)
+    offer_end_date = Column(DateTime(timezone=True), nullable=True)
+    
+    # Tax & Policy Configurations
+    tax_percentage = Column(Numeric(5, 2), default=0.00, nullable=False)
+    allow_coupon_stacking = Column(Boolean, default=False, nullable=False)
     
     # Backward compatibility aliases
     base_price = Column(Numeric(10, 2), default=0.00, nullable=False)
@@ -1381,5 +1417,353 @@ class SubscriptionCreditModel(Base):
     home = relationship("HomeModel", foreign_keys=[home_id])
     creator = relationship("UserModel", foreign_keys=[created_by])
     redeemed_transaction = relationship("PaymentTransactionModel", foreign_keys=[redeemed_transaction_id])
+
+
+# ==============================================================================
+# STAGE 4: ADVANCED HOUSEHOLD AUTOMATION & PREDICTIVE INTELLIGENCE
+# ==============================================================================
+
+class AutomationModel(Base):
+    __tablename__ = "automations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    home_id = Column(UUID(as_uuid=True), ForeignKey("homes.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    name = Column(String(150), nullable=False)
+    description = Column(Text, nullable=True)
+    enabled = Column(Boolean, default=True, nullable=False, index=True)
+
+    trigger_type = Column(String(64), nullable=False, index=True)
+    # Conditions structure: {"operator": "AND"|"OR", "rules": [{"field": str, "op": str, "value": any}]}
+    conditions = Column(JSON, default=dict, nullable=False)
+    # Actions structure: [{"action_type": str, "params": dict}]
+    actions = Column(JSON, default=list, nullable=False)
+    # Schedule config: {"cron": str, "timezone": str, "interval_days": int}
+    schedule = Column(JSON, default=dict, nullable=False)
+    # Execution policy: {"max_retries": int, "retry_backoff_sec": int}
+    execution_policy = Column(JSON, default=dict, nullable=False)
+
+    last_run_at = Column(DateTime(timezone=True), nullable=True)
+    next_run_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    status = Column(String(32), default="ACTIVE", nullable=False, index=True)  # ACTIVE, PAUSED, DISABLED, ERROR
+
+    failure_count = Column(Integer, default=0, nullable=False)
+    consecutive_failures = Column(Integer, default=0, nullable=False)
+    version = Column(Integer, default=1, nullable=False)
+
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("idx_automations_home_status", "home_id", "status"),
+        Index("idx_automations_home_trigger", "home_id", "trigger_type"),
+        Index("idx_automations_schedule_poll", "status", "enabled", "next_run_at"),
+    )
+
+    home = relationship("HomeModel", back_populates="automations")
+    creator = relationship("UserModel", foreign_keys=[created_by])
+    executions = relationship("AutomationExecutionModel", back_populates="automation", cascade="all, delete-orphan")
+
+
+class AutomationExecutionModel(Base):
+    __tablename__ = "automation_executions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    automation_id = Column(UUID(as_uuid=True), ForeignKey("automations.id", ondelete="CASCADE"), nullable=False, index=True)
+    home_id = Column(UUID(as_uuid=True), ForeignKey("homes.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    trigger_event = Column(JSON, default=dict, nullable=False)
+    evaluated_conditions = Column(JSON, default=dict, nullable=False)
+
+    actions_attempted = Column(Integer, default=0, nullable=False)
+    actions_succeeded = Column(Integer, default=0, nullable=False)
+    actions_failed = Column(Integer, default=0, nullable=False)
+    duration_ms = Column(Integer, default=0, nullable=False)
+
+    status = Column(String(32), default="SUCCESS", nullable=False, index=True)  # SUCCESS, PARTIAL, FAILED, SKIPPED
+    error_details = Column(Text, nullable=True)
+
+    correlation_id = Column(String(64), nullable=True, index=True)
+    idempotency_key = Column(String(128), unique=True, index=True, nullable=False)
+
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+
+    __table_args__ = (
+        Index("idx_auto_exec_home_created", "home_id", "created_at"),
+        Index("idx_auto_exec_auto_created", "automation_id", "created_at"),
+    )
+
+    automation = relationship("AutomationModel", back_populates="executions")
+    home = relationship("HomeModel", foreign_keys=[home_id])
+
+
+class HouseholdRecommendationModel(Base):
+    __tablename__ = "household_recommendations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    home_id = Column(UUID(as_uuid=True), ForeignKey("homes.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    domain = Column(String(64), nullable=False, index=True)  # TASK, BILL, INVENTORY, SHOPPING, AUTOMATION
+    title = Column(String(200), nullable=False)
+    reason = Column(Text, nullable=False)
+    confidence = Column(Numeric(3, 2), default=Decimal("0.90"), nullable=False)
+    source_category = Column(String(64), default="PATTERN_ANALYSIS", nullable=False)
+
+    suggested_action = Column(JSON, nullable=True)
+    status = Column(String(32), default="NEW", nullable=False, index=True)  # NEW, VIEWED, ACCEPTED, DISMISSED, EXPIRED
+
+    dedup_hash = Column(String(64), index=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True, index=True)
+
+    __table_args__ = (
+        Index("idx_hh_recs_home_status", "home_id", "status"),
+        Index("idx_hh_recs_home_domain", "home_id", "domain"),
+        Index("idx_hh_recs_dedup", "home_id", "dedup_hash"),
+    )
+
+    home = relationship("HomeModel", foreign_keys=[home_id])
+
+
+class HouseholdMemoryModel(Base):
+    __tablename__ = "household_memories"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    home_id = Column(UUID(as_uuid=True), ForeignKey("homes.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    category = Column(String(64), nullable=False, index=True)  # PREFERENCE, ROUTINE, HOUSEHOLD_PATTERN, IMPORTANT_FACT, RECURRING_BEHAVIOR, USER_INSTRUCTION, DISMISSED_PREFERENCE, AUTOMATION_PREFERENCE
+    content = Column(Text, nullable=False)
+    source = Column(String(64), default="SYSTEM_INFERRED", nullable=False)  # USER_PROVIDED, USER_CONFIRMED, SYSTEM_INFERRED, AI_INFERRED
+    confidence = Column(Numeric(3, 2), default=Decimal("0.90"), nullable=False)
+    status = Column(String(32), default="ACTIVE", nullable=False, index=True)  # ACTIVE, DISMISSED, EXPIRED, ARCHIVED
+
+    context_metadata = Column(JSON, default=dict, nullable=False)
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("idx_hh_mem_home_status", "home_id", "status"),
+        Index("idx_hh_mem_home_cat", "home_id", "category"),
+        Index("idx_hh_mem_user_home", "user_id", "home_id"),
+    )
+
+    home = relationship("HomeModel", foreign_keys=[home_id])
+    user = relationship("UserModel", foreign_keys=[user_id])
+
+
+class UserPersonalizationPreferenceModel(Base):
+    __tablename__ = "user_personalization_preferences"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    home_id = Column(UUID(as_uuid=True), ForeignKey("homes.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    personalization_enabled = Column(Boolean, default=True, nullable=False)
+    ai_memory_enabled = Column(Boolean, default=True, nullable=False)
+    reminder_timing_preference = Column(String(64), default="1_DAY_BEFORE", nullable=False)  # 1_DAY_BEFORE, SAME_DAY_MORNING, SAME_DAY_EVENING, 2_DAYS_BEFORE
+    recommendation_frequency = Column(String(32), default="BALANCED", nullable=False)  # HIGH, BALANCED, LOW, MUTED
+    digest_enabled = Column(Boolean, default=True, nullable=False)
+    digest_day_of_week = Column(String(16), default="SUNDAY", nullable=False)
+
+    preferences_json = Column(JSON, default=dict, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "home_id", name="uq_user_home_personalization"),
+    )
+
+    user = relationship("UserModel", foreign_keys=[user_id])
+    home = relationship("HomeModel", foreign_keys=[home_id])
+
+
+class AIConversationSessionModel(Base):
+    __tablename__ = "ai_conversation_sessions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    home_id = Column(UUID(as_uuid=True), ForeignKey("homes.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    session_token = Column(String(64), unique=True, index=True, nullable=False)
+    history_json = Column(JSON, default=list, nullable=False)
+    active_plan = Column(JSON, nullable=True)
+
+    last_activity_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    home = relationship("HomeModel", foreign_keys=[home_id])
+    user = relationship("UserModel", foreign_keys=[user_id])
+
+
+class AIAgentAuditModel(Base):
+    __tablename__ = "ai_agent_audits"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    home_id = Column(UUID(as_uuid=True), ForeignKey("homes.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    event_type = Column(String(64), nullable=False, index=True)  # MEMORY_CREATED, MEMORY_UPDATED, MEMORY_DELETED, TOOL_INVOKED, PLAN_GENERATED, PLAN_CONFIRMED, PLAN_REJECTED, PLAN_EXECUTED, PROPOSAL_CONFIRMED, PROPOSAL_REJECTED, PREFERENCES_UPDATED
+    tool_name = Column(String(64), nullable=True)
+    tool_params = Column(JSON, nullable=True)
+    execution_status = Column(String(32), default="SUCCESS", nullable=False)  # SUCCESS, FAILED, CANCELLED, REJECTED
+    details = Column(Text, nullable=True)
+    correlation_id = Column(String(64), nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+
+    home = relationship("HomeModel", foreign_keys=[home_id])
+    user = relationship("UserModel", foreign_keys=[user_id])
+
+
+class AIUsageRecordModel(Base):
+    __tablename__ = "ai_usage_records"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    home_id = Column(UUID(as_uuid=True), ForeignKey("homes.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    provider = Column(String(32), default="mock", nullable=False)
+    model_name = Column(String(64), default="ozhzo-neural-v1", nullable=False)
+    prompt_tokens = Column(Integer, default=0, nullable=False)
+    completion_tokens = Column(Integer, default=0, nullable=False)
+    total_tokens = Column(Integer, default=0, nullable=False)
+    estimated_cost_usd = Column(Numeric(10, 6), default=Decimal("0.000000"), nullable=False)
+    latency_ms = Column(Integer, default=0, nullable=False)
+    status = Column(String(32), default="SUCCESS", nullable=False)  # SUCCESS, QUOTA_EXCEEDED, FAILED
+    correlation_id = Column(String(64), nullable=True, index=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+
+    __table_args__ = (
+        Index("idx_ai_usage_home_time", "home_id", "created_at"),
+        Index("idx_ai_usage_user_time", "user_id", "created_at"),
+    )
+
+    home = relationship("HomeModel", foreign_keys=[home_id])
+    user = relationship("UserModel", foreign_keys=[user_id])
+
+
+class AIUsageQuotaModel(Base):
+    __tablename__ = "ai_usage_quotas"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    home_id = Column(UUID(as_uuid=True), ForeignKey("homes.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
+
+    daily_request_limit = Column(Integer, default=100, nullable=False)
+    daily_token_limit = Column(Integer, default=100000, nullable=False)
+    monthly_cost_limit_usd = Column(Numeric(8, 2), default=Decimal("5.00"), nullable=False)
+
+    current_daily_requests = Column(Integer, default=0, nullable=False)
+    current_daily_tokens = Column(Integer, default=0, nullable=False)
+    current_monthly_cost_usd = Column(Numeric(8, 2), default=Decimal("0.00"), nullable=False)
+
+    last_daily_reset_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    last_monthly_reset_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    home = relationship("HomeModel", foreign_keys=[home_id])
+
+
+class BackgroundJobModel(Base):
+    __tablename__ = "background_jobs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_type = Column(String(64), nullable=False, index=True)  # NOTIFICATION_DISPATCH, RETENTION_PURGE, WEEKLY_DIGEST, WEBHOOK_RETRY, MAINTENANCE
+    home_id = Column(UUID(as_uuid=True), ForeignKey("homes.id", ondelete="CASCADE"), nullable=True, index=True)
+
+    payload = Column(JSON, default=dict, nullable=False)
+    status = Column(String(32), default="PENDING", nullable=False, index=True)  # PENDING, RUNNING, COMPLETED, FAILED, DEAD_LETTER
+    retry_count = Column(Integer, default=0, nullable=False)
+    max_retries = Column(Integer, default=3, nullable=False)
+
+    next_run_at = Column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    locked_at = Column(DateTime(timezone=True), nullable=True)
+    locked_by = Column(String(64), nullable=True)
+    last_error = Column(Text, nullable=True)
+    duration_ms = Column(Integer, nullable=True)
+    idempotency_key = Column(String(128), unique=True, nullable=True, index=True)
+
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    __table_args__ = (
+        Index("idx_bg_jobs_status_next_run", "status", "next_run_at"),
+        Index("idx_bg_jobs_type_status", "job_type", "status"),
+    )
+
+    home = relationship("HomeModel", foreign_keys=[home_id])
+
+
+# ==============================================================================
+# SUPER ADMIN OPERATIONAL CONTROL & DYNAMIC CONFIGURATION
+# ==============================================================================
+
+class RegionConfigModel(Base):
+    __tablename__ = "region_configs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    country_code = Column(String(8), unique=True, index=True, nullable=False)  # IN, AE, SA, GB, US, GLOBAL
+    country_name = Column(String(100), nullable=False)
+    region = Column(String(64), nullable=False, default="Global")  # South Asia, Middle East, Europe, North America
+    currency = Column(String(8), nullable=False, default="USD")
+    default_plan_code = Column(String(64), nullable=False, default="HOME_STANDARD")
+    payment_gateway = Column(String(64), nullable=False, default="STRIPE")  # STRIPE, RAZORPAY, MOCK
+    tax_percentage = Column(Numeric(5, 2), default=Decimal("0.00"), nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    is_default = Column(Boolean, default=False, nullable=False)
+    promotional_eligibility_enabled = Column(Boolean, default=True, nullable=False)
+    metadata_json = Column(JSON, default=dict, nullable=False)
+
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class FeatureFlagModel(Base):
+    __tablename__ = "feature_flags"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    key = Column(String(100), unique=True, index=True, nullable=False)
+    name = Column(String(150), nullable=False)
+    description = Column(Text, nullable=True)
+    is_enabled = Column(Boolean, default=False, nullable=False, index=True)
+    target_countries = Column(JSON, default=list, nullable=False)  # e.g. ["IN", "AE"] or [] for all
+    target_plans = Column(JSON, default=list, nullable=False)  # e.g. ["HOME_STANDARD"] or [] for all
+    rollout_percentage = Column(Integer, default=100, nullable=False)
+    rules_json = Column(JSON, default=dict, nullable=False)
+    starts_at = Column(DateTime(timezone=True), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    creator = relationship("UserModel", foreign_keys=[created_by])
+
+
+class SystemCommercialRuleModel(Base):
+    __tablename__ = "system_commercial_rules"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    rule_key = Column(String(100), unique=True, index=True, nullable=False)
+    rule_name = Column(String(150), nullable=False)
+    rule_value = Column(JSON, default=dict, nullable=False)
+    description = Column(Text, nullable=True)
+    category = Column(String(64), default="SUBSCRIPTION", nullable=False, index=True)  # SUBSCRIPTION, ENTITLEMENT, BILLING
+    is_active = Column(Boolean, default=True, nullable=False)
+
+    updated_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    updater = relationship("UserModel", foreign_keys=[updated_by])
+
+
+
+
 
 

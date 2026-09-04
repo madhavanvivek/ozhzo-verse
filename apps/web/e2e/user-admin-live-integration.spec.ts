@@ -89,8 +89,7 @@ test.describe('Live Production User & Super Admin Integration Suite (Direct Live
       }, userToken);
     }
 
-    await page.goto('/calendar');
-    await page.waitForLoadState('domcontentloaded');
+    await page.goto('/calendar', { waitUntil: 'domcontentloaded' });
     await expect(page.locator('body')).not.toContainText('[object Object]');
     await expect(page.getByText(/Calendar/i).first()).toBeVisible();
   });

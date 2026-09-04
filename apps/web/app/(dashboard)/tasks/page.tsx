@@ -124,7 +124,15 @@ export default function TasksPage() {
 
   useEffect(() => {
     loadData();
+
+    const handleHomeChanged = () => {
+      loadData();
+    };
+
+    window.addEventListener('home-changed', handleHomeChanged);
+    return () => window.removeEventListener('home-changed', handleHomeChanged);
   }, []);
+
 
   const commonTemplates = [
     { title: 'Clean Water Filter', cat: 'Maintenance', prio: 'NORMAL', rec: 'CUSTOM_DAYS', interval: 30 },

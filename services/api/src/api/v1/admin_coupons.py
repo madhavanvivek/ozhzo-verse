@@ -185,8 +185,18 @@ async def update_coupon(
         coupon.free_period_value = payload.free_period_value
     if payload.free_period_unit is not None:
         coupon.free_period_unit = payload.free_period_unit.upper()
+    if payload.eligibility_type is not None:
+        coupon.eligibility_type = payload.eligibility_type.upper()
+    if payload.country is not None:
+        coupon.country = payload.country.upper().strip() if payload.country.strip() else None
+    if payload.state is not None:
+        coupon.state = payload.state.strip() if payload.state.strip() else None
+    if payload.applicable_plan_id is not None:
+        coupon.applicable_plan_id = payload.applicable_plan_id
     if payload.status is not None:
         coupon.status = payload.status.upper()
+    if payload.start_date is not None:
+        coupon.start_date = payload.start_date
     if payload.end_date is not None:
         coupon.end_date = payload.end_date
     if payload.maximum_total_redemptions is not None:
@@ -237,10 +247,10 @@ async def update_coupon(
             start_date=coupon.start_date,
             end_date=coupon.end_date,
             maximum_total_redemptions=coupon.maximum_total_redemptions,
-            redemptions_count=coupon.redemptions_count,
-            maximum_redemptions_per_user=coupon.maximum_redemptions_per_user,
-            maximum_redemptions_per_home=coupon.maximum_redemptions_per_home,
-            allow_stacking=coupon.allow_stacking,
+            redemptions_count=coupon.redemptions_count or 0,
+            maximum_redemptions_per_user=coupon.maximum_redemptions_per_user or 1,
+            maximum_redemptions_per_home=coupon.maximum_redemptions_per_home or 1,
+            allow_stacking=bool(coupon.allow_stacking),
             status=coupon.status,
             notes=coupon.notes,
             internal_reason=coupon.internal_reason,

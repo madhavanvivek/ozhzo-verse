@@ -12,8 +12,14 @@ from src.api.dependencies import get_current_user, require_admin_permission, req
 from src.domain.entitlements import (
     get_user_credit_balance,
     grant_user_credit,
+    process_subscription_lifecycle_transitions,
     provision_paid_home_entitlement,
+    record_audit_log,
     revoke_user_credit
+)
+from src.domain.payments import (
+    get_gateway_status_summary,
+    get_payment_provider,
 )
 from src.infrastructure.database.session import get_db
 from src.infrastructure.database.models import (
@@ -44,6 +50,7 @@ from src.schemas.subscription import (
     CreateSubscriptionPlanRequest,
     CreateSubscriptionPriceRequest,
     GrantCreditRequest,
+    ManageRegionalOfferRequest,
     PaymentTransactionDTO,
     PromotionDTO,
     RevokeCreditRequest,
@@ -57,6 +64,11 @@ from src.schemas.subscription import (
     UpdateSubscriptionPlanRequest,
     UpdateSubscriptionPriceRequest,
     UserCreditBalanceDTO
+)
+from src.api.v1.subscriptions import (
+    COUNTRY_METADATA_DEFAULTS,
+    CURRENCY_SYMBOLS,
+    serialize_subscription_price_dto,
 )
 
 router = APIRouter(prefix="/admin/subscriptions", tags=["Super Admin - Subscriptions"])
@@ -247,22 +259,7 @@ async def list_subscription_plans(
     dtos = []
     for p in plans:
         price_dtos = [
-            SubscriptionPriceDTO(
-                id=pr.id,
-                plan_id=pr.plan_id,
-                country=pr.country,
-                region=pr.region,
-                currency=pr.currency,
-                billing_period=pr.billing_period,
-                list_price=pr.list_price,
-                additional_member_list_price=pr.additional_member_list_price,
-                base_price=pr.base_price,
-                additional_member_price=pr.additional_member_price,
-                version=pr.version,
-                is_active=pr.is_active,
-                effective_from=pr.effective_from,
-                effective_until=pr.effective_until
-            )
+            serialize_subscription_price_dto(pr)
             for pr in getattr(p, "prices", [])
         ]
         feat_dtos = [
@@ -325,19 +322,35 @@ async def create_subscription_price(
     latest_version = (await db.execute(ver_query)).scalar() or 0
     new_version = latest_version + 1
 
-    list_price = payload.list_price
+    c_meta = COUNTRY_METADATA_DEFAULTS.get(country_code, {})
+    curr_sym = payload.currency_symbol or CURRENCY_SYMBOLS.get(payload.currency.upper()) or c_meta.get("symbol", "$")
+    iso3 = payload.country_iso3 or c_meta.get("iso3", country_code[:3])
+    cname = payload.country_name or c_meta.get("name", country_code)
+    reg_price = payload.regular_price if payload.regular_price is not None else payload.list_price
     seat_list_price = payload.additional_member_list_price
 
     new_price = SubscriptionPriceModel(
         id=uuid4(),
         plan_id=plan.id,
         country=country_code,
+        country_name=cname,
+        country_iso3=iso3,
         region=payload.region.upper(),
         currency=payload.currency.upper(),
+        currency_symbol=curr_sym,
         billing_period=period,
-        list_price=list_price,
+        regular_price=reg_price,
+        list_price=payload.list_price or reg_price,
         additional_member_list_price=seat_list_price,
-        base_price=payload.base_price or list_price,
+        offer_price=payload.offer_price,
+        campaign_name=payload.campaign_name,
+        campaign_description=payload.campaign_description,
+        offer_status=(payload.offer_status or "DRAFT").upper(),
+        offer_start_date=payload.offer_start_date,
+        offer_end_date=payload.offer_end_date,
+        tax_percentage=payload.tax_percentage or Decimal("0.00"),
+        allow_coupon_stacking=payload.allow_coupon_stacking or False,
+        base_price=payload.base_price or reg_price,
         additional_member_price=payload.additional_member_price or seat_list_price,
         version=new_version,
         is_active=True,
@@ -358,24 +371,7 @@ async def create_subscription_price(
     )
     await db.commit()
 
-    return ApiSuccessResponse(
-        data=SubscriptionPriceDTO(
-            id=new_price.id,
-            plan_id=new_price.plan_id,
-            country=new_price.country,
-            region=new_price.region,
-            currency=new_price.currency,
-            billing_period=new_price.billing_period,
-            list_price=new_price.list_price,
-            additional_member_list_price=new_price.additional_member_list_price,
-            base_price=new_price.base_price,
-            additional_member_price=new_price.additional_member_price,
-            version=new_price.version,
-            is_active=new_price.is_active,
-            effective_from=new_price.effective_from,
-            effective_until=new_price.effective_until
-        )
-    )
+    return ApiSuccessResponse(data=serialize_subscription_price_dto(new_price))
 
 
 @router.patch("/prices/{price_id}", response_model=ApiSuccessResponse[SubscriptionPriceDTO])
@@ -390,15 +386,49 @@ async def update_subscription_price(
         raise HTTPException(status_code=404, detail="Price record not found.")
 
     old_state = {
+        "regular_price": str(price.regular_price),
         "list_price": str(price.list_price),
         "additional_member_list_price": str(price.additional_member_list_price),
+        "offer_price": str(price.offer_price) if price.offer_price is not None else None,
+        "campaign_name": price.campaign_name,
+        "offer_status": price.offer_status,
         "is_active": price.is_active
     }
 
+    if payload.regular_price is not None:
+        price.regular_price = payload.regular_price
     if payload.list_price is not None:
         price.list_price = payload.list_price
+        if price.regular_price == Decimal("0.00") or price.regular_price is None:
+            price.regular_price = payload.list_price
     if payload.additional_member_list_price is not None:
         price.additional_member_list_price = payload.additional_member_list_price
+    if payload.country_name is not None:
+        price.country_name = payload.country_name.strip()
+    if payload.country_iso3 is not None:
+        price.country_iso3 = payload.country_iso3.strip().upper()
+    if payload.currency is not None:
+        price.currency = payload.currency.strip().upper()
+    if payload.currency_symbol is not None:
+        price.currency_symbol = payload.currency_symbol.strip()
+    if payload.billing_period is not None:
+        price.billing_period = payload.billing_period.strip().upper()
+    if payload.tax_percentage is not None:
+        price.tax_percentage = payload.tax_percentage
+    if payload.allow_coupon_stacking is not None:
+        price.allow_coupon_stacking = payload.allow_coupon_stacking
+    if payload.offer_price is not None:
+        price.offer_price = payload.offer_price
+    if payload.campaign_name is not None:
+        price.campaign_name = payload.campaign_name.strip()
+    if payload.campaign_description is not None:
+        price.campaign_description = payload.campaign_description.strip()
+    if payload.offer_status is not None:
+        price.offer_status = payload.offer_status.strip().upper()
+    if payload.offer_start_date is not None:
+        price.offer_start_date = payload.offer_start_date
+    if payload.offer_end_date is not None:
+        price.offer_end_date = payload.offer_end_date
     if payload.base_price is not None:
         price.base_price = payload.base_price
     if payload.additional_member_price is not None:
@@ -421,25 +451,56 @@ async def update_subscription_price(
         reason=payload.reason
     )
     await db.commit()
+    await db.refresh(price)
 
-    return ApiSuccessResponse(
-        data=SubscriptionPriceDTO(
-            id=price.id,
-            plan_id=price.plan_id,
-            country=price.country,
-            region=price.region,
-            currency=price.currency,
-            billing_period=price.billing_period,
-            list_price=price.list_price,
-            additional_member_list_price=price.additional_member_list_price,
-            base_price=price.base_price,
-            additional_member_price=price.additional_member_price,
-            version=price.version,
-            is_active=price.is_active,
-            effective_from=price.effective_from,
-            effective_until=price.effective_until
-        )
+    return ApiSuccessResponse(data=serialize_subscription_price_dto(price))
+
+
+@router.post("/prices/{price_id}/offer", response_model=ApiSuccessResponse[SubscriptionPriceDTO])
+async def manage_regional_offer(
+    price_id: UUID,
+    payload: ManageRegionalOfferRequest,
+    super_admin: UserModel = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Dedicated endpoint for managing regional campaign and offer lifecycle.
+    """
+    price = await db.get(SubscriptionPriceModel, price_id)
+    if not price:
+        raise HTTPException(status_code=404, detail="Price record not found.")
+
+    old_state = {
+        "offer_price": str(price.offer_price) if price.offer_price is not None else None,
+        "campaign_name": price.campaign_name,
+        "offer_status": price.offer_status,
+        "offer_start_date": str(price.offer_start_date) if price.offer_start_date else None,
+        "offer_end_date": str(price.offer_end_date) if price.offer_end_date else None,
+    }
+
+    price.campaign_name = payload.campaign_name.strip()
+    if payload.campaign_description is not None:
+        price.campaign_description = payload.campaign_description.strip() or None
+    price.offer_price = payload.offer_price
+    price.offer_status = payload.offer_status.upper().strip()
+    price.offer_start_date = payload.offer_start_date
+    price.offer_end_date = payload.offer_end_date
+    price.updated_at = datetime.now(timezone.utc)
+
+    await record_audit_log(
+        db=db,
+        entity_type="PRICE_OFFER",
+        entity_id=price.id,
+        action="MANAGE_REGIONAL_OFFER",
+        performed_by=super_admin.id,
+        old_values=old_state,
+        new_values=payload.model_dump(mode="json"),
+        reason=payload.reason or f"Super Admin updated campaign '{payload.campaign_name}' (offer: {payload.offer_price})"
     )
+    await db.commit()
+    await db.refresh(price)
+
+    return ApiSuccessResponse(data=serialize_subscription_price_dto(price))
 
 
 # ------------------------------------------------------------------------------
@@ -695,25 +756,7 @@ async def list_subscription_prices(
     """
     query = select(SubscriptionPriceModel).order_by(SubscriptionPriceModel.country.asc(), SubscriptionPriceModel.billing_period.asc())
     prices = (await db.execute(query)).scalars().all()
-    dtos = [
-        SubscriptionPriceDTO(
-            id=pr.id,
-            plan_id=pr.plan_id,
-            country=pr.country,
-            region=pr.region,
-            currency=pr.currency,
-            billing_period=pr.billing_period,
-            list_price=pr.list_price,
-            additional_member_list_price=pr.additional_member_list_price,
-            base_price=pr.base_price,
-            additional_member_price=pr.additional_member_price,
-            version=pr.version,
-            is_active=pr.is_active,
-            effective_from=pr.effective_from,
-            effective_until=pr.effective_until
-        )
-        for pr in prices
-    ]
+    dtos = [serialize_subscription_price_dto(pr) for pr in prices]
     return ApiSuccessResponse(data=dtos)
 
 
@@ -853,6 +896,196 @@ async def list_admin_payment_transactions(
         for tx in results
     ]
     return ApiSuccessResponse(data=dtos)
+
+
+@router.get("/gateway-status", response_model=ApiSuccessResponse[dict])
+async def get_admin_gateway_status(
+    super_admin: UserModel = Depends(require_super_admin),
+):
+    """
+    Super Admin endpoint returning operational payment gateway summary.
+    NEVER leaks private keys, secret keys, or raw webhook secrets.
+    """
+    status_summary = get_gateway_status_summary()
+    return ApiSuccessResponse(
+        data=status_summary,
+        message="Payment gateway status retrieved."
+    )
+
+
+@router.get("/transactions/{transaction_id}", response_model=ApiSuccessResponse[PaymentTransactionDTO])
+async def get_admin_payment_transaction_detail(
+    transaction_id: UUID,
+    super_admin: UserModel = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Detailed inspection of a specific payment transaction record.
+    """
+    query = (
+        select(PaymentTransactionModel)
+        .options(selectinload(PaymentTransactionModel.plan), selectinload(PaymentTransactionModel.user))
+        .where(PaymentTransactionModel.id == transaction_id)
+    )
+    tx = (await db.execute(query)).scalars().first()
+    if not tx:
+        raise HTTPException(status_code=404, detail="Payment transaction not found.")
+
+    dto = PaymentTransactionDTO(
+        id=tx.id,
+        user_id=tx.user_id,
+        user_email=tx.user.email if tx.user else None,
+        home_id=tx.home_id,
+        subscription_id=tx.subscription_id,
+        plan_name=tx.plan.name if tx.plan else "Ozhzo Plan",
+        amount=tx.amount,
+        discount_amount=tx.discount_amount,
+        final_amount=tx.final_amount,
+        currency=tx.currency,
+        provider=tx.provider,
+        provider_transaction_id=tx.provider_transaction_id,
+        status=tx.status,
+        created_at=tx.created_at
+    )
+    return ApiSuccessResponse(data=dto)
+
+
+@router.post("/transactions/{transaction_id}/reconcile", response_model=ApiSuccessResponse[dict])
+async def reconcile_admin_payment_transaction(
+    transaction_id: UUID,
+    super_admin: UserModel = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Authoritative manual reconciliation of a transaction against the payment gateway.
+    Verifies state directly with the provider and activates subscription/entitlement if confirmed.
+    """
+    tx = await db.get(PaymentTransactionModel, transaction_id)
+    if not tx:
+        raise HTTPException(status_code=404, detail="Payment transaction not found.")
+
+    if not tx.provider_transaction_id:
+        raise HTTPException(status_code=400, detail="Cannot reconcile transaction without provider reference.")
+
+    provider = get_payment_provider(tx.provider)
+    verification = await provider.verify_payment(tx.provider_transaction_id)
+
+    now = datetime.now(timezone.utc)
+    old_status = tx.status
+
+    if verification.success:
+        tx.status = "SUCCESS"
+        tx.updated_at = now
+
+        # Update or create linked subscription
+        sub = None
+        if tx.home_id:
+            sub = (await db.execute(select(SubscriptionModel).where(SubscriptionModel.home_id == tx.home_id))).scalars().first()
+        if not sub:
+            sub = (await db.execute(select(SubscriptionModel).where(SubscriptionModel.user_id == tx.user_id))).scalars().first()
+
+        if sub:
+            sub.plan_id = tx.plan_id
+            sub.price_id = tx.price_id
+            sub.status = "ACTIVE"
+            sub.user_id = tx.user_id
+            sub.updated_at = now
+            sub_end = sub.current_period_ends_at if (sub.current_period_ends_at and sub.current_period_ends_at.tzinfo) else (sub.current_period_ends_at.replace(tzinfo=timezone.utc) if sub.current_period_ends_at else None)
+            if sub_end and sub_end > now:
+                ends_at = sub_end + timedelta(days=365)
+            else:
+                sub.current_period_starts_at = now
+                ends_at = now + timedelta(days=365)
+            sub.current_period_ends_at = ends_at
+        else:
+            ends_at = now + timedelta(days=365)
+            target_home_id = tx.home_id or uuid4()
+            sub = SubscriptionModel(
+                id=uuid4(),
+                home_id=target_home_id,
+                user_id=tx.user_id,
+                plan_id=tx.plan_id,
+                price_id=tx.price_id,
+                active_coupon_id=tx.coupon_id,
+                status="ACTIVE",
+                introductory_period_starts_at=now,
+                introductory_period_ends_at=ends_at,
+                current_period_starts_at=now,
+                current_period_ends_at=ends_at,
+                paid_member_seats=0,
+                currency_snapshot=tx.currency,
+                effective_price_snapshot=tx.final_amount,
+                list_price_snapshot=tx.amount,
+                discount_amount_snapshot=tx.discount_amount,
+                created_at=now,
+                updated_at=now
+            )
+            db.add(sub)
+            await db.flush()
+
+        tx.subscription_id = sub.id
+
+        # Provision entitlement if home exists
+        target_user = await db.get(UserModel, tx.user_id)
+        if target_user and sub.home_id:
+            home = await db.get(HomeModel, sub.home_id)
+            if home:
+                await provision_paid_home_entitlement(
+                    user=target_user,
+                    home=home,
+                    subscription_id=sub.id,
+                    db=db,
+                    expires_at=sub.current_period_ends_at
+                )
+
+        await record_audit_log(
+            db=db,
+            entity_type="PAYMENT",
+            entity_id=tx.id,
+            action="TRANSACTION_RECONCILED",
+            performed_by=super_admin.id,
+            old_values={"status": old_status},
+            new_values={"status": "SUCCESS", "verified_amount": str(verification.amount_paid)},
+            reason="Admin manual gateway reconciliation confirmed success."
+        )
+        await db.commit()
+
+        return ApiSuccessResponse(
+            data={
+                "reconciled": True,
+                "status": "SUCCESS",
+                "transaction_id": str(tx.id),
+                "subscription_id": str(sub.id),
+                "message": "Transaction verified and subscription activated."
+            },
+            message="Transaction successfully reconciled."
+        )
+    else:
+        tx.status = "FAILED"
+        tx.failure_reason = verification.failure_reason or "Provider verification returned failed."
+        tx.updated_at = now
+
+        await record_audit_log(
+            db=db,
+            entity_type="PAYMENT",
+            entity_id=tx.id,
+            action="TRANSACTION_RECONCILED_FAILED",
+            performed_by=super_admin.id,
+            old_values={"status": old_status},
+            new_values={"status": "FAILED", "failure_reason": tx.failure_reason},
+            reason="Admin manual gateway reconciliation returned failure."
+        )
+        await db.commit()
+
+        return ApiSuccessResponse(
+            data={
+                "reconciled": True,
+                "status": "FAILED",
+                "transaction_id": str(tx.id),
+                "failure_reason": tx.failure_reason,
+            },
+            message="Reconciliation confirmed payment failure."
+        )
 
 
 @router.get("/analytics")
@@ -1356,5 +1589,25 @@ async def admin_cancel_subscription(
         data=MessageResponse(message="Subscription has been cancelled. Tenant Home and household records remain intact."),
         message="Subscription cancelled."
     )
+
+
+@router.post("/process-lifecycle", response_model=ApiSuccessResponse[dict])
+async def admin_process_subscription_lifecycle(
+    warning_days: int = 7,
+    super_admin: UserModel = Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Super Admin on-demand trigger to evaluate subscription lifecycle transitions,
+    expire ended subscriptions and entitlements, and generate idempotent priority alerts.
+    """
+    metrics = await process_subscription_lifecycle_transitions(db=db, warning_days=warning_days)
+    await db.commit()
+
+    return ApiSuccessResponse(
+        data=metrics,
+        message="Subscription lifecycle evaluation completed successfully."
+    )
+
 
 

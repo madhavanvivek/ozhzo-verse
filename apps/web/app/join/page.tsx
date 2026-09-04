@@ -14,7 +14,8 @@ import {
   ArrowRight,
   Home,
   Users,
-  Send
+  Send,
+  UserCheck
 } from 'lucide-react';
 import { apiClient } from '@/lib/apiClient';
 
@@ -93,6 +94,12 @@ function JoinHomeContent() {
     setErrorMessage(null);
     setSuccessMessage(null);
 
+    if (cleanCode.toUpperCase().startsWith('OZH-')) {
+      setQrToken(cleanCode);
+      resolveQr(cleanCode);
+      return;
+    }
+
     try {
       const res = await apiClient.post<AcceptInvitationResponse>('/homes/invitations/redeem', {
         invitation_code: cleanCode
@@ -110,8 +117,29 @@ function JoinHomeContent() {
         router.push('/dashboard');
       }, 1500);
     } catch (err: any) {
+      const errMsg = err?.message || 'Failed to accept invitation.';
+      const isIdentityError =
+        errMsg.includes('different mobile') ||
+        errMsg.includes('different email') ||
+        errMsg.includes('verify your mobile') ||
+        errMsg.includes('verify your email');
+
+      if (!isIdentityError) {
+        // If code was not an invitation, check if it's a valid Home ID
+        try {
+          const homeRes = await apiClient.get<HomePublicInfoDTO>(`/homes/public/resolve-qr/${cleanCode}`);
+          if (homeRes && homeRes.home_id) {
+            setQrToken(cleanCode);
+            setQrHomeInfo(homeRes);
+            setIsSubmitting(false);
+            return;
+          }
+        } catch {
+          // Ignore fallback error
+        }
+      }
       console.error('Join home failed:', err);
-      setErrorMessage(err?.message || 'Failed to accept invitation.');
+      setErrorMessage(errMsg);
       setIsSubmitting(false);
     }
   };
@@ -292,9 +320,30 @@ function JoinHomeContent() {
             )}
 
             {errorMessage && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', backgroundColor: 'var(--status-overdue-bg)', color: 'var(--status-overdue)', borderRadius: 'var(--radius-md)', fontSize: '13px', fontWeight: 500, marginBottom: 'var(--space-4)' }}>
-                <AlertCircle size={16} />
-                <span>{errorMessage}</span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', padding: '12px 14px', backgroundColor: 'var(--status-overdue-bg)', color: 'var(--status-overdue)', borderRadius: 'var(--radius-md)', fontSize: '13px', fontWeight: 500, marginBottom: 'var(--space-4)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <AlertCircle size={16} style={{ flexShrink: 0 }} />
+                  <span>{errorMessage}</span>
+                </div>
+                {(errorMessage.includes('different mobile') || errorMessage.includes('different email') || errorMessage.includes('verify your mobile') || errorMessage.includes('verify your email')) && (
+                  <div style={{ marginTop: '4px' }}>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => {
+                        apiClient.clearSession();
+                        if (typeof window !== 'undefined') {
+                          window.dispatchEvent(new Event('auth-changed'));
+                        }
+                        router.push(`/login?redirect=/join?code=${encodeURIComponent(code.trim())}`);
+                      }}
+                      style={{ width: '100%', minHeight: '38px', fontSize: '12px', justifyContent: 'center' }}
+                    >
+                      <UserCheck size={14} />
+                      <span>Sign In with Invited Account</span>
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
 

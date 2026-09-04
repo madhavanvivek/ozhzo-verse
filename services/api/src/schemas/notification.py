@@ -1,19 +1,38 @@
 from datetime import datetime
-from typing import List, Optional
+import json
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 from pydantic import BaseModel, Field
 
 
 class NotificationDTO(BaseModel):
     id: UUID
-    home_id: UUID
+    home_id: Optional[UUID] = None
+    home_name: Optional[str] = None
     user_id: UUID
     title: str
     body: str
     type: str
+    priority: str = "NORMAL"  # CRITICAL, HIGH, NORMAL, LOW
+    requires_action: bool = False
+    action_status: str = "OPEN"  # OPEN, ACKNOWLEDGED, RESOLVED, DISMISSED
+    action_type: Optional[str] = None
+    action_url: Optional[str] = None
+    action_label: Optional[str] = None
+    extra_metadata: Optional[Dict[str, Any]] = None
     is_read: bool
     read_at: Optional[datetime] = None
+    resolved_at: Optional[datetime] = None
+    dismissed_at: Optional[datetime] = None
     created_at: datetime
+
+
+class PriorityAlertSummaryDTO(BaseModel):
+    action_required_count: int
+    critical_count: int
+    high_count: int
+    unread_count: int
+    items: List[NotificationDTO]
 
 
 class NotificationPreferencesDTO(BaseModel):
@@ -49,6 +68,8 @@ class UpdateNotificationPreferencesRequest(BaseModel):
 class PaginatedNotificationsResponse(BaseModel):
     items: List[NotificationDTO]
     unread_count: int
+    priority_unread_count: int = 0
+    action_required_count: int = 0
     total: int
     page: int
     page_size: int

@@ -125,6 +125,7 @@ class CalendarProjectionResponse(BaseModel):
     start_date: datetime
     end_date: datetime
     items: List[TimelineItemDTO] = []
+    timeline_items: Optional[List[TimelineItemDTO]] = None
     total_events: int = 0
     total_tasks: int = 0
     total_bills: int = 0

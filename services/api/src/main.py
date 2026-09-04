@@ -47,6 +47,7 @@ async def lifespan(app: FastAPI):
                 ("inventory_items", "next_service_due_at", "DATE"),
                 ("inventory_items", "service_notes", "VARCHAR"),
                 ("homes", "status", "VARCHAR DEFAULT 'ACTIVE'"),
+                ("homes", "join_policy", "VARCHAR(32) DEFAULT 'REQUEST_TO_JOIN'"),
                 ("homes", "public_home_id", "VARCHAR(16)"),
                 ("homes", "home_qr_token", "VARCHAR(128)"),
                 ("homes", "home_qr_status", "VARCHAR(32) DEFAULT 'ACTIVE'"),
@@ -60,10 +61,16 @@ async def lifespan(app: FastAPI):
                 ("invitations", "revoked_at", "TIMESTAMP WITH TIME ZONE"),
                 ("tasks", "bill_id", "UUID"),
                 ("notifications", "priority", "VARCHAR(32) DEFAULT 'NORMAL'"),
+                ("notifications", "requires_action", "BOOLEAN DEFAULT FALSE"),
+                ("notifications", "action_status", "VARCHAR(32) DEFAULT 'OPEN'"),
                 ("notifications", "action_type", "VARCHAR(64)"),
                 ("notifications", "action_url", "VARCHAR(255)"),
                 ("notifications", "action_label", "VARCHAR(64)"),
                 ("notifications", "dedup_key", "VARCHAR(128)"),
+                ("notifications", "read_at", "TIMESTAMP WITH TIME ZONE"),
+                ("notifications", "resolved_at", "TIMESTAMP WITH TIME ZONE"),
+                ("notifications", "dismissed_at", "TIMESTAMP WITH TIME ZONE"),
+                ("notifications", "extra_metadata", "TEXT"),
                 ("subscription_prices", "country_name", "VARCHAR(100) DEFAULT 'Global'"),
                 ("subscription_prices", "country_iso3", "VARCHAR(4) DEFAULT 'GLB'"),
                 ("subscription_prices", "currency_symbol", "VARCHAR(16) DEFAULT '$'"),
@@ -208,12 +215,25 @@ async def security_and_correlation_middleware(request: Request, call_next):
     return response
 
 
+def _get_cors_headers(request: Request) -> dict:
+    origin = request.headers.get("origin")
+    headers = {
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+    }
+    if origin:
+        headers["Access-Control-Allow-Origin"] = origin
+    return headers
+
+
 # Global Domain Exception Handler
 @app.exception_handler(BaseDomainException)
 async def domain_exception_handler(request: Request, exc: BaseDomainException):
     request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
     return JSONResponse(
         status_code=exc.status_code,
+        headers=_get_cors_headers(request),
         content={
             "success": False,
             "error": {
@@ -236,6 +256,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     )
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        headers=_get_cors_headers(request),
         content={
             "success": False,
             "error": {

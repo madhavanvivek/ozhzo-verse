@@ -142,20 +142,39 @@ function DashboardPageContent() {
         initialHomeId ? apiClient.get<any>(`/homes/${initialHomeId}/dashboard`) : Promise.resolve(null)
       ]);
 
-      if (profileRes.status === 'rejected') {
-        throw new Error(profileRes.reason?.message || 'Failed to authenticate user profile.');
-      }
-      if (homesRes.status === 'rejected') {
-        throw new Error(homesRes.reason?.message || 'Failed to load user homes.');
+      const profileData = profileRes.status === 'fulfilled' ? profileRes.value : null;
+      const homesData = homesRes.status === 'fulfilled' ? homesRes.value : null;
+
+      if (!profileData && !homesData) {
+        const errorReason = (profileRes.status === 'rejected' ? profileRes.reason?.message : '') ||
+                            (homesRes.status === 'rejected' ? homesRes.reason?.message : '') ||
+                            'Failed to load user and household context.';
+        throw new Error(errorReason);
       }
 
-      const profileData = profileRes.value;
-      setUserProfile(profileData);
+      if (profileData) {
+        setUserProfile(profileData);
+        apiClient.setUser(profileData);
+      }
 
-      const accessibleHomes: Array<{ id: string; name: string; role: string }> = Array.isArray(homesRes.value) ? homesRes.value : [];
+      let accessibleHomes: Array<{ id: string; name: string; role: string }> = [];
+      if (Array.isArray(homesData) && homesData.length > 0) {
+        accessibleHomes = homesData.map((h: any) => ({
+          id: h.id || h.home_id || '',
+          name: h.name || 'Home',
+          role: h.role || 'MEMBER'
+        }));
+      } else if (profileData && Array.isArray(profileData.homes) && profileData.homes.length > 0) {
+        accessibleHomes = profileData.homes.map((h: any) => ({
+          id: h.home_id || h.id || '',
+          name: h.name || 'Home',
+          role: h.role || 'MEMBER'
+        }));
+      }
+
       setUserHomes(accessibleHomes);
 
-      // STATE A: User has zero homes -> Onboarding State
+      // STATE A: User genuinely has zero homes -> Onboarding State
       if (accessibleHomes.length === 0) {
         setActiveHomeId(null);
         setData(null);
@@ -653,21 +672,50 @@ function DashboardPageContent() {
   }
 
   // ===========================================================================
-  // STATE A — USER HAS NO HOME (Pre-Dashboard / Empty State / Onboarding)
-  // Strictly applies ONLY when the backend confirms user belongs to ZERO homes
+  // STATE: LOAD ERROR (API / Network Failure)
+  // Strictly isolates error rendering: NEVER shows zero-home onboarding UI
+  // ===========================================================================
+  if (error && !data) {
+    return (
+      <div style={{ maxWidth: '840px', margin: '0 auto', padding: 'var(--space-6) var(--space-4)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <div
+          id="dashboard-error-banner"
+          style={{
+            padding: '20px 24px',
+            backgroundColor: 'var(--status-overdue-bg, #fef2f2)',
+            border: '1px solid #fecaca',
+            borderRadius: 'var(--radius-lg, 16px)',
+            color: 'var(--status-overdue, #ef4444)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '16px',
+            boxShadow: 'var(--shadow-sm)'
+          }}
+        >
+          <div>
+            <div style={{ fontWeight: 700, fontSize: '16px', color: '#991b1b' }}>Unable to load your Home information</div>
+            <div style={{ fontSize: '13px', color: '#b91c1c', marginTop: '4px' }}>
+              {error}
+            </div>
+          </div>
+          <Button id="dashboard-retry-btn" variant="secondary" onClick={loadDashboard} style={{ minHeight: '40px', padding: '0 16px' }}>
+            <RefreshCw size={14} style={{ marginRight: '6px' }} /> <span>Retry</span>
+          </Button>
+        </div>
+        {renderCreateHomeModal()}
+        {renderJoinHomeModal()}
+      </div>
+    );
+  }
+
+  // ===========================================================================
+  // STATE A — ZERO ACCESSIBLE HOMES (Onboarding / Pre-Dashboard)
+  // Strictly applies ONLY when the backend confirms user belongs to ZERO homes with !error
   // ===========================================================================
   if (userHomes.length === 0 && !activeHomeId) {
     return (
       <div style={{ maxWidth: '840px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 'var(--space-8)', padding: 'var(--space-6) var(--space-4)' }}>
-        {error && (
-          <div style={{ padding: '10px 14px', backgroundColor: 'var(--status-overdue-bg)', color: 'var(--status-overdue)', borderRadius: 'var(--radius-md)', fontSize: '13px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span>{error}</span>
-            <Button size="sm" variant="secondary" onClick={loadDashboard}>
-              <RefreshCw size={14} /> <span>Retry</span>
-            </Button>
-          </div>
-        )}
-
         <Card style={{ padding: 'var(--space-8)', textAlign: 'center', backgroundColor: 'var(--color-surface-card)', border: '1px solid var(--color-border-subtle)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-card)' }}>
           <div style={{ width: '56px', height: '56px', borderRadius: '50%', backgroundColor: 'var(--color-primary-100)', color: 'var(--color-primary-900)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto var(--space-4)' }}>
             <Home size={28} />
@@ -753,37 +801,6 @@ function DashboardPageContent() {
           </div>
         </div>
 
-        {renderCreateHomeModal()}
-        {renderJoinHomeModal()}
-      </div>
-    );
-  }
-
-  // Error State for user WITH homes (e.g. temporary API failure)
-  if (error && !data) {
-    return (
-      <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        <div
-          style={{
-            padding: '16px 20px',
-            backgroundColor: 'var(--status-overdue-bg, #fef2f2)',
-            border: '1px solid #fecaca',
-            borderRadius: 'var(--radius-lg, 16px)',
-            color: 'var(--status-overdue, #ef4444)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '16px'
-          }}
-        >
-          <div>
-            <div style={{ fontWeight: 700, fontSize: '15px' }}>Unable to load household dashboard</div>
-            <div style={{ fontSize: '13px', color: '#991b1b', marginTop: '4px' }}>{error}</div>
-          </div>
-          <Button variant="secondary" onClick={loadDashboard}>
-            <RefreshCw size={14} /> <span>Retry</span>
-          </Button>
-        </div>
         {renderCreateHomeModal()}
         {renderJoinHomeModal()}
       </div>

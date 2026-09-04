@@ -88,55 +88,56 @@ export default function DashboardLayout({
 
   const loadUserDataAndHomes = async () => {
     try {
-      const userRes = await apiClient.get<{
-        id: string;
-        display_name: string;
-        email?: string | null;
-        phone_number?: string | null;
-        mobile_verified?: boolean;
-        homes?: Array<{
-          home_id?: string;
-          id?: string;
-          name: string;
-          role: string;
-        }>;
-      }>('/users/me');
+      const [userRes, freshHomesRes] = await Promise.allSettled([
+        apiClient.get<{
+          id: string;
+          display_name: string;
+          email?: string | null;
+          phone_number?: string | null;
+          mobile_verified?: boolean;
+          homes?: Array<{
+            home_id?: string;
+            id?: string;
+            name: string;
+            role: string;
+          }>;
+        }>('/users/me'),
+        apiClient.get<Array<{ id: string; name: string; role: string }>>('/homes')
+      ]);
 
-      if (userRes) {
-        setUserProfile(userRes);
-        apiClient.setUser(userRes);
+      const userResVal = userRes.status === 'fulfilled' ? userRes.value : null;
+      const freshHomesVal = freshHomesRes.status === 'fulfilled' ? freshHomesRes.value : null;
 
-        let mappedHomes: Array<{ home_id: string; name: string; role: string }> = [];
-        if (Array.isArray(userRes.homes) && userRes.homes.length > 0) {
-          mappedHomes = userRes.homes.map((home) => ({
-            home_id: home.home_id || home.id || '',
-            name: home.name,
-            role: home.role
-          }));
-        } else {
-          try {
-            const freshHomes = await apiClient.get<Array<{ id: string; name: string; role: string }>>('/homes');
-            if (Array.isArray(freshHomes)) {
-              mappedHomes = freshHomes.map((h) => ({
-                home_id: h.id,
-                name: h.name,
-                role: h.role
-              }));
-            }
-          } catch {
-            mappedHomes = [];
-          }
-        }
+      if (userResVal) {
+        setUserProfile(userResVal);
+        apiClient.setUser(userResVal);
+      }
 
+      let mappedHomes: Array<{ home_id: string; name: string; role: string }> = [];
+
+      if (Array.isArray(freshHomesVal) && freshHomesVal.length > 0) {
+        mappedHomes = freshHomesVal.map((h) => ({
+          home_id: h.id || (h as any).home_id || '',
+          name: h.name,
+          role: h.role
+        }));
+      } else if (userResVal && Array.isArray(userResVal.homes) && userResVal.homes.length > 0) {
+        mappedHomes = userResVal.homes.map((home) => ({
+          home_id: home.home_id || home.id || '',
+          name: home.name,
+          role: home.role
+        }));
+      } else if (freshHomesRes.status === 'fulfilled' || userRes.status === 'fulfilled') {
+        mappedHomes = [];
+      }
+
+      if (freshHomesRes.status === 'fulfilled' || userRes.status === 'fulfilled') {
         setHomes(mappedHomes);
         const resolvedId = apiClient.resolveActiveHome(mappedHomes);
         setActiveHomeId(resolvedId);
       }
     } catch (error) {
       console.error('Failed to load user and homes:', error);
-      setHomes([]);
-      setActiveHomeId(null);
-      apiClient.setActiveHomeId(null);
     }
   };
 

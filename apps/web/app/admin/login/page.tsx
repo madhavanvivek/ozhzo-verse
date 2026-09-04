@@ -33,18 +33,23 @@ function AdminLoginForm() {
           password: password.trim()
         });
       } catch (adminErr: any) {
-        // Fallback to alias if needed
-        response = await apiClient.post<any>('/admin/login', {
-          email: email.trim().toLowerCase(),
-          password: password.trim()
-        });
+        const adminMsg = adminErr?.message || '';
+        // Only fallback to alias endpoint if the primary endpoint is not found (404)
+        if (adminMsg.includes('404') || adminMsg.includes('Not Found')) {
+          response = await apiClient.post<any>('/admin/login', {
+            email: email.trim().toLowerCase(),
+            password: password.trim()
+          });
+        } else {
+          throw adminErr;
+        }
       }
 
       const accessToken = response?.access_token || response?.token;
       const refreshToken = response?.refresh_token;
 
       if (!accessToken) {
-        throw new Error('Invalid email or password.');
+        throw new Error('Invalid administrator email or password.');
       }
 
       // Wipe previous session state before authenticating admin
@@ -87,9 +92,16 @@ function AdminLoginForm() {
         msg.includes('Unauthorized') ||
         msg.includes('not found')
       ) {
-        setErrorMessage('Invalid email or password.');
+        setErrorMessage('Invalid administrator email or password.');
+      } else if (msg.includes('403') || msg.includes('privileges') || msg.includes('Household')) {
+        setIsAccessDenied(true);
+        setErrorMessage(
+          'Platform administrator access required. Household accounts (OWNER, HOME_ADMIN, MEMBER) cannot administer the platform.'
+        );
       } else if (msg.includes('429') || msg.includes('rate limit')) {
         setErrorMessage('Too many sign-in attempts. Please try again in a few moments.');
+      } else if (msg.includes('Failed to fetch') || msg.includes('Network') || msg.includes('connection')) {
+        setErrorMessage('Unable to connect to the authentication service. Please check your connection.');
       } else {
         setErrorMessage(msg || 'An error occurred during authentication. Please try again.');
       }

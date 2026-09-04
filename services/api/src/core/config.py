@@ -38,8 +38,10 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     ENABLE_DEMO_SUPER_ADMIN_BOOTSTRAP: bool = True
-    DEMO_SUPER_ADMIN_EMAIL: str = os.getenv("DEMO_SUPER_ADMIN_EMAIL", "admin@ozhzoverse.com")
-    DEMO_SUPER_ADMIN_PASSWORD: str = os.getenv("DEMO_SUPER_ADMIN_PASSWORD", "")
+    SUPER_ADMIN_EMAIL: str = os.getenv("SUPER_ADMIN_EMAIL", os.getenv("DEMO_SUPER_ADMIN_EMAIL", "superadmin@ozhzo.com"))
+    SUPER_ADMIN_PASSWORD: str = os.getenv("SUPER_ADMIN_PASSWORD", os.getenv("DEMO_SUPER_ADMIN_PASSWORD", ""))
+    DEMO_SUPER_ADMIN_EMAIL: str = os.getenv("DEMO_SUPER_ADMIN_EMAIL", os.getenv("SUPER_ADMIN_EMAIL", "superadmin@ozhzo.com"))
+    DEMO_SUPER_ADMIN_PASSWORD: str = os.getenv("DEMO_SUPER_ADMIN_PASSWORD", os.getenv("SUPER_ADMIN_PASSWORD", ""))
     FORCE_SUPER_ADMIN_PASSWORD_RESET: bool = True
     DEMO_OTP_ENABLED: bool = True
     DEMO_OTP_CODE: str = "123456"

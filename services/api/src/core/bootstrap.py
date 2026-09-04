@@ -32,99 +32,112 @@ async def seed_demo_super_admin(db: AsyncSession) -> UserModel | None:
         logger.info("Super Admin bootstrap is disabled via ENABLE_DEMO_SUPER_ADMIN_BOOTSTRAP=False.")
         return None
 
-    email = (settings.DEMO_SUPER_ADMIN_EMAIL or "vivek@zinfog.com").strip().lower()
-    initial_password = settings.DEMO_SUPER_ADMIN_PASSWORD
+    primary_email = (settings.DEMO_SUPER_ADMIN_EMAIL or "vivek@zinfog.com").strip().lower()
+    additional_emails = [
+        e.strip().lower()
+        for e in [
+            getattr(settings, "SUPER_ADMIN_EMAIL", None),
+            "superadmin@ozhzo.com",
+            "vivek@zinfog.com"
+        ]
+        if e and e.strip() and e.strip().lower() != primary_email
+    ]
+    admin_emails = [primary_email] + additional_emails
+    initial_password = (settings.SUPER_ADMIN_PASSWORD or settings.DEMO_SUPER_ADMIN_PASSWORD or "").strip()
 
+    primary_user = None
     try:
-        query = select(UserModel).where(UserModel.email == email).order_by(UserModel.is_super_admin.desc(), UserModel.created_at.asc())
-        result = await db.execute(query)
-        matching_users: list[UserModel] = []
-        try:
-            if hasattr(result, "scalars"):
-                all_res = result.scalars().all()
-                if isinstance(all_res, list):
-                    matching_users = [u for u in all_res if isinstance(u, UserModel)]
-        except Exception:
-            pass
-
-        if not matching_users:
+        for email in admin_emails:
+            query = select(UserModel).where(UserModel.email == email).order_by(UserModel.is_super_admin.desc(), UserModel.created_at.asc())
+            result = await db.execute(query)
+            matching_users: list[UserModel] = []
             try:
-                if hasattr(result, "scalar_one_or_none"):
-                    single = result.scalar_one_or_none()
-                    if single and isinstance(single, UserModel):
-                        matching_users = [single]
+                if hasattr(result, "scalars"):
+                    all_res = result.scalars().all()
+                    if isinstance(all_res, list):
+                        matching_users = [u for u in all_res if isinstance(u, UserModel)]
             except Exception:
                 pass
 
-        if not matching_users:
-            default_pwd = (initial_password or settings.DEMO_SUPER_ADMIN_PASSWORD or secrets.token_urlsafe(16)).strip()
-            user = UserModel(
-                email=email,
-                password_hash=hash_password(default_pwd),
-                is_active=True,
-                is_verified=True,
-                mobile_verified=True,
-                is_super_admin=True,
-                system_role="SUPER_ADMIN"
-            )
-            db.add(user)
-            await db.flush()
+            if not matching_users:
+                try:
+                    if hasattr(result, "scalar_one_or_none"):
+                        single = result.scalar_one_or_none()
+                        if single and isinstance(single, UserModel):
+                            matching_users = [single]
+                except Exception:
+                    pass
 
-            profile = UserProfileModel(
-                user_id=user.id,
-                display_name="Super Admin",
-                timezone="UTC",
-                preferred_language="en"
-            )
-            db.add(profile)
-            logger.info("Initialized designated Super Admin account: %s", email)
-        else:
-            # Primary Super Admin record is the first one
-            user = matching_users[0]
-            user.is_super_admin = True
-            user.system_role = "SUPER_ADMIN"
-            user.is_active = True
-            user.is_verified = True
+            if not matching_users:
+                default_pwd = (initial_password or secrets.token_urlsafe(16)).strip()
+                user = UserModel(
+                    email=email,
+                    password_hash=hash_password(default_pwd),
+                    is_active=True,
+                    is_verified=True,
+                    mobile_verified=True,
+                    is_super_admin=True,
+                    system_role="SUPER_ADMIN"
+                )
+                db.add(user)
+                await db.flush()
 
-            # If duplicate secondary records exist, deactivate them to guarantee single active account
-            if len(matching_users) > 1:
-                now_utc = datetime.now(timezone.utc)
-                for dup in matching_users[1:]:
-                    dup.is_active = False
-                    dup.deleted_at = now_utc
-                    dup.email = f"dup_{dup.id}_{email}"
-                logger.info("Deduplicated %d extra records for %s", len(matching_users) - 1, email)
-
-            # Synchronize password hash
-            target_pwd = (initial_password or settings.DEMO_SUPER_ADMIN_PASSWORD or "").strip()
-            if not user.password_hash:
-                user.password_hash = hash_password(target_pwd or secrets.token_urlsafe(16))
-                logger.info("Synchronized authoritative password hash for Super Admin: %s", email)
-            elif target_pwd and settings.FORCE_SUPER_ADMIN_PASSWORD_RESET and not verify_password(target_pwd, user.password_hash):
-                user.password_hash = hash_password(target_pwd)
-                logger.info("Reset authoritative password hash for Super Admin: %s", email)
-            else:
-                logger.info("Ensured platform Super Admin authorization for account: %s (password verified/active)", email)
-
-            # Ensure profile exists
-            prof_query = select(UserProfileModel).where(UserProfileModel.user_id == user.id)
-            prof_res = await db.execute(prof_query)
-            if not prof_res.scalars().first():
                 profile = UserProfileModel(
                     user_id=user.id,
-                    display_name="Vivek",
+                    display_name="Super Admin",
                     timezone="UTC",
                     preferred_language="en"
                 )
                 db.add(profile)
-                logger.info("Initialized profile for Super Admin: %s", email)
+                logger.info("Initialized designated Super Admin account: %s", email)
+                if not primary_user:
+                    primary_user = user
+            else:
+                user = matching_users[0]
+                user.is_super_admin = True
+                user.system_role = "SUPER_ADMIN"
+                user.is_active = True
+                user.is_verified = True
+
+                if len(matching_users) > 1:
+                    now_utc = datetime.now(timezone.utc)
+                    for dup in matching_users[1:]:
+                        dup.is_active = False
+                        dup.deleted_at = now_utc
+                        dup.email = f"dup_{dup.id}_{email}"
+                    logger.info("Deduplicated %d extra records for %s", len(matching_users) - 1, email)
+
+                target_pwd = initial_password
+                if not user.password_hash:
+                    user.password_hash = hash_password(target_pwd or secrets.token_urlsafe(16))
+                    logger.info("Synchronized authoritative password hash for Super Admin: %s", email)
+                elif target_pwd and settings.FORCE_SUPER_ADMIN_PASSWORD_RESET and not verify_password(target_pwd, user.password_hash):
+                    user.password_hash = hash_password(target_pwd)
+                    logger.info("Reset authoritative password hash for Super Admin: %s", email)
+                else:
+                    logger.info("Ensured platform Super Admin authorization for account: %s", email)
+
+                prof_query = select(UserProfileModel).where(UserProfileModel.user_id == user.id)
+                prof_res = await db.execute(prof_query)
+                if not prof_res.scalars().first():
+                    profile = UserProfileModel(
+                        user_id=user.id,
+                        display_name="Super Admin",
+                        timezone="UTC",
+                        preferred_language="en"
+                    )
+                    db.add(profile)
+                    logger.info("Initialized profile for Super Admin: %s", email)
+
+                if not primary_user:
+                    primary_user = user
 
         await db.commit()
         await seed_demo_coupons(db)
-        return user
+        return primary_user
     except Exception as e:
         await db.rollback()
-        logger.error("Failed to ensure Super Admin bootstrap for %s: %s", email, e)
+        logger.error("Failed to ensure Super Admin bootstrap: %s", e)
         return None
 
 

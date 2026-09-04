@@ -63,7 +63,23 @@ async def lifespan(app: FastAPI):
                 ("notifications", "action_type", "VARCHAR(64)"),
                 ("notifications", "action_url", "VARCHAR(255)"),
                 ("notifications", "action_label", "VARCHAR(64)"),
-                ("notifications", "dedup_key", "VARCHAR(128)")
+                ("notifications", "dedup_key", "VARCHAR(128)"),
+                ("subscription_prices", "country_name", "VARCHAR(100) DEFAULT 'Global'"),
+                ("subscription_prices", "country_iso3", "VARCHAR(4) DEFAULT 'GLB'"),
+                ("subscription_prices", "currency_symbol", "VARCHAR(16) DEFAULT '$'"),
+                ("subscription_prices", "regular_price", "NUMERIC(10, 2) DEFAULT 0.00"),
+                ("subscription_prices", "list_price", "NUMERIC(10, 2) DEFAULT 0.00"),
+                ("subscription_prices", "additional_member_list_price", "NUMERIC(10, 2) DEFAULT 20.00"),
+                ("subscription_prices", "offer_price", "NUMERIC(10, 2)"),
+                ("subscription_prices", "campaign_name", "VARCHAR(150)"),
+                ("subscription_prices", "campaign_description", "TEXT"),
+                ("subscription_prices", "offer_status", "VARCHAR(32) DEFAULT 'DRAFT'"),
+                ("subscription_prices", "offer_start_date", "TIMESTAMP WITH TIME ZONE"),
+                ("subscription_prices", "offer_end_date", "TIMESTAMP WITH TIME ZONE"),
+                ("subscription_prices", "tax_percentage", "NUMERIC(5, 2) DEFAULT 0.00"),
+                ("subscription_prices", "allow_coupon_stacking", "BOOLEAN DEFAULT FALSE"),
+                ("subscription_prices", "base_price", "NUMERIC(10, 2) DEFAULT 0.00"),
+                ("subscription_prices", "additional_member_price", "NUMERIC(10, 2) DEFAULT 10.00")
             ]
             for table, col, col_type in columns_to_ensure:
                 try:

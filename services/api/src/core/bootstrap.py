@@ -32,18 +32,31 @@ async def seed_demo_super_admin(db: AsyncSession) -> UserModel | None:
         logger.info("Super Admin bootstrap is disabled via ENABLE_DEMO_SUPER_ADMIN_BOOTSTRAP=False.")
         return None
 
-    primary_email = (settings.DEMO_SUPER_ADMIN_EMAIL or "vivek@zinfog.com").strip().lower()
+    primary_email = (
+        getattr(settings, "DEMO_SUPER_ADMIN_EMAIL", None) or
+        getattr(settings, "SUPER_ADMIN_EMAIL", None) or
+        getattr(settings, "ADMIN_EMAIL", None) or
+        "vivek@zinfog.com"
+    ).strip().lower()
     additional_emails = [
         e.strip().lower()
         for e in [
             getattr(settings, "SUPER_ADMIN_EMAIL", None),
+            getattr(settings, "ADMIN_EMAIL", None),
+            getattr(settings, "DEMO_SUPER_ADMIN_EMAIL", None),
             "superadmin@ozhzo.com",
             "vivek@zinfog.com"
         ]
         if e and e.strip() and e.strip().lower() != primary_email
     ]
-    admin_emails = [primary_email] + additional_emails
-    initial_password = (settings.SUPER_ADMIN_PASSWORD or settings.DEMO_SUPER_ADMIN_PASSWORD or "").strip()
+    admin_emails = [primary_email] + [e for e in additional_emails if e != primary_email]
+    initial_password = (
+        getattr(settings, "SUPER_ADMIN_PASSWORD", None) or
+        getattr(settings, "ADMIN_PASSWORD", None) or
+        getattr(settings, "DEMO_SUPER_ADMIN_PASSWORD", None) or
+        os.getenv("SUPER_ADMIN_PASSWORD", os.getenv("ADMIN_PASSWORD", os.getenv("DEMO_SUPER_ADMIN_PASSWORD", ""))) or
+        ""
+    ).strip()
 
     primary_user = None
     try:

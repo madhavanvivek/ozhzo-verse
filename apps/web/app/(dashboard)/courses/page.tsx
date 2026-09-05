@@ -4,24 +4,18 @@ import React, { useEffect, useState } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Badge } from '@/components/ui/Badge';
 import { useRouter } from 'next/navigation';
 import {
   GraduationCap,
   Plus,
   Calendar,
-  Clock,
   BookOpen,
   FileCheck,
   Award,
   Trash2,
   CheckCircle2,
-  ExternalLink,
-  MapPin,
   Check,
   X,
-  ChevronRight,
-  AlertCircle,
   Sparkles
 } from 'lucide-react';
 import { apiClient } from '@/lib/apiClient';
@@ -981,6 +975,29 @@ export default function CoursesPage() {
                   value={courseDescription}
                   onChange={(e) => setCourseDescription(e.target.value)}
                 />
+              </div>
+
+              <div>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-secondary)', display: 'block', marginBottom: '6px' }}>
+                  Color Tag
+                </label>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  {['#6366f1', '#059669', '#d97706', '#dc2626', '#8b5cf6', '#0284c7'].map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setCourseColor(c)}
+                      style={{
+                        width: '28px',
+                        height: '28px',
+                        borderRadius: '50%',
+                        backgroundColor: c,
+                        border: courseColor === c ? '3px solid #0f172a' : '2px solid transparent',
+                        cursor: 'pointer'
+                      }}
+                    />
+                  ))}
+                </div>
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>

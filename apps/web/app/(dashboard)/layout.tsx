@@ -26,7 +26,8 @@ import {
   ArrowRight,
   ShieldAlert,
   Sparkles,
-  Zap
+  Zap,
+  GraduationCap
 } from 'lucide-react';
 
 
@@ -245,6 +246,7 @@ export default function DashboardLayout({
     { label: 'Purchase List', href: '/shopping', icon: ShoppingCart },
     { label: 'Tasks & Chores', href: '/tasks', icon: CheckSquare },
     { label: 'Bills & Reminders', href: '/bills', icon: Receipt },
+    { label: 'Learning & Courses', href: '/courses', icon: GraduationCap },
     { label: 'Calendar', href: '/calendar', icon: Calendar },
     { label: 'Family Members', href: '/members', icon: Users },
     { label: 'Automations', href: '/automations', icon: Zap },

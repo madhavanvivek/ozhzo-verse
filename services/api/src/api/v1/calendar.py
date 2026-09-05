@@ -1,5 +1,6 @@
 from datetime import date, datetime, time, timedelta, timezone
-from typing import Any, List, Optional
+from decimal import Decimal
+from typing import Any, List, Optional, Union
 from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, func, or_, select
@@ -16,10 +17,16 @@ from src.infrastructure.database.models import (
     HomeModel,
     TaskModel,
     BillModel,
+    InventoryItemModel,
+    CourseModel,
+    CourseSessionModel,
+    CourseAssignmentModel,
+    CourseExamModel,
     NotificationModel,
     UserModel,
     UserProfileModel
 )
+from src.api.v1.bills import calculate_next_bill_due_date
 from src.schemas.calendar import (
     CalendarProjectionResponse,
     CreateEventCategoryRequest,
@@ -734,6 +741,19 @@ async def send_event_invitations(*args, **kwargs):
 
 
 # ---------------------------------------------------------------------------
+def _to_utc_datetime(dt: Union[datetime, date, None]) -> Optional[datetime]:
+    if dt is None:
+        return None
+    if isinstance(dt, datetime):
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    if isinstance(dt, date):
+        return datetime.combine(dt, time(0, 0), tzinfo=timezone.utc)
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Unified Calendar Projection Endpoint
 # ---------------------------------------------------------------------------
 @router.get("/calendar/projection", response_model=ApiSuccessResponse[CalendarProjectionResponse])
@@ -742,6 +762,7 @@ async def get_calendar_projection(
     end_date: datetime = Query(..., description="End of projection window (ISO format)"),
     include_tasks: bool = Query(True, description="Include due tasks in projection"),
     include_bills: bool = Query(True, description="Include due bills in projection"),
+    include_courses: bool = Query(True, description="Include courses/learning in projection"),
     home_ctx: HomeContext = Depends(require_home_permission("calendar:view")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -749,36 +770,46 @@ async def get_calendar_projection(
     total_events = 0
     total_tasks = 0
     total_bills = 0
+    total_inventory = 0
+    total_courses = 0
 
     s_date = start_date if start_date.tzinfo is not None else start_date.replace(tzinfo=timezone.utc)
     e_date = end_date if end_date.tzinfo is not None else end_date.replace(tzinfo=timezone.utc)
+    s_date_naive = s_date.replace(tzinfo=None)
+    e_date_naive = e_date.replace(tzinfo=None)
+    start_d = s_date.date()
+    end_d = e_date.date()
 
-    # 1. Fetch Calendar Events
+    # 1. Fetch Calendar Events (Native Authoritative Records)
     event_query = (
         select(EventModel)
         .options(joinedload(EventModel.category))
         .where(
             EventModel.home_id == home_ctx.home_id,
             EventModel.deleted_at.is_(None),
-            EventModel.end_time >= s_date,
-            EventModel.start_time <= e_date
+            or_(
+                and_(EventModel.end_time >= s_date, EventModel.start_time <= e_date),
+                and_(EventModel.end_time >= s_date_naive, EventModel.start_time <= e_date_naive)
+            )
         )
     )
     events = (await db.execute(event_query)).unique().scalars().all()
     total_events = len(events)
 
     for e in events:
+        start_dt = _to_utc_datetime(e.start_time) or s_date
+        end_dt = _to_utc_datetime(e.end_time) or start_dt
         timeline_items.append(
             TimelineItemDTO(
                 source_type="EVENT",
                 source_id=e.id,
                 title=e.title,
-                start=e.start_time,
-                end=e.end_time,
+                start=start_dt,
+                end=end_dt,
                 all_day=bool(e.is_all_day),
                 editable=True,
                 navigation_target=f"/calendar/{e.id}",
-                status=e.status,
+                status=e.status or "CONFIRMED",
                 category_name=e.category.name if e.category else None,
                 location=e.location,
                 meta_info={
@@ -791,18 +822,16 @@ async def get_calendar_projection(
 
     # 2. Fetch Tasks (Projection: Zero database duplication)
     if include_tasks:
-        start_d = s_date.date()
-        end_d = e_date.date()
         task_query = (
             select(TaskModel)
             .options(joinedload(TaskModel.category))
             .where(
                 TaskModel.home_id == home_ctx.home_id,
                 TaskModel.deleted_at.is_(None),
-                TaskModel.status != "COMPLETED",
                 TaskModel.due_date.is_not(None),
                 or_(
                     and_(TaskModel.due_date >= s_date, TaskModel.due_date <= e_date),
+                    and_(TaskModel.due_date >= s_date_naive, TaskModel.due_date <= e_date_naive),
                     and_(TaskModel.due_date >= start_d, TaskModel.due_date <= end_d)
                 )
             )
@@ -813,79 +842,318 @@ async def get_calendar_projection(
         for t in tasks:
             # Anchor task start & end to due date in UTC
             if isinstance(t.due_date, datetime):
-                task_dt = t.due_date if t.due_date.tzinfo is not None else t.due_date.replace(tzinfo=timezone.utc)
+                task_dt = _to_utc_datetime(t.due_date)
+                is_all_day = False
             elif isinstance(t.due_date, date):
                 task_dt = datetime.combine(t.due_date, time(18, 0), tzinfo=timezone.utc)
+                is_all_day = True
             else:
                 continue
 
+            status_display = t.status or "PENDING"
+            title_prefix = "Task: "
             timeline_items.append(
                 TimelineItemDTO(
                     source_type="TASK",
                     source_id=t.id,
-                    title=f"Task: {t.title}",
+                    title=f"{title_prefix}{t.title}",
                     start=task_dt,
                     end=task_dt,
-                    all_day=False,
+                    all_day=is_all_day,
                     editable=False,
                     navigation_target=f"/tasks/{t.id}",
-                    status=t.status,
+                    status=status_display,
                     category_name=t.category.name if t.category else None,
                     location=None,
                     meta_info={
                         "priority": t.priority,
-                        "assigned_to": str(t.assigned_to) if t.assigned_to else None
+                        "assigned_to": str(t.assigned_to) if t.assigned_to else None,
+                        "is_completed": t.status == "COMPLETED"
                     }
                 )
             )
 
-
     # 3. Fetch Bills (Projection: Zero database duplication)
     if include_bills:
-        start_d = s_date.date()
-        end_d = e_date.date()
         bill_query = (
             select(BillModel)
             .options(joinedload(BillModel.category))
             .where(
                 BillModel.home_id == home_ctx.home_id,
                 BillModel.deleted_at.is_(None),
-                BillModel.status.in_(["UNPAID", "PARTIALLY_PAID"]),
-                (BillModel.expected_amount - BillModel.amount_paid) > Decimal("0.00"),
                 BillModel.due_date >= start_d,
                 BillModel.due_date <= end_d
             )
         )
         bills = (await db.execute(bill_query)).unique().scalars().all()
-        total_bills = len(bills)
 
         for b in bills:
-            # Anchor bill due timestamp
+            total_bills += 1
+            is_fully_paid = b.status == "PAID" or ((b.expected_amount - (b.amount_paid or Decimal("0.00"))) <= Decimal("0.00"))
             bill_dt = datetime.combine(b.due_date, time(23, 59, 59), tzinfo=timezone.utc)
+
+            if is_fully_paid:
+                timeline_items.append(
+                    TimelineItemDTO(
+                        source_type="BILL",
+                        source_id=b.id,
+                        title=f"Bill: {b.title} — {b.currency} {b.expected_amount} (Paid)",
+                        start=bill_dt,
+                        end=bill_dt,
+                        all_day=True,
+                        editable=False,
+                        navigation_target=f"/bills/{b.id}",
+                        status="PAID",
+                        category_name=b.category.name if b.category else None,
+                        location=None,
+                        meta_info={
+                            "expected_amount": str(b.expected_amount),
+                            "amount_paid": str(b.amount_paid or b.expected_amount),
+                            "currency": b.currency,
+                            "is_paid": True,
+                            "responsible_member_id": str(b.responsible_member_id) if b.responsible_member_id else None
+                        }
+                    )
+                )
+
+                # For recurring bills that are paid, project the next billing cycle if within window
+                if b.recurrence_type and b.recurrence_type != "NONE":
+                    next_due = calculate_next_bill_due_date(
+                        current_due=b.due_date,
+                        recurrence_type=b.recurrence_type,
+                        interval_days=b.recurrence_interval_days,
+                        payment_date=getattr(b, "paid_date", None)
+                    )
+                    if start_d <= next_due <= end_d:
+                        next_dt = datetime.combine(next_due, time(23, 59, 59), tzinfo=timezone.utc)
+                        timeline_items.append(
+                            TimelineItemDTO(
+                                source_type="BILL",
+                                source_id=b.id,
+                                title=f"Bill Due: {b.title} — {b.currency} {b.expected_amount} (Upcoming)",
+                                start=next_dt,
+                                end=next_dt,
+                                all_day=True,
+                                editable=False,
+                                navigation_target=f"/bills/{b.id}",
+                                status="UPCOMING",
+                                category_name=b.category.name if b.category else None,
+                                location=None,
+                                meta_info={
+                                    "expected_amount": str(b.expected_amount),
+                                    "amount_paid": "0.00",
+                                    "currency": b.currency,
+                                    "is_paid": False,
+                                    "is_recurring_next_cycle": True,
+                                    "responsible_member_id": str(b.responsible_member_id) if b.responsible_member_id else None
+                                }
+                            )
+                        )
+            else:
+                timeline_items.append(
+                    TimelineItemDTO(
+                        source_type="BILL",
+                        source_id=b.id,
+                        title=f"Bill Due: {b.title} — {b.currency} {b.expected_amount}",
+                        start=bill_dt,
+                        end=bill_dt,
+                        all_day=True,
+                        editable=False,
+                        navigation_target=f"/bills/{b.id}",
+                        status=b.status or "UNPAID",
+                        category_name=b.category.name if b.category else None,
+                        location=None,
+                        meta_info={
+                            "expected_amount": str(b.expected_amount),
+                            "amount_paid": str(b.amount_paid or Decimal("0.00")),
+                            "currency": b.currency,
+                            "is_paid": False,
+                            "responsible_member_id": str(b.responsible_member_id) if b.responsible_member_id else None
+                        }
+                    )
+                )
+
+    # 4. Fetch Inventory Maintenance & Service Commitments (Projection: Zero database duplication)
+    inventory_query = (
+        select(InventoryItemModel)
+        .where(
+            InventoryItemModel.home_id == home_ctx.home_id,
+            InventoryItemModel.deleted_at.is_(None),
+            InventoryItemModel.next_service_due_at.is_not(None),
+            InventoryItemModel.next_service_due_at >= start_d,
+            InventoryItemModel.next_service_due_at <= end_d
+        )
+    )
+    service_items = (await db.execute(inventory_query)).scalars().all()
+    total_inventory = len(service_items)
+
+    for item in service_items:
+        service_dt = datetime.combine(item.next_service_due_at, time(10, 0), tzinfo=timezone.utc)
+        timeline_items.append(
+            TimelineItemDTO(
+                source_type="INVENTORY",
+                source_id=item.id,
+                title=f"Maintenance: {item.name} Service Due",
+                start=service_dt,
+                end=service_dt,
+                all_day=True,
+                editable=False,
+                navigation_target="/inventory",
+                status="DUE",
+                category_name="Maintenance",
+                location=None,
+                meta_info={
+                    "item_id": str(item.id),
+                    "item_name": item.name
+                }
+            )
+        )
+
+    # 5. Fetch Courses & Learning Commitments (Projection: Zero database duplication)
+    if include_courses:
+        # 5a. Course Sessions
+        session_query = (
+            select(CourseSessionModel)
+            .options(joinedload(CourseSessionModel.course))
+            .where(
+                CourseSessionModel.home_id == home_ctx.home_id,
+                CourseSessionModel.deleted_at.is_(None),
+                or_(
+                    and_(CourseSessionModel.end_time >= s_date, CourseSessionModel.start_time <= e_date),
+                    and_(CourseSessionModel.end_time >= s_date_naive, CourseSessionModel.start_time <= e_date_naive)
+                )
+            )
+        )
+        sessions = (await db.execute(session_query)).unique().scalars().all()
+        for sess in sessions:
+            if sess.course and sess.course.deleted_at is not None:
+                continue
+            total_courses += 1
+            start_dt = _to_utc_datetime(sess.start_time) or s_date
+            end_dt = _to_utc_datetime(sess.end_time) or start_dt
+            c_title = sess.course.title if sess.course else "Course"
             timeline_items.append(
                 TimelineItemDTO(
-                    source_type="BILL",
-                    source_id=b.id,
-                    title=f"Bill Due: {b.title} ({b.currency} {b.expected_amount})",
-                    start=bill_dt,
-                    end=bill_dt,
-                    all_day=True,
+                    source_type="COURSE",
+                    source_id=sess.id,
+                    title=f"Course: {c_title} — {sess.title}",
+                    start=start_dt,
+                    end=end_dt,
+                    all_day=bool(sess.is_all_day),
                     editable=False,
-                    navigation_target=f"/bills/{b.id}",
-                    status=b.status,
-                    category_name=b.category.name if b.category else None,
+                    navigation_target=f"/courses/{sess.course_id}" if sess.course_id else "/courses",
+                    status=sess.status or "SCHEDULED",
+                    category_name="Learning",
+                    location=sess.location,
+                    meta_info={
+                        "subtype": "SESSION",
+                        "course_id": str(sess.course_id),
+                        "course_title": c_title,
+                        "notes": sess.notes,
+                        "recurrence_type": sess.recurrence_type,
+                        "is_attended": sess.status == "ATTENDED"
+                    }
+                )
+            )
+
+        # 5b. Course Assignments
+        assignment_query = (
+            select(CourseAssignmentModel)
+            .options(joinedload(CourseAssignmentModel.course))
+            .where(
+                CourseAssignmentModel.home_id == home_ctx.home_id,
+                CourseAssignmentModel.deleted_at.is_(None),
+                or_(
+                    and_(CourseAssignmentModel.due_date >= s_date, CourseAssignmentModel.due_date <= e_date),
+                    and_(CourseAssignmentModel.due_date >= s_date_naive, CourseAssignmentModel.due_date <= e_date_naive),
+                    and_(CourseAssignmentModel.due_date >= start_d, CourseAssignmentModel.due_date <= end_d)
+                )
+            )
+        )
+        assignments = (await db.execute(assignment_query)).unique().scalars().all()
+        for assign in assignments:
+            if assign.course and assign.course.deleted_at is not None:
+                continue
+            total_courses += 1
+            if isinstance(assign.due_date, datetime):
+                assign_dt = _to_utc_datetime(assign.due_date)
+                is_all_day = False
+            elif isinstance(assign.due_date, date):
+                assign_dt = datetime.combine(assign.due_date, time(23, 59, 59), tzinfo=timezone.utc)
+                is_all_day = True
+            else:
+                continue
+            c_title = assign.course.title if assign.course else "Course"
+            timeline_items.append(
+                TimelineItemDTO(
+                    source_type="COURSE",
+                    source_id=assign.id,
+                    title=f"Assignment Due: {c_title} — {assign.title}",
+                    start=assign_dt,
+                    end=assign_dt,
+                    all_day=is_all_day,
+                    editable=False,
+                    navigation_target=f"/courses/{assign.course_id}" if assign.course_id else "/courses",
+                    status=assign.status or "PENDING",
+                    category_name="Assignment",
                     location=None,
                     meta_info={
-                        "expected_amount": str(b.expected_amount),
-                        "amount_paid": str(b.amount_paid),
-                        "currency": b.currency,
-                        "responsible_member_id": str(b.responsible_member_id) if b.responsible_member_id else None
+                        "subtype": "ASSIGNMENT",
+                        "course_id": str(assign.course_id),
+                        "course_title": c_title,
+                        "description": assign.description,
+                        "assigned_to": str(assign.assigned_to) if assign.assigned_to else None,
+                        "is_completed": assign.status in ("COMPLETED", "SUBMITTED")
+                    }
+                )
+            )
+
+        # 5c. Course Exams
+        exam_query = (
+            select(CourseExamModel)
+            .options(joinedload(CourseExamModel.course))
+            .where(
+                CourseExamModel.home_id == home_ctx.home_id,
+                CourseExamModel.deleted_at.is_(None),
+                or_(
+                    and_(CourseExamModel.end_time >= s_date, CourseExamModel.start_time <= e_date),
+                    and_(CourseExamModel.end_time >= s_date_naive, CourseExamModel.start_time <= e_date_naive)
+                )
+            )
+        )
+        exams = (await db.execute(exam_query)).unique().scalars().all()
+        for ex in exams:
+            if ex.course and ex.course.deleted_at is not None:
+                continue
+            total_courses += 1
+            start_dt = _to_utc_datetime(ex.start_time) or s_date
+            end_dt = _to_utc_datetime(ex.end_time) or start_dt
+            c_title = ex.course.title if ex.course else "Course"
+            timeline_items.append(
+                TimelineItemDTO(
+                    source_type="COURSE",
+                    source_id=ex.id,
+                    title=f"Exam: {c_title} — {ex.title}",
+                    start=start_dt,
+                    end=end_dt,
+                    all_day=False,
+                    editable=False,
+                    navigation_target=f"/courses/{ex.course_id}" if ex.course_id else "/courses",
+                    status=ex.status or "SCHEDULED",
+                    category_name="Exam",
+                    location=ex.location,
+                    meta_info={
+                        "subtype": "EXAM",
+                        "course_id": str(ex.course_id),
+                        "course_title": c_title,
+                        "notes": ex.notes,
+                        "is_completed": ex.status == "COMPLETED"
                     }
                 )
             )
 
     # Sort all projected timeline items chronologically
-    timeline_items.sort(key=lambda item: item.start)
+    timeline_items.sort(key=lambda item: _to_utc_datetime(item.start) or datetime.min.replace(tzinfo=timezone.utc))
 
     return ApiSuccessResponse(
         data=CalendarProjectionResponse(
@@ -895,6 +1163,8 @@ async def get_calendar_projection(
             timeline_items=timeline_items,
             total_events=total_events,
             total_tasks=total_tasks,
-            total_bills=total_bills
+            total_bills=total_bills,
+            total_inventory=total_inventory,
+            total_courses=total_courses
         )
     )

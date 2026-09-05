@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { useRouter } from 'next/navigation';
 import {
   Plus,
   Clock,
@@ -17,12 +18,15 @@ import {
   ChevronLeft,
   ChevronRight,
   X,
-  Check
+  Check,
+  Wrench,
+  GraduationCap,
+  ExternalLink
 } from 'lucide-react';
 import { apiClient } from '@/lib/apiClient';
 
 interface ProjectedItem {
-  source_type: 'EVENT' | 'TASK' | 'BILL';
+  source_type: 'EVENT' | 'TASK' | 'BILL' | 'COURSE' | 'INVENTORY' | 'AUTOMATION';
   source_id: string;
   title: string;
   start: string;
@@ -38,13 +42,14 @@ interface ProjectedItem {
 }
 
 export default function CalendarPage() {
+  const router = useRouter();
   const [activeHomeId, setActiveHomeId] = useState<string | null>(null);
   const [items, setItems] = useState<ProjectedItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const [viewMode, setViewMode] = useState<'AGENDA' | 'MONTH'>('AGENDA');
-  const [filterType, setFilterType] = useState<'ALL' | 'EVENT' | 'TASK' | 'BILL'>('ALL');
+  const [filterType, setFilterType] = useState<'ALL' | 'EVENT' | 'TASK' | 'BILL' | 'INVENTORY' | 'COURSE'>('ALL');
   const [currentMonthDate, setCurrentMonthDate] = useState(new Date());
 
   // Quick Add State
@@ -233,9 +238,25 @@ export default function CalendarPage() {
     }
   };
 
+  const handleItemNavigation = (item: ProjectedItem) => {
+    if (item.source_type === 'EVENT') {
+      openEditModal(item);
+    } else if (item.source_type === 'TASK') {
+      router.push('/tasks');
+    } else if (item.source_type === 'BILL') {
+      router.push('/bills');
+    } else if (item.source_type === 'INVENTORY') {
+      router.push('/inventory');
+    } else if (item.source_type === 'COURSE') {
+      router.push('/courses');
+    } else if (item.navigation_target) {
+      router.push(item.navigation_target);
+    }
+  };
+
   const openEditModal = (item: ProjectedItem) => {
     if (item.source_type !== 'EVENT') {
-      alert(`This is a projected ${item.source_type.toLowerCase()}. Please manage it from the ${item.source_type.toLowerCase()}s section.`);
+      handleItemNavigation(item);
       return;
     }
 
@@ -339,17 +360,111 @@ export default function CalendarPage() {
     return item.source_type === filterType;
   });
 
-  const getSourceIcon = (type: string) => {
-    switch (type) {
+  const getSourceIcon = (item: ProjectedItem) => {
+    switch (item.source_type) {
       case 'EVENT':
         return <CalendarIcon size={16} color="var(--color-primary-900)" />;
       case 'TASK':
-        return <CheckCircle2 size={16} color="var(--color-accent-warm)" />;
+        return <CheckCircle2 size={16} color={item.status === 'COMPLETED' ? '#10b981' : 'var(--color-accent-warm)'} />;
       case 'BILL':
-        return <Receipt size={16} color="var(--status-overdue)" />;
+        return <Receipt size={16} color={item.status === 'PAID' ? '#10b981' : item.status === 'UPCOMING' ? '#3b82f6' : 'var(--status-overdue)'} />;
+      case 'INVENTORY':
+        return <Wrench size={16} color="#06b6d4" />;
+      case 'COURSE':
+        return <GraduationCap size={16} color="#6366f1" />;
+      case 'AUTOMATION':
+        return <Sparkles size={16} color="#8b5cf6" />;
       default:
         return <Clock size={16} color="var(--color-text-secondary)" />;
     }
+  };
+
+  const getItemBorderColor = (item: ProjectedItem) => {
+    if (item.source_type === 'BILL') {
+      if (item.status === 'PAID') return '#10b981';
+      if (item.status === 'UPCOMING') return '#3b82f6';
+      return 'var(--status-overdue)';
+    }
+    if (item.source_type === 'TASK') {
+      if (item.status === 'COMPLETED') return '#10b981';
+      if (item.status === 'IN_PROGRESS') return '#8b5cf6';
+      return 'var(--color-accent-warm)';
+    }
+    if (item.source_type === 'INVENTORY') return '#06b6d4';
+    if (item.source_type === 'COURSE') return '#6366f1';
+    if (item.source_type === 'AUTOMATION') return '#8b5cf6';
+    return 'var(--color-primary-900)';
+  };
+
+  const renderStatusBadge = (item: ProjectedItem) => {
+    if (item.source_type === 'BILL') {
+      if (item.status === 'PAID') {
+        return (
+          <span style={{ backgroundColor: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '12px' }}>
+            Paid
+          </span>
+        );
+      }
+      if (item.status === 'UPCOMING') {
+        return (
+          <span style={{ backgroundColor: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '12px' }}>
+            Upcoming Cycle
+          </span>
+        );
+      }
+      if (item.status === 'OVERDUE') {
+        return (
+          <span style={{ backgroundColor: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca', fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '12px' }}>
+            Overdue
+          </span>
+        );
+      }
+      return (
+        <span style={{ backgroundColor: '#fffbeb', color: '#b45309', border: '1px solid #fde68a', fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '12px' }}>
+          Due
+        </span>
+      );
+    }
+    if (item.source_type === 'TASK') {
+      if (item.status === 'COMPLETED') {
+        return (
+          <span style={{ backgroundColor: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '12px' }}>
+            Completed
+          </span>
+        );
+      }
+      if (item.status === 'IN_PROGRESS') {
+        return (
+          <span style={{ backgroundColor: '#f5f3ff', color: '#6d28d9', border: '1px solid #ddd6fe', fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '12px' }}>
+            In Progress
+          </span>
+        );
+      }
+      return (
+        <span style={{ backgroundColor: '#fffbeb', color: '#b45309', border: '1px solid #fde68a', fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '12px' }}>
+          Pending
+        </span>
+      );
+    }
+    if (item.source_type === 'INVENTORY') {
+      return (
+        <span style={{ backgroundColor: '#ecfeff', color: '#0e7490', border: '1px solid #a5f3fc', fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '12px' }}>
+          Maintenance
+        </span>
+      );
+    }
+    if (item.source_type === 'COURSE') {
+      return (
+        <span style={{ backgroundColor: '#eef2ff', color: '#4338ca', border: '1px solid #c7d2fe', fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '12px' }}>
+          Course
+        </span>
+      );
+    }
+    return (
+      <span style={{ backgroundColor: '#f0fdf4', color: 'var(--color-primary-900)', border: '1px solid #d1fae5', fontSize: '11px', fontWeight: 600, padding: '2px 8px', borderRadius: '12px' }}>
+        Event
+      </span>
+    );
   };
 
   // Month View Calculation
@@ -410,7 +525,7 @@ export default function CalendarPage() {
             Household Calendar & Schedule
           </h1>
           <p style={{ fontSize: '14px', color: 'var(--color-text-secondary)', marginTop: '2px' }}>
-            Unified schedule • Family events, chore deadlines, and bill due dates synchronized in one place.
+            Unified schedule • Family events, chore deadlines, bill due dates, and maintenance synchronized in one place.
           </p>
         </div>
 
@@ -599,8 +714,10 @@ export default function CalendarPage() {
         {[
           { key: 'ALL', label: `All Items (${items.length})` },
           { key: 'EVENT', label: `Events (${items.filter(i => i.source_type === 'EVENT').length})` },
-          { key: 'TASK', label: `Chores & Tasks (${items.filter(i => i.source_type === 'TASK').length})` },
-          { key: 'BILL', label: `Bills Due (${items.filter(i => i.source_type === 'BILL').length})` }
+          { key: 'TASK', label: `Tasks & Chores (${items.filter(i => i.source_type === 'TASK').length})` },
+          { key: 'BILL', label: `Bills (${items.filter(i => i.source_type === 'BILL').length})` },
+          { key: 'INVENTORY', label: `Maintenance (${items.filter(i => i.source_type === 'INVENTORY').length})` },
+          { key: 'COURSE', label: `Courses (${items.filter(i => i.source_type === 'COURSE').length})` },
         ].map((tab) => (
           <button
             key={tab.key}
@@ -688,27 +805,59 @@ export default function CalendarPage() {
                     {dayNum}
                   </span>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', overflow: 'hidden' }}>
-                    {dayItems.slice(0, 2).map((item, idx) => (
-                      <div
-                        key={idx}
-                        onClick={() => openEditModal(item)}
-                        style={{
-                          fontSize: '10px',
-                          padding: '2px 4px',
-                          borderRadius: '2px',
-                          backgroundColor: item.source_type === 'BILL' ? 'var(--status-overdue-subtle, #fef2f2)' : item.source_type === 'TASK' ? '#fef3c7' : '#e0f2fe',
-                          color: item.source_type === 'BILL' ? 'var(--status-overdue)' : '#0f766e',
-                          fontWeight: 600,
-                          whiteSpace: 'nowrap',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          cursor: 'pointer'
-                        }}
-                        title={item.title}
-                      >
-                        {item.title}
-                      </div>
-                    ))}
+                    {dayItems.slice(0, 2).map((item, idx) => {
+                      let bgColor = '#e0f2fe';
+                      let textColor = '#0369a1';
+
+                      if (item.source_type === 'BILL') {
+                        if (item.status === 'PAID') {
+                          bgColor = '#d1fae5';
+                          textColor = '#047857';
+                        } else if (item.status === 'UPCOMING') {
+                          bgColor = '#dbeafe';
+                          textColor = '#1d4ed8';
+                        } else {
+                          bgColor = 'var(--status-overdue-subtle, #fef2f2)';
+                          textColor = 'var(--status-overdue, #dc2626)';
+                        }
+                      } else if (item.source_type === 'TASK') {
+                        if (item.status === 'COMPLETED') {
+                          bgColor = '#d1fae5';
+                          textColor = '#047857';
+                        } else {
+                          bgColor = '#fef3c7';
+                          textColor = '#b45309';
+                        }
+                      } else if (item.source_type === 'INVENTORY') {
+                        bgColor = '#cffafe';
+                        textColor = '#0e7490';
+                      } else if (item.source_type === 'COURSE') {
+                        bgColor = '#e0e7ff';
+                        textColor = '#4338ca';
+                      }
+
+                      return (
+                        <div
+                          key={idx}
+                          onClick={() => handleItemNavigation(item)}
+                          style={{
+                            fontSize: '10px',
+                            padding: '2px 4px',
+                            borderRadius: '2px',
+                            backgroundColor: bgColor,
+                            color: textColor,
+                            fontWeight: 600,
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            cursor: 'pointer'
+                          }}
+                          title={`${item.title} (${item.status})`}
+                        >
+                          {item.title}
+                        </div>
+                      );
+                    })}
                     {dayItems.length > 2 && (
                       <span style={{ fontSize: '9px', color: 'var(--color-text-tertiary)' }}>
                         +{dayItems.length - 2} more
@@ -736,7 +885,7 @@ export default function CalendarPage() {
                 No scheduled items found
               </h3>
               <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginTop: '4px' }}>
-                Your family calendar has no upcoming events or due items in this view.
+                Your family calendar has no scheduled events or due items in this category.
               </p>
             </Card>
           ) : (
@@ -748,40 +897,44 @@ export default function CalendarPage() {
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   padding: '12px 16px',
-                  borderLeft: item.source_type === 'BILL'
-                    ? '4px solid var(--status-overdue)'
-                    : item.source_type === 'TASK'
-                    ? '4px solid var(--color-accent-warm)'
-                    : '4px solid var(--color-primary-900)',
+                  borderLeft: `4px solid ${getItemBorderColor(item)}`,
                   gap: '12px',
                   flexWrap: 'wrap'
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '14px', minWidth: 0, flex: '1 1 240px' }}>
                   <div style={{ width: '36px', height: '36px', borderRadius: '50%', backgroundColor: 'var(--color-surface-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    {getSourceIcon(item.source_type)}
+                    {getSourceIcon(item)}
                   </div>
 
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
-                    <div
-                      onClick={() => item.source_type === 'EVENT' && openEditModal(item)}
-                      style={{
-                        fontSize: '14px',
-                        fontWeight: 600,
-                        color: 'var(--color-text-primary)',
-                        cursor: item.source_type === 'EVENT' ? 'pointer' : 'default',
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis'
-                      }}
-                    >
-                      {item.title}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <span
+                        onClick={() => handleItemNavigation(item)}
+                        style={{
+                          fontSize: '14px',
+                          fontWeight: 600,
+                          color: 'var(--color-text-primary)',
+                          cursor: 'pointer',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis'
+                        }}
+                      >
+                        {item.title}
+                      </span>
+                      {renderStatusBadge(item)}
                     </div>
 
                     <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--color-text-secondary)' }}>
                       <span>{new Date(item.start).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}</span>
                       {!item.all_day && (
                         <span>• {new Date(item.start).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      )}
+                      {item.meta_info?.amount && (
+                        <span style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>
+                          • ₹{item.meta_info.amount}
+                        </span>
                       )}
                       {item.location && (
                         <span style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
@@ -794,24 +947,49 @@ export default function CalendarPage() {
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
-                  {item.editable && item.source_type === 'EVENT' && (
+                  {item.source_type === 'EVENT' ? (
+                    <>
+                      {item.editable && (
+                        <button
+                          onClick={() => openEditModal(item)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-secondary)', padding: '8px', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                          aria-label={`Edit ${item.title}`}
+                          title="Edit Event"
+                        >
+                          <Edit2 size={16} />
+                        </button>
+                      )}
+                      {item.editable && (
+                        <button
+                          onClick={() => handleDelete(item)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', padding: '8px', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                          aria-label={`Delete ${item.title}`}
+                          title="Delete Event"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
+                    </>
+                  ) : (
                     <button
-                      onClick={() => openEditModal(item)}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-secondary)', padding: '10px', minWidth: '44px', minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                      aria-label={`Edit ${item.title}`}
-                      title="Edit Event"
+                      onClick={() => handleItemNavigation(item)}
+                      style={{
+                        background: 'none',
+                        border: '1px solid var(--color-border)',
+                        borderRadius: 'var(--radius-sm)',
+                        padding: '6px 10px',
+                        cursor: 'pointer',
+                        color: 'var(--color-text-secondary)',
+                        fontSize: '12px',
+                        fontWeight: 500,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px'
+                      }}
+                      title={`View in ${item.source_type.toLowerCase()} module`}
                     >
-                      <Edit2 size={16} />
-                    </button>
-                  )}
-                  {item.editable && (
-                    <button
-                      onClick={() => handleDelete(item)}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-tertiary)', padding: '10px', minWidth: '44px', minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                      aria-label={`Delete ${item.title}`}
-                      title="Delete Event"
-                    >
-                      <Trash2 size={16} />
+                      <span>View</span>
+                      <ExternalLink size={12} />
                     </button>
                   )}
                 </div>

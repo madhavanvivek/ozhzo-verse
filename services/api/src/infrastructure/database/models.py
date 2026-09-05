@@ -1763,7 +1763,121 @@ class SystemCommercialRuleModel(Base):
     updater = relationship("UserModel", foreign_keys=[updated_by])
 
 
+# ==============================================================================
+# FAMILY LEARNING & COURSES DOMAIN
+# ==============================================================================
+
+class CourseModel(Base):
+    __tablename__ = "courses"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    home_id = Column(UUID(as_uuid=True), ForeignKey("homes.id", ondelete="CASCADE"), nullable=False, index=True)
+    title = Column(String(150), nullable=False)
+    description = Column(Text, nullable=True)
+    instructor = Column(String(120), nullable=True)
+    provider = Column(String(120), nullable=True)
+    start_date = Column(Date, nullable=True)
+    end_date = Column(Date, nullable=True)
+    status = Column(String(32), default="ACTIVE", nullable=False, index=True)  # ACTIVE, COMPLETED, PAUSED, DROPPED
+    color = Column(String(20), default="#6366f1", nullable=False)
+
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("idx_courses_home_status", "home_id", "status"),
+    )
+
+    home = relationship("HomeModel", foreign_keys=[home_id])
+    creator = relationship("UserModel", foreign_keys=[created_by])
+    sessions = relationship("CourseSessionModel", back_populates="course", cascade="all, delete-orphan")
+    assignments = relationship("CourseAssignmentModel", back_populates="course", cascade="all, delete-orphan")
+    exams = relationship("CourseExamModel", back_populates="course", cascade="all, delete-orphan")
 
 
+class CourseSessionModel(Base):
+    __tablename__ = "course_sessions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    course_id = Column(UUID(as_uuid=True), ForeignKey("courses.id", ondelete="CASCADE"), nullable=False, index=True)
+    home_id = Column(UUID(as_uuid=True), ForeignKey("homes.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    title = Column(String(150), nullable=False)
+    start_time = Column(DateTime(timezone=True), nullable=False, index=True)
+    end_time = Column(DateTime(timezone=True), nullable=False, index=True)
+    is_all_day = Column(Boolean, default=False, nullable=False)
+    location = Column(String(200), nullable=True)
+    recurrence_type = Column(String(32), default="NONE", nullable=False)
+    status = Column(String(32), default="SCHEDULED", nullable=False, index=True)  # SCHEDULED, ATTENDED, CANCELLED
+    notes = Column(Text, nullable=True)
+
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("idx_course_sessions_home_time", "home_id", "start_time", "end_time"),
+    )
+
+    course = relationship("CourseModel", back_populates="sessions")
+    home = relationship("HomeModel", foreign_keys=[home_id])
+    creator = relationship("UserModel", foreign_keys=[created_by])
 
 
+class CourseAssignmentModel(Base):
+    __tablename__ = "course_assignments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    course_id = Column(UUID(as_uuid=True), ForeignKey("courses.id", ondelete="CASCADE"), nullable=False, index=True)
+    home_id = Column(UUID(as_uuid=True), ForeignKey("homes.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    title = Column(String(150), nullable=False)
+    description = Column(Text, nullable=True)
+    due_date = Column(DateTime(timezone=True), nullable=False, index=True)
+    status = Column(String(32), default="PENDING", nullable=False, index=True)  # PENDING, SUBMITTED, COMPLETED
+    assigned_to = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("idx_course_assignments_home_due", "home_id", "due_date", "status"),
+    )
+
+    course = relationship("CourseModel", back_populates="assignments")
+    home = relationship("HomeModel", foreign_keys=[home_id])
+    assignee = relationship("UserModel", foreign_keys=[assigned_to])
+    creator = relationship("UserModel", foreign_keys=[created_by])
+
+
+class CourseExamModel(Base):
+    __tablename__ = "course_exams"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    course_id = Column(UUID(as_uuid=True), ForeignKey("courses.id", ondelete="CASCADE"), nullable=False, index=True)
+    home_id = Column(UUID(as_uuid=True), ForeignKey("homes.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    title = Column(String(150), nullable=False)
+    start_time = Column(DateTime(timezone=True), nullable=False, index=True)
+    end_time = Column(DateTime(timezone=True), nullable=True)
+    location = Column(String(200), nullable=True)
+    status = Column(String(32), default="SCHEDULED", nullable=False, index=True)  # SCHEDULED, COMPLETED, MISSED
+    notes = Column(Text, nullable=True)
+
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("idx_course_exams_home_time", "home_id", "start_time"),
+    )
+
+    course = relationship("CourseModel", back_populates="exams")
+    home = relationship("HomeModel", foreign_keys=[home_id])
+    creator = relationship("UserModel", foreign_keys=[created_by])

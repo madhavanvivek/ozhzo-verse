@@ -107,7 +107,7 @@ class UpdateParticipantStatusRequest(BaseModel):
 
 
 class TimelineItemDTO(BaseModel):
-    source_type: Literal["EVENT", "TASK", "BILL"]
+    source_type: Literal["EVENT", "TASK", "BILL", "COURSE", "INVENTORY", "AUTOMATION"]
     source_id: UUID
     title: str
     start: datetime
@@ -129,6 +129,8 @@ class CalendarProjectionResponse(BaseModel):
     total_events: int = 0
     total_tasks: int = 0
     total_bills: int = 0
+    total_inventory: int = 0
+    total_courses: int = 0
 
 
 class MessageResponse(BaseModel):

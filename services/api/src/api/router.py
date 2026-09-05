@@ -40,6 +40,7 @@ from src.api.v1.ai import router as ai_router
 from src.api.v1.automations import router as automations_router
 from src.api.v1.intelligence_memory import router as intelligence_memory_router
 from src.api.v1.privacy import router as privacy_router
+from src.api.v1.courses import router as courses_router
 
 api_v1_router = APIRouter()
 
@@ -62,6 +63,7 @@ api_v1_router.include_router(task_templates_router)
 api_v1_router.include_router(bills_router)
 api_v1_router.include_router(bill_templates_router)
 api_v1_router.include_router(calendar_router)
+api_v1_router.include_router(courses_router)
 api_v1_router.include_router(notifications_router)
 api_v1_router.include_router(payments_router, prefix="/payments", tags=["Payments"])
 api_v1_router.include_router(subscriptions_router)

@@ -311,11 +311,12 @@ async def test_calendar_projection_retrieval_and_both_keys():
     mock_res_events = MagicMock()
     mock_res_events.unique.return_value.scalars.return_value.all.return_value = [event]
 
-    # Mock execute return for tasks and bills queries
+    # Mock execute return for tasks, bills, and inventory queries
     mock_res_empty = MagicMock()
     mock_res_empty.unique.return_value.scalars.return_value.all.return_value = []
+    mock_res_empty.scalars.return_value.all.return_value = []
 
-    mock_db.execute.side_effect = [mock_res_events, mock_res_empty, mock_res_empty]
+    mock_db.execute.side_effect = [mock_res_events, mock_res_empty, mock_res_empty, mock_res_empty]
 
     user = UserModel(id=user_id, email="alex@example.com")
     ctx = HomeContext(home_id=home_id, user=user, role=ROLE_OWNER)

@@ -19,6 +19,7 @@ ROLE_PERMISSIONS_MAP: Dict[str, Set[str]] = {
         "tasks:view", "tasks:create", "tasks:edit", "tasks:assign", "tasks:complete", "tasks:delete",
         "bills:view", "bills:create", "bills:edit", "bills:pay", "bills:delete",
         "calendar:view", "calendar:create", "calendar:edit", "calendar:rsvp", "calendar:delete",
+        "courses:view", "courses:create", "courses:edit", "courses:delete",
         "subscription:view", "subscription:manage"
     },
     ROLE_OWNER: {
@@ -30,6 +31,7 @@ ROLE_PERMISSIONS_MAP: Dict[str, Set[str]] = {
         "tasks:view", "tasks:create", "tasks:edit", "tasks:assign", "tasks:complete", "tasks:delete",
         "bills:view", "bills:create", "bills:edit", "bills:pay", "bills:delete",
         "calendar:view", "calendar:create", "calendar:edit", "calendar:rsvp", "calendar:delete",
+        "courses:view", "courses:create", "courses:edit", "courses:delete",
         "subscription:view", "subscription:manage"
     },
     ROLE_ADMIN: {
@@ -41,6 +43,7 @@ ROLE_PERMISSIONS_MAP: Dict[str, Set[str]] = {
         "tasks:view", "tasks:create", "tasks:edit", "tasks:assign", "tasks:complete", "tasks:delete",
         "bills:view", "bills:create", "bills:edit", "bills:pay", "bills:delete",
         "calendar:view", "calendar:create", "calendar:edit", "calendar:rsvp", "calendar:delete",
+        "courses:view", "courses:create", "courses:edit", "courses:delete",
         "subscription:view"
     },
     ROLE_MEMBER: {
@@ -51,7 +54,8 @@ ROLE_PERMISSIONS_MAP: Dict[str, Set[str]] = {
         "shopping:view", "shopping:create", "shopping:edit", "shopping:check",
         "tasks:view", "tasks:create", "tasks:edit", "tasks:complete",
         "bills:view", "bills:pay",
-        "calendar:view", "calendar:create", "calendar:edit", "calendar:rsvp"
+        "calendar:view", "calendar:create", "calendar:edit", "calendar:rsvp",
+        "courses:view", "courses:create", "courses:edit"
     },
     ROLE_CHILD: {
         "home:view",
@@ -59,7 +63,8 @@ ROLE_PERMISSIONS_MAP: Dict[str, Set[str]] = {
         "dashboard:view",
         "shopping:view", "shopping:check",
         "tasks:view", "tasks:complete",
-        "calendar:view", "calendar:rsvp"
+        "calendar:view", "calendar:rsvp",
+        "courses:view"
     },
     ROLE_GUEST: {
         "home:view",
@@ -67,7 +72,8 @@ ROLE_PERMISSIONS_MAP: Dict[str, Set[str]] = {
         "inventory:view",
         "shopping:view", "shopping:check",
         "tasks:view", "tasks:complete",
-        "calendar:view"
+        "calendar:view",
+        "courses:view"
     }
 }
 

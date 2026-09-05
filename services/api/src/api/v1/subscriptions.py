@@ -125,53 +125,87 @@ def resolve_current_selling_price(price: SubscriptionPriceModel, now: Optional[d
 COUNTRY_METADATA_DEFAULTS = {
     "IN": {"iso3": "IND", "name": "India", "symbol": "₹", "currency": "INR"},
     "US": {"iso3": "USA", "name": "United States", "symbol": "$", "currency": "USD"},
-    "AE": {"iso3": "ARE", "name": "United Arab Emirates", "symbol": "AED", "currency": "AED"},
-    "SA": {"iso3": "SAU", "name": "Saudi Arabia", "symbol": "SAR", "currency": "SAR"},
+    "AE": {"iso3": "ARE", "name": "United Arab Emirates", "symbol": "د.إ", "currency": "AED"},
+    "SA": {"iso3": "SAU", "name": "Saudi Arabia", "symbol": "﷼", "currency": "SAR"},
     "GB": {"iso3": "GBR", "name": "United Kingdom", "symbol": "£", "currency": "GBP"},
+    "DE": {"iso3": "DEU", "name": "Germany", "symbol": "€", "currency": "EUR"},
+    "FR": {"iso3": "FRA", "name": "France", "symbol": "€", "currency": "EUR"},
     "SG": {"iso3": "SGP", "name": "Singapore", "symbol": "S$", "currency": "SGD"},
     "AU": {"iso3": "AUS", "name": "Australia", "symbol": "A$", "currency": "AUD"},
     "CA": {"iso3": "CAN", "name": "Canada", "symbol": "C$", "currency": "CAD"},
-    "DE": {"iso3": "DEU", "name": "Germany", "symbol": "€", "currency": "EUR"},
-    "FR": {"iso3": "FRA", "name": "France", "symbol": "€", "currency": "EUR"},
     "JP": {"iso3": "JPN", "name": "Japan", "symbol": "¥", "currency": "JPY"},
     "QA": {"iso3": "QAT", "name": "Qatar", "symbol": "QAR", "currency": "QAR"},
     "KW": {"iso3": "KWT", "name": "Kuwait", "symbol": "KWD", "currency": "KWD"},
     "OM": {"iso3": "OMN", "name": "Oman", "symbol": "OMR", "currency": "OMR"},
     "BH": {"iso3": "BHR", "name": "Bahrain", "symbol": "BHD", "currency": "BHD"},
-    "GLOBAL": {"iso3": "GLB", "name": "Global / International", "symbol": "$", "currency": "USD"},
+    "GLOBAL": {"iso3": "GLB", "name": "Global / Rest of World", "symbol": "$", "currency": "USD"},
 }
 
 CURRENCY_SYMBOLS = {
+    "USD": "$",
     "INR": "₹",
-    "GBP": "£",
     "EUR": "€",
-    "AED": "AED",
-    "SAR": "SAR",
+    "GBP": "£",
+    "AED": "د.إ",
+    "SAR": "﷼",
     "SGD": "S$",
     "AUD": "A$",
     "CAD": "C$",
     "JPY": "¥",
-    "USD": "$",
+    "QAR": "QAR",
+    "KWD": "KWD",
+    "OMR": "OMR",
+    "BHD": "BHD",
+    "NZD": "NZ$",
+    "CHF": "CHF",
+    "MYR": "RM",
+    "ZAR": "R",
+    "BRL": "R$",
+    "MXN": "Mex$",
 }
+
+
+def get_currency_symbol(currency_code: Optional[str]) -> str:
+    if not currency_code:
+        return "$"
+    code = currency_code.strip().upper()
+    return CURRENCY_SYMBOLS.get(code, code)
 
 
 def serialize_subscription_price_dto(price: SubscriptionPriceModel, now: Optional[datetime] = None) -> SubscriptionPriceDTO:
     current_selling, tier, discount_pct = resolve_current_selling_price(price, now)
     reg_price = Decimal(str(price.regular_price if price.regular_price and price.regular_price > 0 else (price.additional_member_list_price or price.list_price or "0.00")))
     
-    c_meta = COUNTRY_METADATA_DEFAULTS.get(price.country.upper(), {})
-    curr_sym = price.currency_symbol or CURRENCY_SYMBOLS.get(price.currency.upper()) or c_meta.get("symbol", "$")
-    iso3 = price.country_iso3 or c_meta.get("iso3", price.country.upper()[:3])
-    cname = price.country_name or c_meta.get("name", price.country)
+    country_code = (price.country or "GLOBAL").upper()
+    c_meta = COUNTRY_METADATA_DEFAULTS.get(country_code, {})
+    curr_upper = (price.currency or "USD").upper()
+
+    # Authoritative Currency Symbol Derivation: Never use '$' for non-USD currencies
+    raw_sym = price.currency_symbol
+    if not raw_sym or (raw_sym == "$" and curr_upper != "USD"):
+        curr_sym = CURRENCY_SYMBOLS.get(curr_upper, c_meta.get("symbol", curr_upper))
+    else:
+        curr_sym = raw_sym
+
+    # Human-readable country name and iso3
+    if not price.country_name or (price.country_name == "Global" and country_code != "GLOBAL"):
+        cname = c_meta.get("name", country_code)
+    else:
+        cname = price.country_name
+
+    if not price.country_iso3 or (price.country_iso3 == "GLB" and country_code != "GLOBAL"):
+        iso3 = c_meta.get("iso3", country_code[:3])
+    else:
+        iso3 = price.country_iso3
     
     return SubscriptionPriceDTO(
         id=price.id,
         plan_id=price.plan_id,
-        country=price.country,
+        country=country_code,
         country_name=cname,
         country_iso3=iso3,
-        region=price.region,
-        currency=price.currency,
+        region=price.region or "GLOBAL",
+        currency=curr_upper,
         currency_symbol=curr_sym,
         billing_period=price.billing_period,
         regular_price=reg_price,
@@ -187,11 +221,11 @@ def serialize_subscription_price_dto(price: SubscriptionPriceModel, now: Optiona
         current_selling_price=current_selling,
         tax_percentage=price.tax_percentage or Decimal("0.00"),
         allow_coupon_stacking=price.allow_coupon_stacking or False,
-        base_price=price.base_price,
-        additional_member_price=price.additional_member_price,
-        version=price.version,
-        is_active=price.is_active,
-        effective_from=price.effective_from,
+        base_price=price.base_price or reg_price,
+        additional_member_price=price.additional_member_price or price.additional_member_list_price or Decimal("0.00"),
+        version=price.version or 1,
+        is_active=price.is_active if price.is_active is not None else True,
+        effective_from=price.effective_from or datetime.now(timezone.utc),
         effective_until=price.effective_until
     )
 
@@ -222,61 +256,61 @@ async def bootstrap_default_subscription_data(db: AsyncSession) -> SubscriptionP
         db.add(plan)
         await db.flush()
 
-        # Regional Commercial Prices with Baseline Campaigns
+        # Regional Commercial Prices with Single Canonical Structure per Country
         price_in = SubscriptionPriceModel(
             plan_id=plan.id, country="IN", country_name="India", country_iso3="IND",
             region="SOUTH_ASIA", currency="INR", currency_symbol="₹", billing_period="ANNUAL",
-            regular_price=Decimal("2499.00"),
-            list_price=Decimal("2499.00"),
-            additional_member_list_price=Decimal("1799.00"),
-            offer_price=Decimal("1799.00"),
-            campaign_name="Launch Offer 2026",
-            campaign_description="Launch promotional pricing for Indian households",
+            regular_price=Decimal("499.00"),
+            list_price=Decimal("499.00"),
+            additional_member_list_price=Decimal("499.00"),
+            offer_price=Decimal("499.00"),
+            campaign_name=None,
+            campaign_description=None,
             offer_status="ACTIVE",
-            offer_start_date=datetime(2026, 9, 1, 0, 0, 0, tzinfo=timezone.utc),
-            offer_end_date=datetime(2026, 12, 31, 23, 59, 59, tzinfo=timezone.utc),
-            tax_percentage=Decimal("18.00"),
-            allow_coupon_stacking=False,
-            base_price=Decimal("0.00"),
-            additional_member_price=Decimal("1799.00"),
-            version=1,
-            is_active=True
-        )
-        price_us = SubscriptionPriceModel(
-            plan_id=plan.id, country="US", country_name="United States", country_iso3="USA",
-            region="NORTH_AMERICA", currency="USD", currency_symbol="$", billing_period="ANNUAL",
-            regular_price=Decimal("29.99"),
-            list_price=Decimal("29.99"),
-            additional_member_list_price=Decimal("20.00"),
-            offer_price=Decimal("19.99"),
-            campaign_name="Launch Offer 2026",
-            campaign_description="Launch promotional pricing for US households",
-            offer_status="ACTIVE",
-            offer_start_date=datetime(2026, 9, 1, 0, 0, 0, tzinfo=timezone.utc),
+            offer_start_date=datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
             offer_end_date=datetime(2026, 12, 31, 23, 59, 59, tzinfo=timezone.utc),
             tax_percentage=Decimal("0.00"),
             allow_coupon_stacking=False,
-            base_price=Decimal("0.00"),
-            additional_member_price=Decimal("20.00"),
+            base_price=Decimal("499.00"),
+            additional_member_price=Decimal("499.00"),
             version=1,
             is_active=True
         )
         price_ae = SubscriptionPriceModel(
             plan_id=plan.id, country="AE", country_name="United Arab Emirates", country_iso3="ARE",
-            region="MIDDLE_EAST", currency="AED", currency_symbol="AED", billing_period="ANNUAL",
-            regular_price=Decimal("149.00"),
-            list_price=Decimal("149.00"),
-            additional_member_list_price=Decimal("99.00"),
-            offer_price=Decimal("99.00"),
-            campaign_name="Launch Offer 2026",
-            campaign_description="Launch promotional pricing for UAE households",
+            region="MIDDLE_EAST", currency="AED", currency_symbol="د.إ", billing_period="ANNUAL",
+            regular_price=Decimal("49.00"),
+            list_price=Decimal("49.00"),
+            additional_member_list_price=Decimal("49.00"),
+            offer_price=Decimal("49.00"),
+            campaign_name=None,
+            campaign_description=None,
             offer_status="ACTIVE",
-            offer_start_date=datetime(2026, 9, 1, 0, 0, 0, tzinfo=timezone.utc),
+            offer_start_date=datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
             offer_end_date=datetime(2026, 12, 31, 23, 59, 59, tzinfo=timezone.utc),
-            tax_percentage=Decimal("5.00"),
+            tax_percentage=Decimal("0.00"),
             allow_coupon_stacking=False,
-            base_price=Decimal("0.00"),
-            additional_member_price=Decimal("99.00"),
+            base_price=Decimal("49.00"),
+            additional_member_price=Decimal("49.00"),
+            version=1,
+            is_active=True
+        )
+        price_de = SubscriptionPriceModel(
+            plan_id=plan.id, country="DE", country_name="Germany", country_iso3="DEU",
+            region="EUROPE", currency="EUR", currency_symbol="€", billing_period="ANNUAL",
+            regular_price=Decimal("49.00"),
+            list_price=Decimal("49.00"),
+            additional_member_list_price=Decimal("19.00"),
+            offer_price=Decimal("39.00"),
+            campaign_name="Germany Launch Offer",
+            campaign_description="Launch promotional rate for German households",
+            offer_status="ACTIVE",
+            offer_start_date=datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+            offer_end_date=datetime(2026, 12, 31, 23, 59, 59, tzinfo=timezone.utc),
+            tax_percentage=Decimal("19.00"),
+            allow_coupon_stacking=False,
+            base_price=Decimal("49.00"),
+            additional_member_price=Decimal("19.00"),
             version=1,
             is_active=True
         )
@@ -286,39 +320,77 @@ async def bootstrap_default_subscription_data(db: AsyncSession) -> SubscriptionP
             regular_price=Decimal("24.99"),
             list_price=Decimal("24.99"),
             additional_member_list_price=Decimal("16.00"),
-            offer_price=Decimal("16.99"),
+            offer_price=Decimal("16.00"),
             campaign_name="Launch Offer 2026",
             campaign_description="Launch promotional pricing for UK households",
             offer_status="ACTIVE",
-            offer_start_date=datetime(2026, 9, 1, 0, 0, 0, tzinfo=timezone.utc),
+            offer_start_date=datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
             offer_end_date=datetime(2026, 12, 31, 23, 59, 59, tzinfo=timezone.utc),
             tax_percentage=Decimal("20.00"),
             allow_coupon_stacking=False,
-            base_price=Decimal("0.00"),
+            base_price=Decimal("24.99"),
             additional_member_price=Decimal("16.00"),
             version=1,
             is_active=True
         )
-        price_global = SubscriptionPriceModel(
-            plan_id=plan.id, country="GLOBAL", country_name="Global / International", country_iso3="GLB",
-            region="GLOBAL", currency="USD", currency_symbol="$", billing_period="ANNUAL",
+        price_sa = SubscriptionPriceModel(
+            plan_id=plan.id, country="SA", country_name="Saudi Arabia", country_iso3="SAU",
+            region="MIDDLE_EAST", currency="SAR", currency_symbol="﷼", billing_period="ANNUAL",
+            regular_price=Decimal("49.00"),
+            list_price=Decimal("49.00"),
+            additional_member_list_price=Decimal("49.00"),
+            offer_price=Decimal("49.00"),
+            campaign_name=None,
+            campaign_description=None,
+            offer_status="ACTIVE",
+            offer_start_date=datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+            offer_end_date=datetime(2026, 12, 31, 23, 59, 59, tzinfo=timezone.utc),
+            tax_percentage=Decimal("15.00"),
+            allow_coupon_stacking=False,
+            base_price=Decimal("49.00"),
+            additional_member_price=Decimal("49.00"),
+            version=1,
+            is_active=True
+        )
+        price_us = SubscriptionPriceModel(
+            plan_id=plan.id, country="US", country_name="United States", country_iso3="USA",
+            region="NORTH_AMERICA", currency="USD", currency_symbol="$", billing_period="ANNUAL",
             regular_price=Decimal("29.99"),
             list_price=Decimal("29.99"),
             additional_member_list_price=Decimal("20.00"),
-            offer_price=Decimal("19.99"),
+            offer_price=Decimal("20.00"),
             campaign_name="Launch Offer 2026",
-            campaign_description="Launch promotional pricing globally",
+            campaign_description="Launch promotional pricing for US households",
             offer_status="ACTIVE",
-            offer_start_date=datetime(2026, 9, 1, 0, 0, 0, tzinfo=timezone.utc),
+            offer_start_date=datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
             offer_end_date=datetime(2026, 12, 31, 23, 59, 59, tzinfo=timezone.utc),
             tax_percentage=Decimal("0.00"),
             allow_coupon_stacking=False,
-            base_price=Decimal("0.00"),
+            base_price=Decimal("29.99"),
             additional_member_price=Decimal("20.00"),
             version=1,
             is_active=True
         )
-        db.add_all([price_in, price_us, price_ae, price_gb, price_global])
+        price_global = SubscriptionPriceModel(
+            plan_id=plan.id, country="GLOBAL", country_name="Global / Rest of World", country_iso3="GLB",
+            region="GLOBAL", currency="USD", currency_symbol="$", billing_period="ANNUAL",
+            regular_price=Decimal("29.99"),
+            list_price=Decimal("29.99"),
+            additional_member_list_price=Decimal("20.00"),
+            offer_price=Decimal("20.00"),
+            campaign_name="Launch Offer 2026",
+            campaign_description="Launch promotional pricing globally",
+            offer_status="ACTIVE",
+            offer_start_date=datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+            offer_end_date=datetime(2026, 12, 31, 23, 59, 59, tzinfo=timezone.utc),
+            tax_percentage=Decimal("0.00"),
+            allow_coupon_stacking=False,
+            base_price=Decimal("29.99"),
+            additional_member_price=Decimal("20.00"),
+            version=1,
+            is_active=True
+        )
+        db.add_all([price_in, price_ae, price_de, price_gb, price_sa, price_us, price_global])
 
         # Default Launch Campaign & Promotion
         launch_promo = PromotionModel(
@@ -590,15 +662,29 @@ async def list_subscription_plans(
 
     dtos = []
     for p in plans:
-        filtered_prices = p.prices
+        active_prices = [pr for pr in getattr(p, "prices", []) if pr.is_active]
         if country:
-            filtered_prices = [pr for pr in filtered_prices if pr.country in [country.upper(), "GLOBAL"]]
+            active_prices = [pr for pr in active_prices if pr.country in [country.upper(), "GLOBAL"]]
         if currency:
-            filtered_prices = [pr for pr in filtered_prices if pr.currency == currency.upper()]
+            active_prices = [pr for pr in active_prices if pr.currency == currency.upper()]
+
+        # Enforce ONE canonical active pricing structure per (country, billing_period)
+        seen_combos = {}
+        sorted_prices = sorted(
+            active_prices,
+            key=lambda x: (x.version, x.updated_at or x.created_at),
+            reverse=True
+        )
+        deduped_prices = []
+        for pr in sorted_prices:
+            key = (pr.country.upper(), pr.billing_period.upper())
+            if key not in seen_combos:
+                seen_combos[key] = pr
+                deduped_prices.append(pr)
 
         price_dtos = [
             serialize_subscription_price_dto(pr)
-            for pr in filtered_prices if pr.is_active
+            for pr in deduped_prices
         ]
 
         feature_dtos = [

@@ -43,6 +43,7 @@ async def get_home_attention_center(
             BillModel.home_id == home_ctx.home_id,
             BillModel.deleted_at.is_(None),
             BillModel.status.in_(["UNPAID", "PARTIALLY_PAID"]),
+            (BillModel.expected_amount - BillModel.amount_paid) > Decimal("0.00"),
             BillModel.due_date < today
         )
         .order_by(BillModel.due_date.asc())
@@ -100,6 +101,7 @@ async def get_home_attention_center(
             BillModel.home_id == home_ctx.home_id,
             BillModel.deleted_at.is_(None),
             BillModel.status.in_(["UNPAID", "PARTIALLY_PAID"]),
+            (BillModel.expected_amount - BillModel.amount_paid) > Decimal("0.00"),
             BillModel.due_date == today
         )
     )

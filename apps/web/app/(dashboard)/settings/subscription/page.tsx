@@ -18,7 +18,7 @@ import {
   Coins
 } from 'lucide-react';
 import { apiClient } from '@/lib/apiClient';
-import { getCurrencyInfo } from '@/lib/countries';
+import { getCurrencyInfo, formatMoney } from '@/lib/countries';
 
 interface UserEntitlementSummary {
   free_home_consumed: boolean;
@@ -471,11 +471,11 @@ export default function SubscriptionPage() {
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap' }}>
                       {hasOffer && (
                         <span style={{ fontSize: '15px', color: 'var(--color-text-secondary)', textDecoration: 'line-through' }}>
-                          {selectedCurrency} {Number(regularAmount).toFixed(2)}
+                          {formatMoney(regularAmount, selectedCurrency)}
                         </span>
                       )}
                       <span style={{ fontSize: '24px', fontWeight: 800, color: 'var(--color-primary-900)' }} data-testid="customer-selling-price">
-                        {selectedCurrency} {Number(sellingAmount).toFixed(2)}
+                        {formatMoney(sellingAmount, selectedCurrency)}
                       </span>
                       <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--color-text-secondary)' }}>/ year</span>
                       {hasOffer && discountPct && Number(discountPct) > 0 && (

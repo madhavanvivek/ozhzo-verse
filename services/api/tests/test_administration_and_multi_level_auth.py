@@ -182,9 +182,9 @@ async def test_6_and_7_super_admin_can_manage_pricing_and_promotions():
     mock_db = AsyncMock()
     plan_id = uuid4()
 
-    # 6. Pricing version creation
+    # 6. Canonical pricing creation
     mock_db.get.return_value = SubscriptionPlanModel(id=plan_id, code="OZHZO_HOME")
-    mock_db.execute.return_value = MagicMock(scalar=MagicMock(return_value=1))  # latest version 1 -> creates version 2
+    mock_db.execute.return_value = MagicMock(scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None))))
 
     price_req = CreateSubscriptionPriceRequest(
         plan_id=plan_id,
@@ -196,7 +196,7 @@ async def test_6_and_7_super_admin_can_manage_pricing_and_promotions():
     price_res = await create_subscription_price(price_req, super_admin=super_admin, db=mock_db)
     assert price_res.success is True
     assert price_res.data.additional_member_list_price == Decimal("25.00")
-    assert price_res.data.version == 2
+    assert price_res.data.version == 1
 
     # 7. Promotion creation
     mock_db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=None))  # no existing code

@@ -1002,9 +1002,9 @@ class SubscriptionPriceModel(Base):
     billing_period = Column(String(32), default="ANNUAL", nullable=False)     # MONTHLY, QUARTERLY, HALF_YEARLY, ANNUAL, CUSTOM
     
     # Standard / Published List Prices & Commercial Model
-    country_name = Column(String(100), default="Global", nullable=False)
-    country_iso3 = Column(String(4), default="GLB", nullable=False)
-    currency_symbol = Column(String(16), default="$", nullable=False)
+    country_name = Column(String(100), default="", nullable=False)
+    country_iso3 = Column(String(4), default="", nullable=False)
+    currency_symbol = Column(String(16), default="", nullable=False)
     
     # Regular Commercial Price (Authoritative long-term commercial price)
     regular_price = Column(Numeric(10, 2), default=0.00, nullable=False)

@@ -372,12 +372,27 @@ class NotificationService:
             return True
         return False
 
-    async def resolve_by_dedup_prefix(self, dedup_prefix: str, db: AsyncSession) -> int:
+    async def resolve_by_dedup_prefix(self, arg1: Any, arg2: Any = None, db: Optional[AsyncSession] = None) -> int:
         try:
+            target_db = None
+            prefix = ""
+            if isinstance(arg1, str):
+                prefix = arg1
+                target_db = arg2 or db
+            elif hasattr(arg1, "execute"):
+                target_db = arg1
+                prefix = str(arg2) if arg2 is not None else ""
+            elif arg2 and hasattr(arg2, "execute"):
+                target_db = arg2
+                prefix = str(arg1)
+
+            if not target_db or not prefix:
+                return 0
+
             query = (
                 update(NotificationModel)
                 .where(
-                    NotificationModel.dedup_key.like(f"{dedup_prefix}%"),
+                    NotificationModel.dedup_key.like(f"{prefix}%"),
                     NotificationModel.action_status == "OPEN"
                 )
                 .values(
@@ -385,9 +400,7 @@ class NotificationService:
                     resolved_at=datetime.now(timezone.utc)
                 )
             )
-            res = await db.execute(query)
-            if hasattr(db, "commit") and callable(db.commit):
-                await db.commit()
+            res = await target_db.execute(query)
             return getattr(res, "rowcount", 0) or 0
         except Exception as e:
             logger.warning(f"resolve_by_dedup_prefix exception: {e}")

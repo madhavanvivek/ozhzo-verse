@@ -155,7 +155,7 @@ export default function BillsPage() {
 
   const commonTemplates = [
     { title: 'Electricity Bill', cat: 'Utilities', amount: 2000, rec: 'MONTHLY' },
-    { title: 'Water & Sewerage', cat: 'Utilities', amount: 650, rec: 'MONTHLY' },
+    { title: 'Water / Sewage Cleaning', cat: 'Utilities', amount: 650, rec: 'ONE_OFF' },
     { title: 'Fiber Internet', cat: 'Communication', amount: 999, rec: 'MONTHLY' },
     { title: 'House Rent', cat: 'Housing', amount: 25000, rec: 'MONTHLY' },
     { title: 'Piped Gas', cat: 'Utilities', amount: 800, rec: 'MONTHLY' },
@@ -249,12 +249,12 @@ export default function BillsPage() {
   };
 
   // Metrics
-  const activeBills = bills.filter(b => b.status !== 'PAID' && b.status !== 'CANCELLED');
+  const activeBills = bills.filter(b => b.status !== 'PAID' && b.status !== 'CANCELLED' && (b.remaining_balance ?? b.expected_amount ?? 0) > 0);
   const dueTodayBills = activeBills.filter(b => b.is_due_today);
   const overdueBills = activeBills.filter(b => b.is_overdue);
   const upcomingBills = activeBills.filter(b => !b.is_due_today && !b.is_overdue);
   const myResponsibleBills = activeBills.filter(b => b.responsible_member_name === currentUser?.display_name);
-  const paidBills = bills.filter(b => b.status === 'PAID');
+  const paidBills = bills.filter(b => b.status === 'PAID' || (b.remaining_balance ?? 0) <= 0);
 
   const totalUnpaidAmount = activeBills.reduce((sum, b) => sum + (Number(b.remaining_balance ?? b.expected_amount ?? 0) || 0), 0);
   const dueTodayAmount = dueTodayBills.reduce((sum, b) => sum + (Number(b.remaining_balance ?? b.expected_amount ?? 0) || 0), 0);
@@ -263,8 +263,8 @@ export default function BillsPage() {
   const paidThisMonthAmount = paidBills.reduce((sum, b) => sum + (Number(b.amount_paid ?? 0) || 0), 0);
 
   const filteredBills = bills.filter(b => {
-    if (activeTab === 'PAID') return b.status === 'PAID';
-    if (b.status === 'PAID') return false;
+    if (activeTab === 'PAID') return b.status === 'PAID' || (b.remaining_balance ?? 0) <= 0;
+    if (b.status === 'PAID' || (b.remaining_balance ?? 0) <= 0) return false;
     if (activeTab === 'DUE_TODAY') return b.is_due_today;
     if (activeTab === 'OVERDUE') return b.is_overdue;
     if (activeTab === 'UPCOMING') return !b.is_due_today && !b.is_overdue;
@@ -607,8 +607,15 @@ export default function BillsPage() {
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                  <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-primary-900)' }}>
-                    {bill.title}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-primary-900)' }}>
+                      {bill.title}
+                    </span>
+                    {bill.recurrence_type && bill.recurrence_type !== 'NONE' && bill.recurrence_type !== 'ONE_OFF' && (
+                      <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', backgroundColor: 'var(--color-primary-50)', color: 'var(--color-primary-900)', border: '1px solid var(--color-primary-200)' }}>
+                        {bill.recurrence_type === 'MONTHLY' ? 'Monthly Cycle' : bill.recurrence_type}
+                      </span>
+                    )}
                   </div>
                   <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
                     {bill.category_name} • Due: <strong>{new Date(bill.due_date).toLocaleDateString([], { month: 'short', day: 'numeric' })}</strong> • Responsible: <strong>{bill.responsible_member_name || 'Unassigned'}</strong>

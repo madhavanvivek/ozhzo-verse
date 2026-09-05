@@ -170,12 +170,14 @@ async def get_home_dashboard(
             select(func.count()).select_from(BillModel).where(
                 BillModel.home_id == eff_home_id,
                 BillModel.deleted_at.is_(None),
-                BillModel.status.in_(["UNPAID", "PARTIALLY_PAID"])
+                BillModel.status.in_(["UNPAID", "PARTIALLY_PAID"]),
+                (BillModel.expected_amount - BillModel.amount_paid) > Decimal("0.00")
             ).scalar_subquery().label("unpaid_bills"),
             select(func.coalesce(func.sum(BillModel.expected_amount - BillModel.amount_paid), Decimal("0.00"))).select_from(BillModel).where(
                 BillModel.home_id == eff_home_id,
                 BillModel.deleted_at.is_(None),
-                BillModel.status.in_(["UNPAID", "PARTIALLY_PAID"])
+                BillModel.status.in_(["UNPAID", "PARTIALLY_PAID"]),
+                (BillModel.expected_amount - BillModel.amount_paid) > Decimal("0.00")
             ).scalar_subquery().label("unpaid_sum"),
             select(func.count()).select_from(AssetLoanModel).where(
                 AssetLoanModel.home_id == eff_home_id, AssetLoanModel.loan_status == "ACTIVE"
@@ -221,6 +223,7 @@ async def get_home_dashboard(
                 BillModel.home_id == eff_home_id,
                 BillModel.deleted_at.is_(None),
                 BillModel.status.in_(["UNPAID", "PARTIALLY_PAID"]),
+                (BillModel.expected_amount - BillModel.amount_paid) > Decimal("0.00"),
                 BillModel.due_date < today
             ).order_by(BillModel.due_date.asc()).limit(3)
         )
@@ -436,15 +439,18 @@ async def get_home_dashboard(
             select(BillModel).where(
                 BillModel.home_id == eff_home_id,
                 BillModel.deleted_at.is_(None),
-                BillModel.status.in_(["UNPAID", "PARTIALLY_PAID"])
+                BillModel.status.in_(["UNPAID", "PARTIALLY_PAID"]),
+                (BillModel.expected_amount - BillModel.amount_paid) > Decimal("0.00"),
+                BillModel.due_date >= today
             ).order_by(BillModel.due_date.asc()).limit(5)
         )
         for b in (bills_res.scalars().all() if bills_res else []):
+            rem_amt = max(Decimal("0.00"), b.expected_amount - (b.amount_paid or Decimal("0.00")))
             upcoming_bills.append(
                 DashboardBillItemDTO(
                     id=b.id,
                     title=b.title,
-                    amount=b.expected_amount,
+                    amount=rem_amt,
                     currency=b.currency,
                     due_date=b.due_date,
                     status=b.status

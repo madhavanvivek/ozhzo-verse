@@ -94,7 +94,7 @@ async def test_super_admin_plan_crud_and_edit():
 
 
 @pytest.mark.asyncio
-async def test_super_admin_price_versioning():
+async def test_super_admin_canonical_price_update():
     super_admin = UserModel(id=uuid4(), email="superadmin@ozhzo.com", is_super_admin=True, system_role="SUPER_ADMIN")
     mock_db = AsyncMock()
 
@@ -107,10 +107,24 @@ async def test_super_admin_price_versioning():
     )
     mock_db.get.return_value = existing_plan
 
-    # Version query returns existing version 1
-    mock_db.execute.return_value = MagicMock(scalar=MagicMock(return_value=1))
+    # Existing canonical price found for IN
+    existing_in_price = SubscriptionPriceModel(
+        id=uuid4(),
+        plan_id=plan_id,
+        country="IN",
+        country_name="India",
+        currency="INR",
+        currency_symbol="₹",
+        billing_period="ANNUAL",
+        regular_price=Decimal("1799.00"),
+        list_price=Decimal("1799.00"),
+        additional_member_list_price=Decimal("499.00"),
+        version=1,
+        is_active=True,
+    )
+    mock_db.execute.return_value = MagicMock(scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=existing_in_price))))
 
-    # Super Admin creates new price version (Price revision: 1799 -> 2499 INR)
+    # Super Admin updates price (Price revision: 1799 -> 2499 INR)
     price_req = CreateSubscriptionPriceRequest(
         plan_id=plan_id,
         country="IN",
@@ -127,10 +141,11 @@ async def test_super_admin_price_versioning():
     res = await create_subscription_price(payload=price_req, super_admin=super_admin, db=mock_db)
 
     assert res.success is True
-    assert res.data.version == 2
+    assert res.data.version == 1
     assert res.data.list_price == Decimal("2499.00")
     assert res.data.country == "IN"
     assert res.data.currency == "INR"
+    assert existing_in_price.list_price == Decimal("2499.00")
 
 
 @pytest.mark.asyncio

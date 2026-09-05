@@ -120,9 +120,19 @@ def map_bill_dto(
     task_map: Optional[dict[UUID, tuple[UUID, str]]] = None
 ) -> BillDTO:
     today = date.today()
-    is_overdue = (bill.due_date < today and bill.status in ("UNPAID", "PARTIALLY_PAID"))
-    is_due_today = (bill.due_date == today and bill.status != "PAID")
-    remaining_balance = max(Decimal("0.00"), bill.expected_amount - bill.amount_paid)
+    amt_paid = bill.amount_paid or Decimal("0.00")
+    exp_amt = bill.expected_amount or Decimal("0.00")
+    remaining_balance = max(Decimal("0.00"), exp_amt - amt_paid)
+
+    effective_status = bill.status or "UNPAID"
+    if effective_status != "CANCELLED":
+        if remaining_balance <= Decimal("0.00") and amt_paid > Decimal("0.00"):
+            effective_status = "PAID"
+        elif amt_paid > Decimal("0.00"):
+            effective_status = "PARTIALLY_PAID"
+
+    is_overdue = (bill.due_date < today and effective_status in ("UNPAID", "PARTIALLY_PAID") and remaining_balance > Decimal("0.00"))
+    is_due_today = (bill.due_date == today and effective_status != "PAID" and remaining_balance > Decimal("0.00"))
 
     linked_task_id = None
     linked_task_title = None
@@ -145,8 +155,8 @@ def map_bill_dto(
         recurrence_interval_days=bill.recurrence_interval_days,
         recurrence_strategy=bill.recurrence_strategy or "SCHEDULED_DATE",
         parent_recurring_bill_id=bill.parent_recurring_bill_id,
-        status=bill.status or "UNPAID",
-        amount_paid=bill.amount_paid or Decimal("0.00"),
+        status=effective_status,
+        amount_paid=amt_paid,
         remaining_balance=remaining_balance,
         responsible_member_id=bill.responsible_member_id,
         responsible_member_name=user_map.get(bill.responsible_member_id) if bill.responsible_member_id else None,
@@ -262,9 +272,11 @@ async def get_bills_summary(
 
     for b in bills:
         currency = b.currency
-        remaining = max(Decimal("0.00"), b.expected_amount - b.amount_paid)
+        b_paid = b.amount_paid or Decimal("0.00")
+        b_expected = b.expected_amount or Decimal("0.00")
+        remaining = max(Decimal("0.00"), b_expected - b_paid)
 
-        if b.status in ("UNPAID", "PARTIALLY_PAID"):
+        if b.status != "PAID" and b.status != "CANCELLED" and remaining > Decimal("0.00"):
             total_unpaid_count += 1
             total_unpaid_amount += remaining
 
@@ -331,18 +343,22 @@ async def list_bills(
     # View filters
     if view == "due_today":
         filters.append(BillModel.due_date == today)
-        filters.append(BillModel.status != "PAID")
+        filters.append(BillModel.status.in_(["UNPAID", "PARTIALLY_PAID"]))
+        filters.append((BillModel.expected_amount - BillModel.amount_paid) > Decimal("0.00"))
     elif view == "overdue":
         filters.append(BillModel.due_date < today)
         filters.append(BillModel.status.in_(["UNPAID", "PARTIALLY_PAID"]))
+        filters.append((BillModel.expected_amount - BillModel.amount_paid) > Decimal("0.00"))
     elif view == "upcoming":
         filters.append(BillModel.due_date > today)
-        filters.append(BillModel.status != "PAID")
+        filters.append(BillModel.status.in_(["UNPAID", "PARTIALLY_PAID"]))
+        filters.append((BillModel.expected_amount - BillModel.amount_paid) > Decimal("0.00"))
     elif view == "paid":
-        filters.append(BillModel.status == "PAID")
+        filters.append(or_(BillModel.status == "PAID", (BillModel.expected_amount - BillModel.amount_paid) <= Decimal("0.00")))
     elif view == "my_responsible":
         filters.append(BillModel.responsible_member_id == home_ctx.user.id)
-        filters.append(BillModel.status != "PAID")
+        filters.append(BillModel.status.in_(["UNPAID", "PARTIALLY_PAID"]))
+        filters.append((BillModel.expected_amount - BillModel.amount_paid) > Decimal("0.00"))
 
     if status_filter:
         filters.append(BillModel.status == status_filter)
@@ -810,6 +826,17 @@ async def update_bill(
 
     if payload.status is not None:
         bill.status = payload.status
+    elif bill.status != "CANCELLED":
+        amt_paid_curr = bill.amount_paid or Decimal("0.00")
+        exp_amt_curr = bill.expected_amount or Decimal("0.00")
+        rem_curr = max(Decimal("0.00"), exp_amt_curr - amt_paid_curr)
+        if rem_curr <= Decimal("0.00") and amt_paid_curr > Decimal("0.00"):
+            bill.status = "PAID"
+        elif amt_paid_curr > Decimal("0.00"):
+            bill.status = "PARTIALLY_PAID"
+        else:
+            bill.status = "UNPAID"
+
     if payload.notes is not None:
         bill.notes = payload.notes
 
@@ -899,7 +926,7 @@ async def record_bill_payment(
     if bill.status == "CANCELLED":
         raise HTTPException(status_code=400, detail="Cannot record payments against a cancelled bill.")
 
-    if bill.status == "PAID":
+    if bill.status == "PAID" or (bill.expected_amount and bill.amount_paid and bill.amount_paid >= bill.expected_amount):
         raise HTTPException(status_code=400, detail="Cannot record payment: This bill has already been fully paid and settled.")
 
     # Currency validation check
@@ -965,16 +992,30 @@ async def record_bill_payment(
 
     # 2. Update Bill aggregate amount_paid & status
     current_amount_paid = bill.amount_paid or Decimal("0.00")
-    bill.amount_paid = current_amount_paid + payload.amount_paid
+    new_amount_paid = current_amount_paid + payload.amount_paid
+    bill.amount_paid = new_amount_paid
     target_amount = bill.expected_amount or Decimal("0.00")
-    if bill.amount_paid >= target_amount:
+    outstanding = max(Decimal("0.00"), target_amount - new_amount_paid)
+
+    if outstanding <= Decimal("0.00"):
         bill.status = "PAID"
         # Auto-resolve bill due notifications
         from src.services.notification_service import notification_service
         await notification_service.resolve_by_dedup_prefix(db, f"bill_due_{bill.home_id}_{bill.title}")
 
-        # 3. If Recurring, atomically schedule the next cycle occurrence without duplicates
-        if bill.recurrence_type != "NONE":
+        # Auto-resolve open reminders for this bill
+        await db.execute(
+            update(BillReminderModel)
+            .where(BillReminderModel.bill_id == bill.id)
+            .values(is_sent=True)
+        )
+
+        # 3. If Recurring (and not ONE_OFF / NONE / SINGLE), atomically schedule the next cycle occurrence without duplicates
+        is_recurring = bool(
+            bill.recurrence_type and
+            bill.recurrence_type.strip().upper() not in ("NONE", "ONE_OFF", "ONE-OFF", "SINGLE")
+        )
+        if is_recurring:
             next_due = calculate_next_bill_due_date(
                 current_due=bill.due_date,
                 recurrence_type=bill.recurrence_type,

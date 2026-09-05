@@ -851,6 +851,7 @@ async def get_calendar_projection(
                 BillModel.home_id == home_ctx.home_id,
                 BillModel.deleted_at.is_(None),
                 BillModel.status.in_(["UNPAID", "PARTIALLY_PAID"]),
+                (BillModel.expected_amount - BillModel.amount_paid) > Decimal("0.00"),
                 BillModel.due_date >= start_d,
                 BillModel.due_date <= end_d
             )

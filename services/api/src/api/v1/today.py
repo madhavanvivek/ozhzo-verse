@@ -170,7 +170,8 @@ async def get_unified_today_view(
         .where(
             BillModel.home_id == home_ctx.home_id,
             BillModel.deleted_at.is_(None),
-            BillModel.status.in_(["UNPAID", "PARTIALLY_PAID", "OVERDUE"])
+            BillModel.status.in_(["UNPAID", "PARTIALLY_PAID"]),
+            (BillModel.expected_amount - BillModel.amount_paid) > 0
         )
         .order_by(BillModel.due_date.asc())
     )
@@ -183,7 +184,10 @@ async def get_unified_today_view(
     total_due_today_amount = 0.0
 
     for b in bills:
-        rem_balance = float(max(0, b.expected_amount - b.amount_paid))
+        rem_balance = float(max(0, b.expected_amount - (b.amount_paid or 0)))
+        if rem_balance <= 0 or b.status == "PAID":
+            continue
+
         b_due_time = datetime.combine(b.due_date, time(23, 59, 59), tzinfo=timezone.utc)
 
         item_priority = "NORMAL"

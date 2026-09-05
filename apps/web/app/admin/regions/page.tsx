@@ -9,7 +9,7 @@ import {
   DollarSign
 } from 'lucide-react';
 import { apiClient } from '@/lib/apiClient';
-import { COUNTRIES, findCountry, getCurrencySymbol } from '@/lib/countries';
+import { COUNTRIES, findCountry, getCurrencySymbol, formatMoney } from '@/lib/countries';
 import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -131,11 +131,13 @@ export default function AdminRegionsPage() {
   const [feedbackMsg, setFeedbackMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const DEFAULT_REGIONS: RegionConfig[] = [
-    { id: 'reg-in', country_code: 'IN', country_name: 'India', region: 'South Asia', currency: 'INR', default_plan_code: 'OZHZO_HOME', payment_gateway: 'RAZORPAY', tax_percentage: 18.0, is_active: true, is_default: false, promotional_eligibility_enabled: true, metadata_json: {} },
-    { id: 'reg-ae', country_code: 'AE', country_name: 'United Arab Emirates', region: 'Middle East', currency: 'AED', default_plan_code: 'OZHZO_HOME', payment_gateway: 'STRIPE', tax_percentage: 5.0, is_active: true, is_default: false, promotional_eligibility_enabled: true, metadata_json: {} },
+    { id: 'reg-in', country_code: 'IN', country_name: 'India', region: 'South Asia', currency: 'INR', default_plan_code: 'OZHZO_HOME', payment_gateway: 'RAZORPAY', tax_percentage: 0.0, is_active: true, is_default: false, promotional_eligibility_enabled: true, metadata_json: {} },
+    { id: 'reg-ae', country_code: 'AE', country_name: 'United Arab Emirates', region: 'Middle East', currency: 'AED', default_plan_code: 'OZHZO_HOME', payment_gateway: 'STRIPE', tax_percentage: 0.0, is_active: true, is_default: false, promotional_eligibility_enabled: true, metadata_json: {} },
+    { id: 'reg-de', country_code: 'DE', country_name: 'Germany', region: 'Europe', currency: 'EUR', default_plan_code: 'OZHZO_HOME', payment_gateway: 'STRIPE', tax_percentage: 19.0, is_active: true, is_default: false, promotional_eligibility_enabled: true, metadata_json: {} },
     { id: 'reg-gb', country_code: 'GB', country_name: 'United Kingdom', region: 'Europe', currency: 'GBP', default_plan_code: 'OZHZO_HOME', payment_gateway: 'STRIPE', tax_percentage: 20.0, is_active: true, is_default: false, promotional_eligibility_enabled: true, metadata_json: {} },
+    { id: 'reg-sa', country_code: 'SA', country_name: 'Saudi Arabia', region: 'Middle East', currency: 'SAR', default_plan_code: 'OZHZO_HOME', payment_gateway: 'STRIPE', tax_percentage: 15.0, is_active: true, is_default: false, promotional_eligibility_enabled: true, metadata_json: {} },
     { id: 'reg-us', country_code: 'US', country_name: 'United States', region: 'North America', currency: 'USD', default_plan_code: 'OZHZO_HOME', payment_gateway: 'STRIPE', tax_percentage: 0.0, is_active: true, is_default: false, promotional_eligibility_enabled: true, metadata_json: {} },
-    { id: 'reg-global', country_code: 'GLOBAL', country_name: 'Global / International', region: 'Global', currency: 'USD', default_plan_code: 'OZHZO_HOME', payment_gateway: 'STRIPE', tax_percentage: 0.0, is_active: true, is_default: true, promotional_eligibility_enabled: true, metadata_json: {} }
+    { id: 'reg-global', country_code: 'GLOBAL', country_name: 'Global / Rest of World', region: 'Global', currency: 'USD', default_plan_code: 'OZHZO_HOME', payment_gateway: 'STRIPE', tax_percentage: 0.0, is_active: true, is_default: true, promotional_eligibility_enabled: true, metadata_json: {} }
   ];
 
   const fetchRegions = async () => {
@@ -774,8 +776,8 @@ export default function AdminRegionsPage() {
                     <tr key={p.id} style={{ borderBottom: '1px solid #e2e8f0' }}>
                       <td style={{ padding: '8px 10px', fontWeight: 700 }}>v{p.version}</td>
                       <td style={{ padding: '8px 10px', fontWeight: 600 }}>{p.billing_period}</td>
-                      <td style={{ padding: '8px 10px' }}>{selectedRegion.currency} {p.list_price}</td>
-                      <td style={{ padding: '8px 10px' }}>{selectedRegion.currency} {p.additional_member_list_price || '—'}</td>
+                      <td style={{ padding: '8px 10px' }}>{formatMoney(p.list_price, selectedRegion.currency)}</td>
+                      <td style={{ padding: '8px 10px' }}>{formatMoney(p.additional_member_list_price || '0.00', selectedRegion.currency)}</td>
                       <td style={{ padding: '8px 10px' }}>
                         <Badge variant={p.is_active ? 'completed' : 'neutral'}>{p.is_active ? 'Active' : 'Archived'}</Badge>
                       </td>

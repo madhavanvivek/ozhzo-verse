@@ -53,6 +53,14 @@ def generate_invitation_code() -> str:
     return f"OZ-{random_part}"
 
 
+def _normalize_utc_dt(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 from src.domain.entitlements import (
     check_and_reserve_home_member_seat,
     claim_reserved_entitlement,
@@ -167,9 +175,9 @@ async def list_home_members(
         else:
             ent = entitlements_by_user.get(member.user_id)
             if ent and ent.status == "ACTIVE":
-                acc_expires = ent.expires_at
-                days_left = max(0, (ent.expires_at - now).days) if ent.expires_at else None
-                if ent.expires_at < now:
+                acc_expires = _normalize_utc_dt(ent.expires_at)
+                days_left = max(0, (acc_expires - now).days) if acc_expires else None
+                if acc_expires and acc_expires < now:
                     acc_status = "EXPIRED"
                     expiring_soon = False
                 elif days_left is not None and days_left <= 7:
@@ -182,15 +190,15 @@ async def list_home_members(
                 is_res = False
             elif ent and ent.status == "RESERVED":
                 acc_status = "PENDING"
-                acc_expires = ent.expires_at
-                days_left = max(0, (ent.expires_at - now).days) if ent.expires_at else None
+                acc_expires = _normalize_utc_dt(ent.expires_at)
+                days_left = max(0, (acc_expires - now).days) if acc_expires else None
                 expiring_soon = False
                 plan_name = "Reserved Seat"
                 is_res = True
             else:
                 # Check first-year free or home subscription
                 if home and home.created_by == member.user_id:
-                    home_created_at = getattr(home, "created_at", None) or now
+                    home_created_at = _normalize_utc_dt(getattr(home, "created_at", None)) or now
                     first_year_expiry = home_created_at + timedelta(days=365)
                     acc_expires = first_year_expiry
                     days_left = max(0, (first_year_expiry - now).days)
@@ -204,8 +212,9 @@ async def list_home_members(
                         plan_name = "First-Year Free Home (Expired)"
                 elif home and hasattr(home, "subscription") and home.subscription and home.subscription.status in ["ACTIVE", "TRIALING"]:
                     sub = home.subscription
-                    acc_expires = sub.current_period_ends_at
-                    days_left = max(0, (sub.current_period_ends_at - now).days) if sub.current_period_ends_at else None
+                    sub_exp = _normalize_utc_dt(sub.current_period_ends_at)
+                    acc_expires = sub_exp
+                    days_left = max(0, (sub_exp - now).days) if sub_exp else None
                     acc_status = "EXPIRING" if (days_left is not None and days_left <= 7) else "ACTIVE"
                     expiring_soon = (days_left is not None and days_left <= 7)
                     plan_name = "Household Subscription"
@@ -285,16 +294,16 @@ async def get_home_member_detail(
         plan_name = None
         is_res = False
     elif ent and ent.status == "ACTIVE":
-        acc_expires = ent.expires_at
-        days_left = max(0, (ent.expires_at - now).days) if ent.expires_at else None
-        acc_status = "EXPIRED" if ent.expires_at < now else ("EXPIRING" if days_left is not None and days_left <= 7 else "ACTIVE")
+        acc_expires = _normalize_utc_dt(ent.expires_at)
+        days_left = max(0, (acc_expires - now).days) if acc_expires else None
+        acc_status = "EXPIRED" if (acc_expires and acc_expires < now) else ("EXPIRING" if days_left is not None and days_left <= 7 else "ACTIVE")
         expiring_soon = (days_left is not None and days_left <= 7)
         plan_name = getattr(ent, "notes", None) or "Active Entitlement"
         is_res = False
     elif ent and ent.status == "RESERVED":
         acc_status = "PENDING"
-        acc_expires = ent.expires_at
-        days_left = max(0, (ent.expires_at - now).days) if ent.expires_at else None
+        acc_expires = _normalize_utc_dt(ent.expires_at)
+        days_left = max(0, (acc_expires - now).days) if acc_expires else None
         expiring_soon = False
         plan_name = "Reserved Seat"
         is_res = True
@@ -1043,7 +1052,8 @@ async def get_invitation_details(
     inv, home, inviter_user, inviter_prof = row
 
     now = datetime.now(timezone.utc)
-    is_expired = inv.expires_at < now
+    inv_exp = _normalize_utc_dt(inv.expires_at)
+    is_expired = inv_exp < now if inv_exp else False
     if is_expired and inv.status == "PENDING":
         inv.status = "EXPIRED"
         await db.commit()
@@ -1162,7 +1172,8 @@ async def _execute_join_invitation(
 
     # 3. Validate expiration
     now = datetime.now(timezone.utc)
-    if invitation.expires_at < now:
+    inv_exp = _normalize_utc_dt(invitation.expires_at)
+    if inv_exp and inv_exp < now:
         invitation.status = "EXPIRED"
         invitation.updated_at = now
         await db.commit()

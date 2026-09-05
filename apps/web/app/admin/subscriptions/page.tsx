@@ -20,7 +20,7 @@ import {
   Edit2
 } from 'lucide-react';
 import { apiClient } from '@/lib/apiClient';
-import { COUNTRIES, CURRENCIES, findCountry, getCurrencyInfo, getCurrencySymbol } from '@/lib/countries';
+import { COUNTRIES, CURRENCIES, findCountry, getCurrencyInfo, getCurrencySymbol, formatMoney } from '@/lib/countries';
 import { AdminBadge } from '../components/AdminBadge';
 import { Modal } from '@/components/ui/Modal';
 import {
@@ -1206,18 +1206,29 @@ export default function AdminSubscriptionsPage() {
                 </div>
               </div>
 
-              {/* Regional Pricing Versions Matrix */}
+              {/* Regional Pricing Matrix */}
               <div>
                 <h3 style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-text-primary, #0f172a)', margin: '0 0 10px' }}>
-                  Regional Pricing Versions
+                  Regional Pricing
                 </h3>
                 {(!p.prices || p.prices.length === 0) ? (
                   <div style={{ fontSize: '13px', color: 'var(--color-text-secondary, #64748b)' }}>
-                    No regional price versions recorded for this plan.
+                    No regional price structures recorded for this plan.
                   </div>
                 ) : (
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px' }}>
-                    {p.prices.map((pr) => {
+                    {(() => {
+                      // Deduplicate: Enforce ONE canonical active pricing structure per (country, billing_period)
+                      const seen = new Map<string, typeof p.prices[0]>();
+                      const sorted = [...p.prices].sort((a, b) => (b.version || 1) - (a.version || 1));
+                      for (const pr of sorted) {
+                        const key = `${pr.country.toUpperCase()}-${pr.billing_period.toUpperCase()}`;
+                        if (!seen.has(key)) {
+                          seen.set(key, pr);
+                        }
+                      }
+                      return Array.from(seen.values());
+                    })().map((pr) => {
                       const regularPrice = pr.regular_price ?? pr.list_price ?? '0.00';
                       const sellingPrice = pr.current_selling_price ?? pr.offer_price ?? regularPrice;
                       const hasOffer = Boolean(pr.offer_price && Number(pr.offer_price) > 0);
@@ -1226,6 +1237,14 @@ export default function AdminSubscriptionsPage() {
                         : (hasOffer && Number(regularPrice) > 0
                             ? (((Number(regularPrice) - Number(pr.offer_price)) / Number(regularPrice)) * 100).toFixed(2)
                             : null);
+
+                      const countryInfo = findCountry(pr.country);
+                      const countryNameDisplay = pr.country === 'GLOBAL'
+                        ? 'Global / Rest of World'
+                        : (countryInfo?.name || pr.country_name || pr.country);
+                      const countryCodeDisplay = pr.country === 'GLOBAL' ? 'GLOBAL' : pr.country;
+                      const currInfo = getCurrencyInfo(pr.currency);
+                      const currSymbol = getCurrencySymbol(pr.currency);
 
                       return (
                         <div
@@ -1249,15 +1268,15 @@ export default function AdminSubscriptionsPage() {
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                             <div>
                               <div style={{ fontWeight: 800, color: 'var(--color-text-primary, #0f172a)', fontSize: '15px' }}>
-                                {pr.country_name || pr.country} ({pr.country}{pr.country_iso3 ? ` / ${pr.country_iso3}` : ''})
+                                {countryNameDisplay} ({countryCodeDisplay})
                               </div>
                               <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>
-                                Currency: <strong>{pr.currency} — {getCurrencyInfo(pr.currency).name} ({pr.currency_symbol || getCurrencySymbol(pr.currency)})</strong> • {pr.billing_period}
+                                Currency: <strong>{pr.currency} — {currInfo.name} ({currSymbol})</strong> • {pr.billing_period}
                               </div>
                             </div>
                             <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                               <AdminBadge variant={pr.is_active ? 'success' : 'neutral'}>
-                                v{pr.version} {pr.is_active ? 'Active' : 'Archived'}
+                                {pr.is_active ? 'Active' : 'Archived'}
                               </AdminBadge>
                               {pr.offer_status && (
                                 <AdminBadge
@@ -1300,7 +1319,7 @@ export default function AdminSubscriptionsPage() {
                                 }}
                                 data-testid={`price-regular-${pr.id}`}
                               >
-                                {pr.currency_symbol || getCurrencySymbol(pr.currency)} {regularPrice}
+                                {formatMoney(regularPrice, pr.currency)}
                               </span>
                             </div>
 
@@ -1312,7 +1331,7 @@ export default function AdminSubscriptionsPage() {
                                   style={{ fontSize: '18px', fontWeight: 800, color: '#166534' }}
                                   data-testid={`price-selling-${pr.id}`}
                                 >
-                                  {pr.currency_symbol || getCurrencySymbol(pr.currency)} {sellingPrice}
+                                  {formatMoney(sellingPrice, pr.currency)}
                                 </span>
                                 {discountPct && Number(discountPct) > 0 && (
                                   <span
@@ -1334,7 +1353,7 @@ export default function AdminSubscriptionsPage() {
 
                             {/* Backward-compatible data-testid */}
                             <div style={{ display: 'none' }} data-testid={`price-list-${pr.id}`}>
-                              {pr.currency} {sellingPrice}
+                              {formatMoney(sellingPrice, pr.currency)}
                             </div>
                           </div>
 
@@ -1357,7 +1376,7 @@ export default function AdminSubscriptionsPage() {
                                   🎁 Campaign / Offer: {pr.campaign_name}
                                 </span>
                                 <span style={{ fontWeight: 700, color: '#1e40af' }} data-testid={`price-offer-${pr.id}`}>
-                                  Current Selling Price: {pr.currency_symbol || getCurrencySymbol(pr.currency)} {pr.offer_price}
+                                  Current Selling Price: {formatMoney(pr.offer_price, pr.currency)}
                                 </span>
                               </div>
                               {pr.campaign_description && (
@@ -1385,7 +1404,7 @@ export default function AdminSubscriptionsPage() {
                               Billing Period: <strong style={{ color: '#0f172a' }}>{pr.billing_period}</strong>
                             </div>
                             <div>
-                              Additional Member Rate (Optional): <strong style={{ color: '#0f172a' }}>{pr.currency_symbol || getCurrencySymbol(pr.currency)} {pr.additional_member_list_price}</strong>
+                              Additional Member Rate: <strong style={{ color: '#0f172a' }}>{formatMoney(pr.additional_member_list_price || '0.00', pr.currency)}</strong>
                             </div>
                           </div>
 

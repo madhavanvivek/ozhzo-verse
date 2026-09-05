@@ -26,6 +26,7 @@ import {
   ShieldCheck
 } from 'lucide-react';
 import { apiClient } from '@/lib/apiClient';
+import { formatMoney } from '@/lib/countries';
 
 interface DashboardData {
   greeting: {
@@ -910,7 +911,7 @@ function DashboardPageContent() {
               <Receipt size={18} color="var(--color-primary-900)" />
             </div>
             <div style={{ fontSize: '24px', fontWeight: 700, marginTop: '6px', color: 'var(--color-primary-900)' }}>
-              {data.role !== 'CHILD' && data.role !== 'GUEST' ? `$${Number(data.summary.unpaid_bills_sum || 0).toFixed(2)}` : '—'}
+              {data.role !== 'CHILD' && data.role !== 'GUEST' ? formatMoney(data.summary.unpaid_bills_sum || 0, data.summary.currency || 'USD') : '—'}
             </div>
           </Card>
         </Link>
@@ -1063,7 +1064,7 @@ function DashboardPageContent() {
                       </div>
                     </div>
                     <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--color-primary-900)' }}>
-                      ${Number(bill.amount).toFixed(2)}
+                      {formatMoney(bill.amount, bill.currency || data.summary.currency || 'USD')}
                     </span>
                   </div>
                 ))}

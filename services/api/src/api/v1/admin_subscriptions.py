@@ -258,9 +258,23 @@ async def list_subscription_plans(
     plans = (await db.execute(query)).scalars().all()
     dtos = []
     for p in plans:
+        active_prices = [pr for pr in getattr(p, "prices", []) if pr.is_active]
+        seen_combos = {}
+        sorted_prices = sorted(
+            active_prices,
+            key=lambda x: (x.version, x.updated_at or x.created_at),
+            reverse=True
+        )
+        deduped_prices = []
+        for pr in sorted_prices:
+            key = (pr.country.upper(), pr.billing_period.upper())
+            if key not in seen_combos:
+                seen_combos[key] = pr
+                deduped_prices.append(pr)
+
         price_dtos = [
             serialize_subscription_price_dto(pr)
-            for pr in getattr(p, "prices", [])
+            for pr in deduped_prices
         ]
         feat_dtos = [
             SubscriptionFeatureDTO(
@@ -309,26 +323,82 @@ async def create_subscription_price(
 
     country_code = payload.country.upper()
     period = payload.billing_period.upper()
-
-    ver_query = (
-        select(SubscriptionPriceModel.version)
-        .where(
-            SubscriptionPriceModel.plan_id == plan.id,
-            SubscriptionPriceModel.country == country_code,
-            SubscriptionPriceModel.billing_period == period
-        )
-        .order_by(desc(SubscriptionPriceModel.version))
-    )
-    latest_version = (await db.execute(ver_query)).scalar() or 0
-    new_version = latest_version + 1
-
     c_meta = COUNTRY_METADATA_DEFAULTS.get(country_code, {})
-    curr_sym = payload.currency_symbol or CURRENCY_SYMBOLS.get(payload.currency.upper()) or c_meta.get("symbol", "$")
+    curr_upper = (payload.currency or c_meta.get("currency", "USD")).upper()
+    curr_sym = payload.currency_symbol or CURRENCY_SYMBOLS.get(curr_upper, c_meta.get("symbol", curr_upper))
     iso3 = payload.country_iso3 or c_meta.get("iso3", country_code[:3])
     cname = payload.country_name or c_meta.get("name", country_code)
     reg_price = payload.regular_price if payload.regular_price is not None else payload.list_price
     seat_list_price = payload.additional_member_list_price
 
+    # Check if a canonical price already exists for this (plan, country, billing_period)
+    existing_query = (
+        select(SubscriptionPriceModel)
+        .where(
+            SubscriptionPriceModel.plan_id == plan.id,
+            SubscriptionPriceModel.country == country_code,
+            SubscriptionPriceModel.billing_period == period,
+            SubscriptionPriceModel.is_active == True
+        )
+        .order_by(desc(SubscriptionPriceModel.version))
+    )
+    existing_price = (await db.execute(existing_query)).scalars().first()
+
+    if existing_price:
+        # Update existing canonical price in-place (no duplicate version rows!)
+        old_state = {
+            "regular_price": str(existing_price.regular_price),
+            "list_price": str(existing_price.list_price),
+            "additional_member_list_price": str(existing_price.additional_member_list_price),
+            "offer_price": str(existing_price.offer_price) if existing_price.offer_price is not None else None,
+            "campaign_name": existing_price.campaign_name,
+            "offer_status": existing_price.offer_status,
+            "is_active": existing_price.is_active
+        }
+
+        existing_price.country_name = cname
+        existing_price.country_iso3 = iso3
+        existing_price.region = payload.region.upper()
+        existing_price.currency = curr_upper
+        existing_price.currency_symbol = curr_sym
+        existing_price.regular_price = reg_price
+        existing_price.list_price = payload.list_price or reg_price
+        existing_price.additional_member_list_price = seat_list_price
+        if payload.offer_price is not None:
+            existing_price.offer_price = payload.offer_price
+        if payload.campaign_name is not None:
+            existing_price.campaign_name = payload.campaign_name.strip() or None
+        if payload.campaign_description is not None:
+            existing_price.campaign_description = payload.campaign_description.strip() or None
+        if payload.offer_status is not None:
+            existing_price.offer_status = payload.offer_status.upper()
+        if payload.offer_start_date is not None:
+            existing_price.offer_start_date = payload.offer_start_date
+        if payload.offer_end_date is not None:
+            existing_price.offer_end_date = payload.offer_end_date
+        if payload.tax_percentage is not None:
+            existing_price.tax_percentage = payload.tax_percentage
+        if payload.allow_coupon_stacking is not None:
+            existing_price.allow_coupon_stacking = payload.allow_coupon_stacking
+        existing_price.base_price = payload.base_price or reg_price
+        existing_price.additional_member_price = payload.additional_member_price or seat_list_price
+        existing_price.updated_at = datetime.now(timezone.utc)
+
+        await record_audit_log(
+            db=db,
+            entity_type="PRICE",
+            entity_id=existing_price.id,
+            action="UPDATE_PRICE",
+            performed_by=super_admin.id,
+            old_values=old_state,
+            new_values=payload.model_dump(),
+            reason="Super Admin updated canonical regional pricing structure"
+        )
+        await db.commit()
+        await db.refresh(existing_price)
+        return ApiSuccessResponse(data=serialize_subscription_price_dto(existing_price))
+
+    # If no existing price exists, create the canonical record (version=1)
     new_price = SubscriptionPriceModel(
         id=uuid4(),
         plan_id=plan.id,
@@ -336,7 +406,7 @@ async def create_subscription_price(
         country_name=cname,
         country_iso3=iso3,
         region=payload.region.upper(),
-        currency=payload.currency.upper(),
+        currency=curr_upper,
         currency_symbol=curr_sym,
         billing_period=period,
         regular_price=reg_price,
@@ -352,7 +422,7 @@ async def create_subscription_price(
         allow_coupon_stacking=payload.allow_coupon_stacking or False,
         base_price=payload.base_price or reg_price,
         additional_member_price=payload.additional_member_price or seat_list_price,
-        version=new_version,
+        version=1,
         is_active=True,
         effective_from=payload.effective_from or datetime.now(timezone.utc),
         effective_until=payload.effective_until,
@@ -365,7 +435,7 @@ async def create_subscription_price(
         db=db,
         entity_type="PRICE",
         entity_id=new_price.id,
-        action="CREATE_PRICE_VERSION",
+        action="CREATE_PRICE",
         performed_by=super_admin.id,
         new_values=payload.model_dump()
     )
@@ -752,11 +822,26 @@ async def list_subscription_prices(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    List all standard and regional prices.
+    List all standard and regional prices (canonical active records).
     """
-    query = select(SubscriptionPriceModel).order_by(SubscriptionPriceModel.country.asc(), SubscriptionPriceModel.billing_period.asc())
+    query = (
+        select(SubscriptionPriceModel)
+        .where(SubscriptionPriceModel.is_active == True)
+        .order_by(
+            SubscriptionPriceModel.country.asc(),
+            SubscriptionPriceModel.billing_period.asc(),
+            SubscriptionPriceModel.version.desc()
+        )
+    )
     prices = (await db.execute(query)).scalars().all()
-    dtos = [serialize_subscription_price_dto(pr) for pr in prices]
+    seen = {}
+    deduped = []
+    for pr in prices:
+        key = (pr.plan_id, pr.country.upper(), pr.billing_period.upper())
+        if key not in seen:
+            seen[key] = pr
+            deduped.append(pr)
+    dtos = [serialize_subscription_price_dto(pr) for pr in deduped]
     return ApiSuccessResponse(data=dtos)
 
 

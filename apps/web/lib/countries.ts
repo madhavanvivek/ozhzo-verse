@@ -18,8 +18,8 @@ export interface CurrencyInfo {
 
 export const CURRENCIES: CurrencyInfo[] = [
   { code: 'INR', name: 'Indian Rupee', symbol: '₹' },
-  { code: 'AED', name: 'UAE Dirham', symbol: 'AED' },
-  { code: 'SAR', name: 'Saudi Riyal', symbol: 'SAR' },
+  { code: 'AED', name: 'UAE Dirham', symbol: 'د.إ' },
+  { code: 'SAR', name: 'Saudi Riyal', symbol: '﷼' },
   { code: 'USD', name: 'US Dollar', symbol: '$' },
   { code: 'GBP', name: 'British Pound', symbol: '£' },
   { code: 'EUR', name: 'Euro', symbol: '€' },
@@ -47,20 +47,67 @@ export function getCurrencyInfo(code: string): CurrencyInfo {
 }
 
 export function getCurrencySymbol(code: string): string {
-  return getCurrencyInfo(code).symbol;
+  if (!code) return '$';
+  const info = getCurrencyInfo(code);
+  return info.symbol;
+}
+
+export function formatMoney(
+  amount: number | string | null | undefined,
+  currency: string,
+  options?: {
+    useCodeOnly?: boolean;
+    useCodeFallback?: boolean;
+  }
+): string {
+  if (amount == null || amount === '') return '';
+  const num = typeof amount === 'number' ? amount : parseFloat(String(amount)) || 0;
+  const formattedNum = num.toFixed(2);
+  const curr = (currency || 'USD').trim().toUpperCase();
+
+  if (options?.useCodeOnly) {
+    return `${curr} ${formattedNum}`;
+  }
+
+  if (curr === 'AED') {
+    return `د.إ ${formattedNum}`;
+  }
+  if (curr === 'SAR') {
+    return `﷼ ${formattedNum}`;
+  }
+  if (curr === 'INR') {
+    return `₹${formattedNum}`;
+  }
+  if (curr === 'EUR') {
+    return `€${formattedNum}`;
+  }
+  if (curr === 'GBP') {
+    return `£${formattedNum}`;
+  }
+  if (curr === 'USD') {
+    return `$${formattedNum}`;
+  }
+
+  const info = getCurrencyInfo(curr);
+  // Never fallback to '$' for unknown currencies
+  if (info.symbol === curr || !info.symbol) {
+    return `${curr} ${formattedNum}`;
+  }
+
+  return `${info.symbol} ${formattedNum}`;
 }
 
 export const COUNTRIES: CountryInfo[] = [
-  { name: 'India', iso2: 'IN', iso3: 'IND', currency: 'INR', currencySymbol: '₹', currencyName: 'Indian Rupee', region: 'South Asia', defaultTaxPct: 18.0, paymentGateway: 'RAZORPAY' },
-  { name: 'United Arab Emirates', iso2: 'AE', iso3: 'ARE', currency: 'AED', currencySymbol: 'AED', currencyName: 'UAE Dirham', region: 'Middle East', defaultTaxPct: 5.0, paymentGateway: 'STRIPE' },
-  { name: 'Saudi Arabia', iso2: 'SA', iso3: 'SAU', currency: 'SAR', currencySymbol: 'SAR', currencyName: 'Saudi Riyal', region: 'Middle East', defaultTaxPct: 15.0, paymentGateway: 'STRIPE' },
+  { name: 'India', iso2: 'IN', iso3: 'IND', currency: 'INR', currencySymbol: '₹', currencyName: 'Indian Rupee', region: 'South Asia', defaultTaxPct: 0.0, paymentGateway: 'RAZORPAY' },
+  { name: 'United Arab Emirates', iso2: 'AE', iso3: 'ARE', currency: 'AED', currencySymbol: 'د.إ', currencyName: 'UAE Dirham', region: 'Middle East', defaultTaxPct: 0.0, paymentGateway: 'STRIPE' },
+  { name: 'Saudi Arabia', iso2: 'SA', iso3: 'SAU', currency: 'SAR', currencySymbol: '﷼', currencyName: 'Saudi Riyal', region: 'Middle East', defaultTaxPct: 15.0, paymentGateway: 'STRIPE' },
   { name: 'United Kingdom', iso2: 'GB', iso3: 'GBR', currency: 'GBP', currencySymbol: '£', currencyName: 'British Pound', region: 'Europe', defaultTaxPct: 20.0, paymentGateway: 'STRIPE' },
   { name: 'United States', iso2: 'US', iso3: 'USA', currency: 'USD', currencySymbol: '$', currencyName: 'US Dollar', region: 'North America', defaultTaxPct: 0.0, paymentGateway: 'STRIPE' },
+  { name: 'Germany', iso2: 'DE', iso3: 'DEU', currency: 'EUR', currencySymbol: '€', currencyName: 'Euro', region: 'Europe', defaultTaxPct: 19.0, paymentGateway: 'STRIPE' },
+  { name: 'France', iso2: 'FR', iso3: 'FRA', currency: 'EUR', currencySymbol: '€', currencyName: 'Euro', region: 'Europe', defaultTaxPct: 20.0, paymentGateway: 'STRIPE' },
   { name: 'Singapore', iso2: 'SG', iso3: 'SGP', currency: 'SGD', currencySymbol: 'S$', currencyName: 'Singapore Dollar', region: 'Southeast Asia', defaultTaxPct: 9.0, paymentGateway: 'STRIPE' },
   { name: 'Australia', iso2: 'AU', iso3: 'AUS', currency: 'AUD', currencySymbol: 'A$', currencyName: 'Australian Dollar', region: 'Oceania', defaultTaxPct: 10.0, paymentGateway: 'STRIPE' },
   { name: 'Canada', iso2: 'CA', iso3: 'CAN', currency: 'CAD', currencySymbol: 'C$', currencyName: 'Canadian Dollar', region: 'North America', defaultTaxPct: 13.0, paymentGateway: 'STRIPE' },
-  { name: 'Germany', iso2: 'DE', iso3: 'DEU', currency: 'EUR', currencySymbol: '€', currencyName: 'Euro', region: 'Europe', defaultTaxPct: 19.0, paymentGateway: 'STRIPE' },
-  { name: 'France', iso2: 'FR', iso3: 'FRA', currency: 'EUR', currencySymbol: '€', currencyName: 'Euro', region: 'Europe', defaultTaxPct: 20.0, paymentGateway: 'STRIPE' },
   { name: 'Japan', iso2: 'JP', iso3: 'JPN', currency: 'JPY', currencySymbol: '¥', currencyName: 'Japanese Yen', region: 'East Asia', defaultTaxPct: 10.0, paymentGateway: 'STRIPE' },
   { name: 'Qatar', iso2: 'QA', iso3: 'QAT', currency: 'QAR', currencySymbol: 'QAR', currencyName: 'Qatari Riyal', region: 'Middle East', defaultTaxPct: 0.0, paymentGateway: 'STRIPE' },
   { name: 'Kuwait', iso2: 'KW', iso3: 'KWT', currency: 'KWD', currencySymbol: 'KWD', currencyName: 'Kuwaiti Dinar', region: 'Middle East', defaultTaxPct: 0.0, paymentGateway: 'STRIPE' },
@@ -72,7 +119,7 @@ export const COUNTRIES: CountryInfo[] = [
   { name: 'South Africa', iso2: 'ZA', iso3: 'ZAF', currency: 'ZAR', currencySymbol: 'R', currencyName: 'South African Rand', region: 'Africa', defaultTaxPct: 15.0, paymentGateway: 'STRIPE' },
   { name: 'Brazil', iso2: 'BR', iso3: 'BRA', currency: 'BRL', currencySymbol: 'R$', currencyName: 'Brazilian Real', region: 'Latin America', defaultTaxPct: 17.0, paymentGateway: 'STRIPE' },
   { name: 'Mexico', iso2: 'MX', iso3: 'MEX', currency: 'MXN', currencySymbol: 'Mex$', currencyName: 'Mexican Peso', region: 'Latin America', defaultTaxPct: 16.0, paymentGateway: 'STRIPE' },
-  { name: 'Global / International', iso2: 'GLOBAL', iso3: 'GLB', currency: 'USD', currencySymbol: '$', currencyName: 'US Dollar', region: 'Global', defaultTaxPct: 0.0, paymentGateway: 'STRIPE' }
+  { name: 'Global / Rest of World', iso2: 'GLOBAL', iso3: 'GLB', currency: 'USD', currencySymbol: '$', currencyName: 'US Dollar', region: 'Global', defaultTaxPct: 0.0, paymentGateway: 'STRIPE' }
 ];
 
 export function findCountry(query: string): CountryInfo | undefined {

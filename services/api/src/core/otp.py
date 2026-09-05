@@ -186,7 +186,11 @@ class OTPService:
                 detail="No pending OTP request found for this mobile number."
             )
 
-        if record.expires_at < datetime.now(timezone.utc):
+        expires_at = record.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+        if expires_at < datetime.now(timezone.utc):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="OTP code has expired. Please request a new code."

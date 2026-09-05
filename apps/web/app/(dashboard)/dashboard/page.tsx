@@ -145,6 +145,14 @@ function DashboardPageContent() {
       const profileData = profileRes.status === 'fulfilled' ? profileRes.value : null;
       const homesData = homesRes.status === 'fulfilled' ? homesRes.value : null;
 
+      if (homesRes.status === 'rejected') {
+        const hasFallbackHomes = profileData && Array.isArray(profileData.homes) && profileData.homes.length > 0;
+        if (!hasFallbackHomes) {
+          const errorReason = homesRes.reason?.message || 'Unable to load your Home information. Please check your connection.';
+          throw new Error(errorReason);
+        }
+      }
+
       if (!profileData && !homesData) {
         const errorReason = (profileRes.status === 'rejected' ? profileRes.reason?.message : '') ||
                             (homesRes.status === 'rejected' ? homesRes.reason?.message : '') ||

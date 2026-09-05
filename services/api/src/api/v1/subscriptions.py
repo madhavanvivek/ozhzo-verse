@@ -567,8 +567,10 @@ async def evaluate_coupon(
             return None, False, f"Coupon '{coupon.code}' has already been redeemed for this Home."
 
     # 7. Geographic Restrictions (Country, State, District, Postal Code)
-    if coupon.country and country and coupon.country.upper() not in [country.upper(), "GLOBAL"]:
-        return None, False, f"Coupon '{coupon.code}' is not valid in country {country}."
+    if coupon.country and country:
+        coupon_countries = [c.strip().upper() for c in coupon.country.split(",") if c.strip()]
+        if "GLOBAL" not in coupon_countries and country.upper() not in coupon_countries:
+            return None, False, f"Coupon '{coupon.code}' is not valid in country {country}."
     if coupon.state and state and coupon.state.lower() != state.lower():
         return None, False, f"Coupon '{coupon.code}' is restricted to state/province {coupon.state}."
     if coupon.district and district and coupon.district.lower() != district.lower():

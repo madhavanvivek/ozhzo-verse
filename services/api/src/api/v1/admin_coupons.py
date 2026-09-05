@@ -15,6 +15,7 @@ from src.infrastructure.database.models import (
     CouponModel,
     CouponRedemptionModel,
     HomeModel,
+    RegionConfigModel,
     SubscriptionAuditLogModel,
     SubscriptionGrantModel,
     SubscriptionModel,
@@ -37,6 +38,49 @@ from src.schemas.coupon import (
 )
 
 router = APIRouter(prefix="/admin", tags=["Super Admin - Coupons, Campaigns & Grants"])
+
+
+async def validate_coupon_country_targeting(
+    country_str: Optional[str],
+    db: AsyncSession,
+    is_new: bool = False
+) -> Optional[str]:
+    """
+    Validates that targeted country/countries exist and are active in the authoritative Country/Region Master (RegionConfigModel).
+    Returns canonical uppercase sanitized country string (e.g. 'IN', 'IN,AE', 'GLOBAL', or None).
+    Rejects unknown country codes (e.g. 'XX') or deactivated countries on new targeting with HTTP 400.
+    """
+    if not country_str or not country_str.strip():
+        return None
+
+    raw_tokens = [c.strip().upper() for c in country_str.split(",") if c.strip()]
+    if not raw_tokens or "GLOBAL" in raw_tokens:
+        return "GLOBAL"
+
+    canonical_codes = []
+    for code in raw_tokens:
+        # Check against RegionConfigModel
+        stmt = select(RegionConfigModel).where(func.upper(RegionConfigModel.country_code) == code)
+        result = await db.execute(stmt)
+        region = result.scalar_one_or_none()
+
+        if not region:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Target country '{code}' is invalid. It does not exist in the Country/Region Master."
+            )
+
+        if not region.is_active and is_new:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Target country '{code}' ({region.country_name}) is currently deactivated in the Country/Region Master."
+            )
+
+        canonical_codes.append(region.country_code.upper())
+
+    # De-duplicate while preserving order
+    deduped = list(dict.fromkeys(canonical_codes))
+    return ",".join(deduped)
 
 
 async def record_coupon_audit(
@@ -75,6 +119,8 @@ async def create_coupon(
     if (await db.execute(query)).scalar_one_or_none():
         raise HTTPException(status_code=409, detail=f"Coupon with code '{payload.code}' already exists.")
 
+    canonical_country = await validate_coupon_country_targeting(payload.country, db, is_new=True)
+
     new_coupon = CouponModel(
         id=uuid4(),
         campaign_id=payload.campaign_id,
@@ -88,7 +134,7 @@ async def create_coupon(
         eligibility_type=payload.eligibility_type.upper(),
         target_user_id=payload.target_user_id,
         target_home_id=payload.target_home_id,
-        country=payload.country.upper() if payload.country else None,
+        country=canonical_country,
         state=payload.state,
         district=payload.district,
         postal_code=payload.postal_code,
@@ -188,7 +234,7 @@ async def update_coupon(
     if payload.eligibility_type is not None:
         coupon.eligibility_type = payload.eligibility_type.upper()
     if payload.country is not None:
-        coupon.country = payload.country.upper().strip() if payload.country.strip() else None
+        coupon.country = await validate_coupon_country_targeting(payload.country, db, is_new=False)
     if payload.state is not None:
         coupon.state = payload.state.strip() if payload.state.strip() else None
     if payload.applicable_plan_id is not None:
@@ -363,6 +409,8 @@ async def create_campaign(
     if (await db.execute(query)).scalar_one_or_none():
         raise HTTPException(status_code=409, detail=f"Campaign with code '{payload.code}' already exists.")
 
+    canonical_campaign_country = await validate_coupon_country_targeting(payload.country, db, is_new=True)
+
     new_campaign = CampaignModel(
         id=uuid4(),
         name=payload.name,
@@ -374,7 +422,7 @@ async def create_campaign(
         budget_limit=payload.budget_limit,
         maximum_redemptions=payload.maximum_redemptions,
         redemptions_count=0,
-        country=payload.country.upper() if payload.country else None,
+        country=canonical_campaign_country,
         state=payload.state,
         created_by=super_admin.id
     )

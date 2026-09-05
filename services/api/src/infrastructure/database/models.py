@@ -1056,7 +1056,7 @@ class CampaignModel(Base):
     budget_limit = Column(Numeric(12, 2), nullable=True)
     maximum_redemptions = Column(Integer, nullable=True)
     redemptions_count = Column(Integer, default=0, nullable=False)
-    country = Column(String(8), nullable=True)
+    country = Column(String(255), nullable=True)
     state = Column(String(64), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
@@ -1080,7 +1080,7 @@ class CouponModel(Base):
     eligibility_type = Column(String(32), default="ANY_USER", nullable=False)  # ANY_USER, NEW_USER, EXISTING_USER, NEW_HOME, EXISTING_HOME, INVITED_USER, SPECIFIC_USER, SPECIFIC_HOME
     target_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     target_home_id = Column(UUID(as_uuid=True), ForeignKey("homes.id", ondelete="SET NULL"), nullable=True, index=True)
-    country = Column(String(8), nullable=True)
+    country = Column(String(255), nullable=True)
     state = Column(String(64), nullable=True)
     district = Column(String(64), nullable=True)
     postal_code = Column(String(32), nullable=True)

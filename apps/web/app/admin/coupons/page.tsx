@@ -18,12 +18,14 @@ import { apiClient } from '@/lib/apiClient';
 import { AdminBadge } from '../components/AdminBadge';
 import { Modal } from '@/components/ui/Modal';
 import { Coupon, Campaign, SubscriptionGrant, CouponAnalytics } from '../types';
+import { ControlledCountrySelector, RegionConfig, getCountryFlag } from '../components/ControlledCountrySelector';
 
 export default function AdminCouponsPage() {
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [grants, setGrants] = useState<SubscriptionGrant[]>([]);
   const [analytics, setAnalytics] = useState<CouponAnalytics | null>(null);
+  const [regions, setRegions] = useState<RegionConfig[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -100,17 +102,19 @@ export default function AdminCouponsPage() {
     setIsLoading(true);
     setError(null);
     try {
-      const [couponsData, campaignsData, grantsData, analyticsData] = await Promise.all([
+      const [couponsData, campaignsData, grantsData, analyticsData, regionsData] = await Promise.all([
         apiClient.get<Coupon[]>('/admin/coupons'),
         apiClient.get<Campaign[]>('/admin/coupons/campaigns'),
         apiClient.get<SubscriptionGrant[]>('/admin/coupons/grants'),
-        apiClient.get<CouponAnalytics>('/admin/coupons/analytics')
+        apiClient.get<CouponAnalytics>('/admin/coupons/analytics'),
+        apiClient.get<RegionConfig[]>('/admin/regions').catch(() => [])
       ]);
 
       setCoupons(couponsData || []);
       setCampaigns(campaignsData || []);
       setGrants(grantsData || []);
       setAnalytics(analyticsData || null);
+      setRegions(regionsData || []);
     } catch (err: any) {
       setError(err?.message || 'Failed to fetch coupon records.');
     } finally {
@@ -630,7 +634,37 @@ export default function AdminCouponsPage() {
                   </div>
 
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', fontSize: '12px', color: 'var(--color-text-secondary, #64748b)' }}>
-                    <div>Country: <strong>{c.country || 'Global (All)'}</strong></div>
+                    <div>
+                      Country:{' '}
+                      <strong>
+                        {(() => {
+                          if (!c.country || c.country.toUpperCase() === 'GLOBAL') {
+                            return '🌍 Global (All)';
+                          }
+                          const codes = c.country.split(',').map((x) => x.trim().toUpperCase()).filter(Boolean);
+                          return (
+                            <span>
+                              {codes.map((code) => {
+                                const reg = regions.find((r) => r.country_code.toUpperCase() === code);
+                                const flag = getCountryFlag(code);
+                                const isDeactivated = reg && !reg.is_active;
+                                return (
+                                  <span key={code} style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', marginRight: '6px' }}>
+                                    <span>{flag}</span>
+                                    <span>{reg ? `${reg.country_name} (${code})` : code}</span>
+                                    {isDeactivated && (
+                                      <span style={{ color: '#ef4444', fontSize: '11px', fontWeight: 700 }}>
+                                        {' '}(⚠️ Deactivated in Master)
+                                      </span>
+                                    )}
+                                  </span>
+                                );
+                              })}
+                            </span>
+                          );
+                        })()}
+                      </strong>
+                    </div>
                     <div>Usage: <strong>{c.redemptions_count}</strong> {c.maximum_total_redemptions ? `/ ${c.maximum_total_redemptions}` : '(Unlimited)'}</div>
                     <div>Per User: <strong>{c.maximum_redemptions_per_user || 1}</strong></div>
                     <div>Valid Until: <strong>{formatDate(c.end_date)}</strong></div>
@@ -920,14 +954,14 @@ export default function AdminCouponsPage() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
             <div>
               <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
-                Target Country (ISO-2)
+                Valid Country / Countries *
               </label>
-              <input
-                type="text"
-                placeholder="e.g. IN, AE, US (Leave blank for Global)"
+              <ControlledCountrySelector
                 value={couponForm.country}
-                onChange={(e) => setCouponForm({ ...couponForm, country: e.target.value })}
-                style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', textTransform: 'uppercase' }}
+                onChange={(val) => setCouponForm({ ...couponForm, country: val })}
+                regions={regions}
+                testId="create-coupon-country-selector"
+                inputTestId="create-coupon-country-input"
               />
             </div>
 
@@ -1035,15 +1069,15 @@ export default function AdminCouponsPage() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
             <div>
               <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>
-                Target Country (ISO-2)
+                Valid Country / Countries *
               </label>
-              <input
-                type="text"
-                placeholder="e.g. IN, AE, US"
-                data-testid="edit-coupon-country-input"
+              <ControlledCountrySelector
                 value={editForm.country}
-                onChange={(e) => setEditForm({ ...editForm, country: e.target.value })}
-                style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--radius-md, 10px)', border: '1px solid var(--color-border-subtle, #e2e8f0)', fontSize: '14px', textTransform: 'uppercase' }}
+                onChange={(val) => setEditForm({ ...editForm, country: val })}
+                regions={regions}
+                isEdit={true}
+                testId="edit-coupon-country-selector"
+                inputTestId="edit-coupon-country-input"
               />
             </div>
 

@@ -11,6 +11,7 @@ from src.infrastructure.database.models import (
     CouponRedemptionModel,
     HomeMemberModel,
     HomeModel,
+    RegionConfigModel,
     SubscriptionAuditLogModel,
     SubscriptionGrantModel,
     SubscriptionModel,
@@ -29,7 +30,8 @@ from src.api.v1.admin_coupons import (
     create_coupon,
     create_direct_grant,
     get_coupon_analytics,
-    revoke_direct_grant
+    revoke_direct_grant,
+    validate_coupon_country_targeting
 )
 from src.api.v1.subscriptions import (
     calculate_subscription_price,
@@ -403,3 +405,113 @@ def test_25_to_27_anti_stacking_and_immutability():
     # Immutable redemption snapshot
     assert redemption.discount_amount_applied == Decimal("50.00")
     assert redemption.free_days_granted == 180
+
+
+# ==============================================================================
+# Tests 28-32: Controlled Country Master & Multi-Country Targeting Validation
+# ==============================================================================
+
+@pytest.mark.asyncio
+async def test_28_coupon_country_validation_valid_countries():
+    """28. Validates canonical country against Country/Region Master."""
+    mock_db = AsyncMock()
+    india_region = RegionConfigModel(country_code="IN", country_name="India", currency="INR", is_active=True)
+    uae_region = RegionConfigModel(country_code="AE", country_name="United Arab Emirates", currency="AED", is_active=True)
+
+    mock_db.execute.side_effect = [
+        MagicMock(scalar_one_or_none=MagicMock(return_value=india_region)),
+        MagicMock(scalar_one_or_none=MagicMock(return_value=uae_region)),
+    ]
+
+    res = await validate_coupon_country_targeting("in, ae", mock_db, is_new=True)
+    assert res == "IN,AE"
+
+    # Test Global / None
+    res_global = await validate_coupon_country_targeting("GLOBAL", mock_db, is_new=True)
+    assert res_global == "GLOBAL"
+    res_none = await validate_coupon_country_targeting(None, mock_db, is_new=True)
+    assert res_none is None
+
+
+@pytest.mark.asyncio
+async def test_29_coupon_country_validation_rejects_unknown():
+    """29. Rejects arbitrary or unknown country codes that do not exist in Country/Region Master."""
+    mock_db = AsyncMock()
+    mock_db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await validate_coupon_country_targeting("XX", mock_db, is_new=True)
+    assert exc_info.value.status_code == 400
+    assert "Target country 'XX' is invalid" in exc_info.value.detail
+
+    with pytest.raises(HTTPException) as exc_info2:
+        await validate_coupon_country_targeting("India", mock_db, is_new=True)
+    assert exc_info2.value.status_code == 400
+    assert "Target country 'INDIA' is invalid" in exc_info2.value.detail
+
+
+@pytest.mark.asyncio
+async def test_30_coupon_country_validation_rejects_deactivated_for_new():
+    """30. Rejects deactivated countries when creating new coupon targeting."""
+    mock_db = AsyncMock()
+    deactivated_region = RegionConfigModel(country_code="DE", country_name="Germany", currency="EUR", is_active=False)
+    mock_db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=deactivated_region))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await validate_coupon_country_targeting("DE", mock_db, is_new=True)
+    assert exc_info.value.status_code == 400
+    assert "currently deactivated" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_31_multi_country_coupon_evaluation():
+    """31. Multi-country coupon (IN,AE) applies to India and UAE billing customers, rejected for US."""
+    mock_db = AsyncMock()
+    plan_id = uuid4()
+    multi_coupon = CouponModel(
+        id=uuid4(), code="IN_AE_DEAL", country="IN,AE", coupon_type="PERCENTAGE_DISCOUNT",
+        discount_value=Decimal("20.00"), status="ACTIVE"
+    )
+    mock_db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=multi_coupon))
+
+    # Match India
+    c1, valid1, _ = await evaluate_coupon("IN_AE_DEAL", plan_id, "IN", None, None, None, "INR", None, None, mock_db)
+    assert valid1 is True
+
+    # Match UAE
+    c2, valid2, _ = await evaluate_coupon("IN_AE_DEAL", plan_id, "AE", None, None, None, "AED", None, None, mock_db)
+    assert valid2 is True
+
+    # Reject US
+    c3, valid3, reason3 = await evaluate_coupon("IN_AE_DEAL", plan_id, "US", None, None, None, "USD", None, None, mock_db)
+    assert valid3 is False
+    assert "not valid in country US" in reason3
+
+
+@pytest.mark.asyncio
+async def test_32_create_coupon_with_canonical_country_integration():
+    """32. Super Admin creates coupon with canonical Germany (DE) country target."""
+    mock_db = AsyncMock()
+    super_admin = UserModel(id=uuid4(), is_super_admin=True)
+    germany_region = RegionConfigModel(country_code="DE", country_name="Germany", currency="EUR", is_active=True)
+
+    # First execute: duplicate code check -> None
+    # Second execute: country check -> germany_region
+    mock_db.execute.side_effect = [
+        MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
+        MagicMock(scalar_one_or_none=MagicMock(return_value=germany_region)),
+    ]
+
+    req = CreateCouponRequest(
+        name="Germany Launch 50% Off",
+        code="GERMANY50",
+        coupon_type="PERCENTAGE_DISCOUNT",
+        discount_value=Decimal("50.00"),
+        country="de",
+        status="ACTIVE"
+    )
+    res = await create_coupon(req, super_admin=super_admin, db=mock_db)
+    assert res.success is True
+    assert res.data.code == "GERMANY50"
+    assert res.data.country == "DE"
+

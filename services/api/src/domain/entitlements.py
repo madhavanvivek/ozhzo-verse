@@ -485,7 +485,8 @@ async def verify_user_home_access_entitlement(
         if not isinstance(ent, HomeAccessEntitlementModel):
             continue
         if ent.status == "ACTIVE":
-            if ent.expires_at >= now:
+            exp = ent.expires_at if ent.expires_at.tzinfo else ent.expires_at.replace(tzinfo=timezone.utc)
+            if exp >= now:
                 return True, ent, "Valid active access entitlement."
             else:
                 # Expired entitlement

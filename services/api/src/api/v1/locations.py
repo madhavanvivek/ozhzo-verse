@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Any, List, Optional, Union
 from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
@@ -49,7 +49,7 @@ def to_location_dto(loc: LocationModel, path: Optional[str] = None, item_count: 
     )
 
 
-@router.get("", response_model=ApiSuccessResponse[List[LocationDTO]])
+@router.get("", response_model=ApiSuccessResponse[Union[List[LocationTreeDTO], List[LocationDTO]]])
 async def list_locations(
     as_tree: bool = Query(False, description="Return nested hierarchy tree instead of flat list"),
     home_ctx: HomeContext = Depends(require_home_permission("inventory:view")),

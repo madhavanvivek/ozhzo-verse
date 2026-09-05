@@ -1320,9 +1320,13 @@ async def get_inventory_summary(
     total = len(items)
     consumables = len([i for i in items if i.item_type == "CONSUMABLE"])
     assets = len([i for i in items if i.item_type == "ASSET"])
-    good = len([i for i in items if i.status == "GOOD"])
-    low = len([i for i in items if i.status == "LOW"])
-    out = len([i for i in items if i.status == "OUT_OF_STOCK"])
+    computed_statuses = [
+        (calculate_stock_status(i.quantity if i.quantity is not None else Decimal("0"), i.min_threshold, i.expiry_date) if i.item_type == "CONSUMABLE" else (i.status or "GOOD"))
+        for i in items
+    ]
+    good = len([s for s in computed_statuses if s in ("GOOD", "IN_STOCK")])
+    low = len([s for s in computed_statuses if s in ("LOW", "LOW_STOCK")])
+    out = len([s for s in computed_statuses if s in ("OUT", "OUT_OF_STOCK")])
     expired = len([i for i in items if i.expiry_status == "EXPIRED"])
     expiring_soon = len([i for i in items if i.expiry_status == "EXPIRING_SOON"])
     borrowed = len([i for i in items if i.asset_status == "BORROWED"])
